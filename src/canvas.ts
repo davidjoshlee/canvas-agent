@@ -68,6 +68,17 @@ function token(config: ToolkitConfig): string {
 function apiUrl(root: URL, path: string): URL {
   return new URL(`/api/v1/${path.replace(/^\//, "")}`, root)
 }
+class CanvasHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Canvas GET failed with HTTP ${status}`)
+  }
+}
+function unavailable(error: unknown): error is CanvasHttpError {
+  return error instanceof CanvasHttpError && [403, 404].includes(error.status)
+}
+function requireValidAuth(error: unknown): void {
+  if (error instanceof CanvasHttpError && error.status === 401) throw error
+}
 async function get(config: ToolkitConfig, url: URL): Promise<Response> {
   const root = base(config)
   if (url.origin !== root.origin || url.protocol !== root.protocol || url.username || url.password)
@@ -83,7 +94,7 @@ async function get(config: ToolkitConfig, url: URL): Promise<Response> {
   } catch {
     throw new Error("Canvas GET request failed before receiving a response")
   }
-  if (!response.ok) throw new Error(`Canvas GET failed with HTTP ${response.status}`)
+  if (!response.ok) throw new CanvasHttpError(response.status)
   return response
 }
 function paginationLink(header: string | null, root: URL): URL | undefined {
@@ -500,7 +511,10 @@ async function download(config: ToolkitConfig, initial: URL): Promise<Response> 
       current = next
       continue
     }
-    if (!response.ok) throw new Error(`download failed with HTTP ${response.status}`)
+    if (!response.ok)
+      throw sameOrigin
+        ? new CanvasHttpError(response.status)
+        : new Error(`External file download failed with HTTP ${response.status}`)
     return response
   }
   throw new Error("download redirect limit exceeded")
@@ -553,19 +567,43 @@ async function syncOne(
   const contentPaths = new Map<string, string>()
   const referencedFileIds = new Set(syllabusIds)
   const sourceReferences: Array<{ path: string; ids: string[] }> = []
+  const optionalList = async (endpoint: string, label: string): Promise<Obj[]> => {
+    try {
+      return await list(config, apiUrl(root, `${prefix}/${endpoint}`))
+    } catch (error) {
+      if (!unavailable(error)) throw error
+      manager.notices.push(
+        `Canvas ${label} unavailable for ${course.code} (HTTP ${error.status}); continuing with accessible module-linked content. Coverage may be incomplete.`,
+      )
+      return []
+    }
+  }
   const simple = async (
     endpoint: string,
     folder: string,
     getTitle: (v: Obj) => string,
     getText: (v: Obj) => string,
+    supplied?: Obj[],
   ) => {
-    const values = await list(config, apiUrl(root, `${prefix}/${endpoint}?per_page=100`))
+    const values =
+      supplied ??
+      (endpoint === "pages"
+        ? await optionalList("pages?per_page=100", "Pages list")
+        : await list(config, apiUrl(root, `${prefix}/${endpoint}?per_page=100`)))
     for (const value of values) {
       let source = value
       if (endpoint === "pages" && typeof value.body !== "string" && typeof value.url === "string") {
-        source = (await (
-          await get(config, apiUrl(root, `${prefix}/pages/${encodeURIComponent(value.url)}`))
-        ).json()) as Obj
+        try {
+          source = (await (
+            await get(config, apiUrl(root, `${prefix}/pages/${encodeURIComponent(value.url)}`))
+          ).json()) as Obj
+        } catch (error) {
+          if (!unavailable(error)) throw error
+          manager.notices.push(
+            `Canvas page unavailable for ${course.code} (HTTP ${error.status}); coverage may be incomplete.`,
+          )
+          continue
+        }
       }
       const title = getTitle(source),
         identity = endpoint === "pages" ? (source.page_id ?? source.id) : source.id,
@@ -633,7 +671,33 @@ async function syncOne(
     (v) => String(v.title ?? v.url ?? `Page ${v.id}`),
     (v) => textOf(v.body),
   )
-  const files = await list(config, apiUrl(root, `${prefix}/files?per_page=100`))
+  const modules = await optionalList("modules?include[]=items&per_page=100", "Modules list")
+  const modulePages = new Set<string>()
+  for (const module of modules) {
+    if (!Array.isArray(module.items) && module.id != null)
+      module.items = await optionalList(
+        `modules/${encodeURIComponent(String(module.id))}/items?per_page=100`,
+        "module items",
+      )
+    for (const item of Array.isArray(module.items) ? (module.items as Obj[]) : []) {
+      if (item.type === "File" && item.content_id != null)
+        referencedFileIds.add(String(item.content_id))
+      if (
+        item.type === "Page" &&
+        typeof item.page_url === "string" &&
+        !contentPaths.has(`pages:url:${item.page_url}`)
+      )
+        modulePages.add(item.page_url)
+    }
+  }
+  await simple(
+    "pages",
+    "Pages",
+    (v) => String(v.title ?? v.url ?? `Page ${v.id}`),
+    (v) => textOf(v.body),
+    [...modulePages].map((url) => ({ url })),
+  )
+  const files = await optionalList("files?per_page=100", "Files list")
   const knownFileIds = new Set(files.map((file) => String(file.id)))
   for (const fileId of referencedFileIds) {
     if (knownFileIds.has(fileId)) continue
@@ -641,7 +705,8 @@ async function syncOne(
       const response = await get(config, apiUrl(root, `files/${encodeURIComponent(fileId)}`))
       const metadata = (await response.json()) as Obj
       if (String(metadata.id) === fileId) files.push(metadata)
-    } catch {
+    } catch (error) {
+      requireValidAuth(error)
       manager.notices.push(
         `Could not retrieve metadata for linked Canvas file ${fileId} in ${course.code}.`,
       )
@@ -688,7 +753,8 @@ async function syncOne(
             contentPaths.set(`files:${String(file.id)}`, relativeVault(vault, sidecar))
         }
       }
-    } catch {
+    } catch (error) {
+      requireValidAuth(error)
       manager.notices.push(`Could not download Canvas file ${filename} in ${course.code}.`)
     }
   }
@@ -714,19 +780,7 @@ async function syncOne(
       `\nrelated_paths: ${JSON.stringify([...new Set(paths)])}`
     await managedWrite(manager, ref.path, `---\n${updated}\n---${source.slice(end + 4)}`)
   }
-  const modules = await list(config, apiUrl(root, `${prefix}/modules?include[]=items&per_page=100`))
-  for (let value of modules) {
-    if (!Array.isArray(value.items) && value.id != null)
-      value = {
-        ...value,
-        items: await list(
-          config,
-          apiUrl(
-            root,
-            `${prefix}/modules/${encodeURIComponent(String(value.id))}/items?per_page=100`,
-          ),
-        ),
-      }
+  for (const value of modules) {
     const title = String(value.name ?? `Module ${value.id}`)
     const relatedPaths: string[] = []
     const items = Array.isArray(value.items)
@@ -792,7 +846,8 @@ async function syncOne(
         }),
       )
     }
-  } catch {
+  } catch (error) {
+    requireValidAuth(error)
     manager.notices.push(
       `Canvas discussion topics were unavailable for ${course.code}; continuing without them.`,
     )
@@ -822,7 +877,8 @@ async function syncOne(
         }),
       )
     }
-  } catch {
+  } catch (error) {
+    requireValidAuth(error)
     manager.notices.push(
       `Canvas announcements were unavailable for ${course.code}; continuing without them.`,
     )

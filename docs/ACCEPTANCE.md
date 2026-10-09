@@ -1,6 +1,8 @@
 # Student workflow acceptance — 0.4
 
-This release is tested with synthetic Canvas responses and isolated temporary vaults, not a live student's account. No production course files, credentials or coursework were used or changed.
+Initial release verification used synthetic Canvas responses and isolated temporary vaults, not a live student's account. Those tests did not use production course files or credentials.
+
+After the initial release, the owner explicitly authorized a read-only live Canvas smoke test using existing local credentials and a separate temporary vault. It reproduced disabled Pages (404) and forbidden Files-list (403) responses despite successful authentication. Sync now reports those coverage limits and retrieves independently accessible module-linked pages and files. The live rerun retrieved module pages, PDF/DOCX originals and extracted text; course-wide list access remains unavailable. Existing coursework and credentials were unchanged. This is one-account sync verification, not live academic-content or new-student acceptance.
 
 ## Automated gates
 

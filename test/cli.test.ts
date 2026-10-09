@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { setCanvasFetchForTests } from "../src/canvas.js"
 import { runCli } from "../src/cli.js"
 
 const roots: string[] = []
@@ -37,10 +38,43 @@ async function invoke(args: string[]) {
   }
 }
 afterEach(async () => {
+  setCanvasFetchForTests()
+  delete process.env.CANVAS_CLI_TEST_TOKEN
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
 describe("CLI", () => {
+  it("honors JSON on nested courses list and the legacy courses command", async () => {
+    const root = await temp(),
+      config = join(root, "agent.json")
+    await invoke([
+      "init",
+      "--vault",
+      "vault",
+      "--canvas-url",
+      "https://canvas.example.edu",
+      "--token-env",
+      "CANVAS_CLI_TEST_TOKEN",
+      "--config",
+      config,
+    ])
+    process.env.CANVAS_CLI_TEST_TOKEN = "synthetic-secret"
+    setCanvasFetchForTests(
+      async () =>
+        new Response(JSON.stringify([{ id: 1, course_code: "MBA101", name: "Test" }]), {
+          headers: { "content-type": "application/json" },
+        }),
+    )
+    for (const args of [
+      ["courses", "list", "--json"],
+      ["courses", "--json", "list"],
+      ["courses", "--json"],
+    ]) {
+      const result = await invoke([...args, "--config", config])
+      expect(result.exitCode, result.stderr).toBe(0)
+      expect(JSON.parse(result.stdout)).toEqual([{ id: "1", code: "MBA101", name: "Test" }])
+    }
+  })
   it("initializes an explicit Canvas URL, repeatable allowlist, and empty vault", async () => {
     const root = await temp(),
       config = join(root, "agent.json"),

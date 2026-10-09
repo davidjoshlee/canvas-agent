@@ -38,6 +38,84 @@ const json = (body: unknown, headers: Record<string, string> = {}) =>
   })
 
 describe("Canvas read-only sync", () => {
+  it("continues after disabled Pages and forbidden Files lists and recovers module-linked files/pages", async () => {
+    process.env.CANVAS_TEST_TOKEN = "synthetic-secret"
+    const vault = await temp()
+    setCanvasFetchForTests(async (input) => {
+      const url = new URL(String(input))
+      if (url.pathname === "/api/v1/courses")
+        return json([{ id: 1, course_code: "MBA101", name: "Test course" }])
+      if (url.pathname === "/api/v1/courses/1") return json({ id: 1 })
+      if (url.pathname.endsWith("/pages")) return new Response("disabled", { status: 404 })
+      if (url.pathname.endsWith("/files")) return new Response("denied", { status: 403 })
+      if (url.pathname.endsWith("/modules"))
+        return json([
+          {
+            id: 3,
+            name: "Session 3",
+            items: [
+              { type: "File", content_id: 45, title: "Reading" },
+              { type: "Page", page_url: "lesson", title: "Lesson" },
+            ],
+          },
+        ])
+      if (url.pathname.endsWith("/pages/lesson"))
+        return json({
+          page_id: 7,
+          url: "lesson",
+          title: "Lesson",
+          body: '<p>Module lesson <a href="/files/46">extra reading</a></p>',
+        })
+      if (/\/files\/(45|46)$/.test(url.pathname))
+        return json({
+          id: Number(url.pathname.split("/").at(-1)),
+          filename: "reading.txt",
+          url: `https://canvas.example.edu/download/${url.pathname.split("/").at(-1)}`,
+        })
+      if (url.pathname.startsWith("/download/")) return new Response("Accessible reading content")
+      return json([])
+    })
+    const result = await syncCourses(cfg(vault))
+    expect(result.notices.join(" ")).toContain("Pages list unavailable")
+    expect(result.notices.join(" ")).toContain("Files list unavailable")
+    const module = await readFile(
+      join(vault, "MBA101", "Canvas", "Modules", "Session-3-3.md"),
+      "utf8",
+    )
+    expect(module).toContain("45-reading.txt.extracted.md")
+    expect(module).toContain("Lesson-7.md")
+    expect(
+      await readFile(join(vault, "MBA101", "Canvas", "Pages", "Lesson-7.md"), "utf8"),
+    ).toContain("46-reading.txt.extracted.md")
+  })
+  it.each([401, 500])("does not treat HTTP %s on Pages as a disabled tab", async (status) => {
+    process.env.CANVAS_TEST_TOKEN = "synthetic-secret"
+    const vault = await temp()
+    setCanvasFetchForTests(
+      async (input) => {
+        const url = String(input)
+        if (url.includes("/courses?")) return json([{ id: 1, course_code: "MBA101", name: "Test" }])
+        if (url.includes("/courses/1?")) return json({ id: 1 })
+        if (url.includes("/pages?")) return new Response("unavailable", { status })
+        return json([])
+      },
+      async () => {},
+    )
+    await expect(syncCourses(cfg(vault))).rejects.toThrow(`HTTP ${status}`)
+  })
+  it("stops when linked-file lookup loses authentication", async () => {
+    process.env.CANVAS_TEST_TOKEN = "synthetic-secret"
+    const vault = await temp()
+    setCanvasFetchForTests(async (input) => {
+      const url = String(input)
+      if (url.includes("/courses?")) return json([{ id: 1, course_code: "MBA101", name: "Test" }])
+      if (url.includes("/courses/1?"))
+        return json({ id: 1, syllabus_body: '<a href="/files/45">Reading</a>' })
+      if (url.endsWith("/files/45")) return new Response("expired", { status: 401 })
+      return json([])
+    })
+    await expect(syncCourses(cfg(vault))).rejects.toThrow("HTTP 401")
+  })
   it("discovers linked file references and fetches verifier URLs without forwarding Canvas auth", async () => {
     process.env.CANVAS_TEST_TOKEN = "private-token"
     const dnsHosts: string[] = []

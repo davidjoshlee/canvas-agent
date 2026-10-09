@@ -457,7 +457,7 @@ function makeProgram(): Command {
       const rows = options.all ? await listCourses(config) : await listActiveCourses(config)
       render(
         rows,
-        options.json,
+        options.json || courses.opts().json,
         rows.length
           ? rows.map((c) => `${c.id}\t${c.code}\t${c.name}`).join("\n")
           : "No readable courses.",
