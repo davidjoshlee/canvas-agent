@@ -1,0 +1,10 @@
+{
+  "name": "canvas-agent-tools",
+  "interface": { "displayName": "Canvas Agent Tools" },
+  "plugins": [{
+    "name": "canvas-agent",
+    "source": { "source": "local", "path": "./plugins/canvas-agent" },
+    "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+    "category": "Education"
+  }]
+}

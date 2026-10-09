@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+canvas-agent.config.json
+.env*
+*.log

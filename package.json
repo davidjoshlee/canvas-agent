@@ -1,0 +1,33 @@
+{
+  "name": "canvas-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Model-free Canvas workspace and task handoffs for coding agents",
+  "bin": {
+    "canvas-agent": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "pretest": "npm run build",
+    "test": "vitest run",
+    "dev": "tsx src/cli.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "commander": "^14.0.0",
+    "yaml": "^2.8.1",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.10",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "4.1.11"
+  }
+}

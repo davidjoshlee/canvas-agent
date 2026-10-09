@@ -1,0 +1,6 @@
+{
+  "name": "canvas-agent",
+  "version": "0.1.0",
+  "description": "Local Canvas onboarding and model-free prep handoffs",
+  "skills": "./skills/"
+}

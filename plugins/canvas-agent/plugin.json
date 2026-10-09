@@ -1,0 +1,24 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "canvas-agent",
+  "version": "0.1.0",
+  "description": "Onboard, sync, and complete local Canvas prep tasks using your chosen coding agent",
+  "author": { "name": "David Lee", "url": "https://github.com/davidjoshlee" },
+  "homepage": "https://github.com/davidjoshlee/canvas-agent",
+  "repository": "https://github.com/davidjoshlee/canvas-agent",
+  "license": "MIT",
+  "keywords": ["canvas", "education", "local-first", "agent-handoffs"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Canvas Agent",
+        "shortDescription": "Local Canvas context and safe prep handoffs",
+        "longDescription": "Guidance for setting up the Canvas Agent CLI, selecting courses, syncing a local vault, and producing cited prep candidates from persisted tasks. Requires a separately installed CLI and local filesystem access. No hosted service, model calls, or coursework submission.",
+        "developerName": "David Lee",
+        "category": "Education",
+        "capabilities": ["Interactive", "Write"],
+        "defaultPrompt": ["Set up Canvas Agent for my courses", "Prepare a course week using my local vault"]
+      }
+    }
+  }
+}
