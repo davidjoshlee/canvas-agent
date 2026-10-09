@@ -25,7 +25,7 @@ describe("portable agent plugin", () => {
 
   it("bundles all skill references inside the plugin with no dependency on a source checkout", async () => {
     const skills = await readdir(resolve(root, "skills"))
-    expect(skills.sort()).toEqual(["canvas-workspace", "setup-and-sync"])
+    expect(skills.sort()).toEqual(["assignment-workflow", "canvas-workspace", "setup-and-sync"])
     for (const skill of skills) {
       const file = resolve(root, "skills", skill, "SKILL.md")
       const text = await readFile(file, "utf8")

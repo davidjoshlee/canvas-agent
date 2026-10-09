@@ -92,6 +92,17 @@ describe("prep task persistence", () => {
     expect(task.notices.join(" ")).toContain("No matching dated Week folder")
   })
 
+  it("reads tasks saved under a conventional one-digit week folder", async () => {
+    await setup()
+    course.sources = []
+    course.existingWork = []
+    course.periods = ["GSB-101/Week 2 - Oct 12"]
+    await mkdir(join(vault, "GSB-101", "Week 2 - Oct 12"), { recursive: true })
+    const task = await createPrepTask(vault, "GSB-101", "2026-10-12")
+    expect(task.destination).toBe("GSB-101/Week 2 - Oct 12/Prep")
+    await expect(readTask(vault, task.id)).resolves.toEqual(task)
+  })
+
   it("selects dated week materials and course references without sweeping unrelated resources", async () => {
     await setup()
     const dated = "Assignment prompt for the week."

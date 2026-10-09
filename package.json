@@ -1,6 +1,6 @@
 {
   "name": "canvas-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Model-free Canvas workspace and task handoffs for coding agents",
@@ -11,7 +11,9 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "pretest": "npm run build",
+    "context:sync": "tsx scripts/sync-context.mjs --write",
+    "context:check": "tsx scripts/sync-context.mjs --check",
+    "pretest": "npm run context:check && npm run build",
     "test": "vitest run",
     "dev": "tsx src/cli.ts"
   },

@@ -5,6 +5,7 @@ import { parse as parseYaml } from "yaml"
 import { z } from "zod"
 import { assertNoSymlinks } from "./fs-safety.js"
 import type { CourseContext, SourceRecord, TaskRecord } from "./types.js"
+import { type AssignmentMode, workflowFor } from "./workflows.js"
 import { inspectWorkspace, selectCourse } from "./workspace.js"
 
 const SourceSchema = z
@@ -23,7 +24,7 @@ export const TaskRecordSchema = z
   .object({
     version: z.literal(1),
     id: z.string().uuid(),
-    kind: z.literal("prep"),
+    kind: z.enum(["prep", "assignment"]),
     status: z.enum(["pending", "completed"]),
     createdAt: z.string().datetime({ offset: true }),
     course: z
@@ -32,14 +33,24 @@ export const TaskRecordSchema = z
     week: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .refine((value) => {
-        const date = new Date(`${value}T00:00:00.000Z`)
-        return (
-          Number.isFinite(date.valueOf()) &&
-          date.toISOString().slice(0, 10) === value &&
-          date.getUTCDay() === 1
-        )
-      }, "must be a real Monday date"),
+      .optional(),
+    assignment: z
+      .object({
+        source: z.string().min(1),
+        mode: z.enum(["outline", "draft", "review"]),
+        work: z.string().min(1).optional(),
+        context: z.array(z.string()),
+      })
+      .strict()
+      .optional(),
+    workflow: z
+      .object({
+        version: z.literal(1),
+        instructions: z.array(z.string()),
+        requiredSections: z.array(z.string()),
+      })
+      .strict()
+      .optional(),
     destination: z.string().min(1),
     requirements: z.array(z.string()),
     sources: z.array(SourceSchema),
@@ -55,13 +66,40 @@ export const TaskRecordSchema = z
   })
   .strict()
   .superRefine((task, ctx) => {
+    if (task.kind === "prep") {
+      if (!task.week || task.assignment)
+        ctx.addIssue({
+          code: "custom",
+          message: "Preparation tasks require a week and cannot include assignment data",
+        })
+      if (
+        task.week &&
+        !(() => {
+          const value = task.week as string
+          const date = new Date(`${value}T00:00:00.000Z`)
+          return (
+            Number.isFinite(date.valueOf()) &&
+            date.toISOString().slice(0, 10) === value &&
+            date.getUTCDay() === 1
+          )
+        })()
+      )
+        ctx.addIssue({ code: "custom", message: "must be a real Monday date" })
+    } else {
+      if (task.week || !task.assignment)
+        ctx.addIssue({
+          code: "custom",
+          message: "Assignment tasks require assignment data and cannot include a week",
+        })
+      if (!task.workflow)
+        ctx.addIssue({ code: "custom", message: "Assignment tasks require a persisted workflow" })
+    }
     if (task.status === "completed" && (!task.completedAt || !task.output || !task.outputHash))
       ctx.addIssue({ code: "custom", message: "Completed tasks require completion metadata" })
     if (task.status === "pending" && (task.completedAt || task.output || task.outputHash))
       ctx.addIssue({ code: "custom", message: "Pending tasks cannot have completion metadata" })
   })
 
-const REQUIRED = ["Summary", "Key concepts", "Discussion questions", "Sources"]
 const TASKS = ["_meta", "tasks"]
 
 function hash(bytes: Buffer | string): string {
@@ -287,17 +325,29 @@ export async function readGuidanceSnapshot(
 }
 function taskMarkdown(task: TaskRecord): string {
   const oneLine = (value: string) => value.replace(/[\r\n\t]+/g, " ").trim()
+  const workflow = task.workflow ?? workflowFor("prep")
   const lines = [
-    "# Prep task",
+    task.kind === "assignment" ? `# Assignment ${task.assignment?.mode} task` : "# Prep task",
     "",
     `Task: ${task.id}`,
     `Course: ${oneLine(task.course.code)} — ${oneLine(task.course.title)}`,
-    `Week: ${task.week}`,
+    ...(task.week ? [`Week: ${task.week}`] : []),
+    ...(task.assignment
+      ? [
+          `Mode: ${task.assignment.mode}`,
+          `Prompt: \`${task.assignment.source}\``,
+          ...(task.assignment.work ? [`Student work: \`${task.assignment.work}\``] : []),
+        ]
+      : []),
     `Destination: ${task.destination}`,
     "",
     "## Candidate requirements",
     "",
     ...task.requirements.map((r) => `- ${r}`),
+    "",
+    "## Workflow instructions",
+    "",
+    ...workflow.instructions.map((instruction) => `- ${oneLine(instruction)}`),
     "",
     "## Source snapshots",
     "",
@@ -366,6 +416,7 @@ export async function createPrepTask(
     notices.push(
       `No readable source material was found for ${weekValue}; the task contains no source snapshots.`,
     )
+  const workflow = workflowFor("prep")
   const record: TaskRecord = {
     version: 1,
     id: randomUUID(),
@@ -375,7 +426,8 @@ export async function createPrepTask(
     course: { code: course.code, title: course.title, root: course.root },
     week: weekValue,
     destination,
-    requirements: [...REQUIRED],
+    requirements: [...workflow.requiredSections],
+    workflow,
     sources: selected,
     excluded,
     guidance,
@@ -386,6 +438,230 @@ export async function createPrepTask(
   const dir = await noSymlinkPath(context.vault, taskDirRel, true)
   await mkdir(dir, { recursive: true, mode: 0o700 })
   await noSymlinkPath(context.vault, taskDirRel)
+  await writeFile(join(dir, "task.json"), `${JSON.stringify(task, null, 2)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  })
+  await writeFile(join(dir, "TASK.md"), taskMarkdown(task), { flag: "wx", mode: 0o600 })
+  return task
+}
+
+function assignmentDestination(source: string): string {
+  const parent = source.slice(0, source.lastIndexOf("/"))
+  return `${parent}/Drafts`
+}
+
+async function explicitSource(
+  course: CourseContext,
+  vault: string,
+  value: string,
+): Promise<SourceRecord> {
+  const clean = relPath(value)
+  if (
+    !clean.startsWith(`${course.root}/`) ||
+    isPrepOrDraft(clean) ||
+    /(^|\/)_(?:meta|private)(\/|$)/i.test(clean)
+  )
+    throw new Error(`Assignment source is not an approved course source: ${value}`)
+  const source = course.sources.find((item) => item.path === clean)
+  if (!source) {
+    const excluded = course.excluded.find((item) => item.path === clean)
+    throw new Error(
+      excluded
+        ? `Assignment source is restricted or unreadable: ${clean} (${excluded.reason})`
+        : `Assignment source is not an approved readable course source: ${clean}`,
+    )
+  }
+  return verifySnapshot(vault, source)
+}
+
+async function explicitWork(
+  course: CourseContext,
+  vault: string,
+  value: string,
+): Promise<SourceRecord> {
+  const clean = relPath(value)
+  if (
+    !clean.startsWith(`${course.root}/`) ||
+    !/\.(?:md|markdown|txt)$/i.test(clean) ||
+    /(^|\/)_(?:meta|private)(\/|$)/i.test(clean) ||
+    /(^|\/)(?:credentials?|secrets?|passwords?|tokens?)(?:\.[^/]*)?$/i.test(clean) ||
+    clean.split("/").some((part) => part.startsWith("."))
+  )
+    throw new Error(
+      `Student work must be readable Markdown or text within an existing-work folder: ${value}`,
+    )
+  const allowed =
+    course.existingWork.includes(clean) &&
+    /(^|\/)drafts?(\/|$)/i.test(clean.slice(course.root.length))
+  if (!allowed) throw new Error(`Student work is not in an approved existing-work folder: ${clean}`)
+  const file = await noSymlinkPath(vault, clean)
+  const info = await lstat(file)
+  if (!info.isFile() || info.size > 5 * 1024 * 1024)
+    throw new Error(`Student work is not a regular text file: ${clean}`)
+  const bytes = await readFile(file)
+  if (bytes.includes(0) || !Buffer.from(bytes.toString("utf8"), "utf8").equals(bytes))
+    throw new Error(`Student work is not safe UTF-8 text: ${clean}`)
+  const text = bytes.toString("utf8")
+  let body = text
+  let metadata: Record<string, unknown> = {}
+  try {
+    const match = text.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\s*\r?\n|$)/)
+    if (match) {
+      const parsed: unknown = parseYaml(match[1] ?? "")
+      if (
+        parsed !== null &&
+        parsed !== undefined &&
+        (typeof parsed !== "object" || Array.isArray(parsed))
+      )
+        throw new Error()
+      metadata = (parsed ?? {}) as Record<string, unknown>
+      body = text.slice(match[0].length).trim()
+    } else if (/^---(?:\s*\r?\n|$)/.test(text)) throw new Error()
+  } catch {
+    throw new Error(`Student work metadata is malformed: ${clean}`)
+  }
+  for (const value of [metadata.ai_policy, metadata.policy, metadata.redistribution]) {
+    if (value === undefined || value === null || value === "") continue
+    const policy = String(value)
+      .trim()
+      .toLocaleLowerCase()
+      .replace(/[\s-]+/g, "_")
+    if (!["allowed", "allow", "permitted"].includes(policy))
+      throw new Error(`Student work has restricted or unknown policy metadata: ${clean}`)
+  }
+  return {
+    path: clean,
+    title: basename(file, extname(file)),
+    hash: hash(bytes),
+    text: body,
+    type: "student-work",
+    dates: [],
+  }
+}
+
+function isAssignmentReference(path: string, courseRoot: string): boolean {
+  if (!path.startsWith(`${courseRoot}/`) || isPrepOrDraft(path)) return false
+  return (
+    isCourseReference(path, courseRoot) ||
+    /(^|\/)(?:references?|reading list)(\/|$)/i.test(path.slice(courseRoot.length + 1))
+  )
+}
+
+export async function selectAssignmentInputs(
+  vault: string,
+  course: CourseContext,
+  sourcePath: string,
+  workPath?: string,
+  contextPaths: string[] = [],
+): Promise<{
+  sources: SourceRecord[]
+  guidance: SourceRecord[]
+  context: string[]
+  excluded: CourseContext["excluded"]
+}> {
+  const prompt = await explicitSource(course, vault, sourcePath)
+  const uniqueContext = [...new Set(contextPaths.map(relPath))].filter(
+    (path) => path !== prompt.path && path !== workPath,
+  )
+  const contextSources: SourceRecord[] = []
+  const contextGuidance: string[] = []
+  for (const path of uniqueContext) {
+    if (course.guidance.includes(path)) {
+      contextGuidance.push(path)
+      continue
+    }
+    contextSources.push(await explicitSource(course, vault, path))
+  }
+  const references = course.sources
+    .filter((source) => isAssignmentReference(source.path, course.root))
+    .filter(
+      (source) =>
+        source.path !== prompt.path && !contextSources.some((item) => item.path === source.path),
+    )
+    .sort((a, b) => a.path.localeCompare(b.path))
+  const selectedSources = [
+    prompt,
+    ...contextSources,
+    ...(await Promise.all(references.map((source) => verifySnapshot(vault, source)))),
+  ]
+  if (workPath) selectedSources.push(await explicitWork(course, vault, workPath))
+  const context = [
+    ...new Set([
+      ...contextSources.map((source) => source.path),
+      ...references.map((source) => source.path),
+      ...contextGuidance,
+    ]),
+  ]
+  const guidance: SourceRecord[] = []
+  for (const path of course.guidance) guidance.push(await readGuidanceSnapshot(vault, path))
+  const guidanceLike = (path: string) =>
+    path === "AGENTS.md" || /(^|\/)AGENTS\.md$/i.test(path) || /(^|\/)guidance\//i.test(path)
+  const relevantPaths = new Set([prompt.path, ...context, ...(workPath ? [workPath] : [])])
+  const excluded = course.excluded.filter(
+    (item) =>
+      relevantPaths.has(item.path) ||
+      isAssignmentReference(item.path, course.root) ||
+      guidanceLike(item.path),
+  )
+  return { sources: selectedSources, guidance, context, excluded }
+}
+
+export async function createAssignmentTask(
+  vault: string,
+  courseQuery: string,
+  sourcePath: string,
+  modeValue: string,
+  workPath?: string,
+  contextPaths: string[] = [],
+): Promise<TaskRecord> {
+  if (!(["outline", "draft", "review"] as string[]).includes(modeValue))
+    throw new Error("Assignment mode must be outline, draft, or review")
+  const mode = modeValue as AssignmentMode
+  const normalizedWork = workPath ? relPath(workPath) : undefined
+  const workspace = await inspectWorkspace(resolve(vault))
+  const course = selectCourse(workspace, courseQuery)
+  if (mode === "review" && !workPath)
+    throw new Error("Review mode requires --work pointing to existing student work")
+  const selected = await selectAssignmentInputs(
+    workspace.vault,
+    course,
+    sourcePath,
+    normalizedWork,
+    contextPaths,
+  )
+  const prompt = selected.sources[0]
+  if (!prompt) throw new Error("Assignment prompt snapshot is missing")
+  const workflow = workflowFor("assignment", mode)
+  const record: TaskRecord = {
+    version: 1,
+    id: randomUUID(),
+    kind: "assignment",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    course: { code: course.code, title: course.title, root: course.root },
+    assignment: {
+      source: prompt.path,
+      mode,
+      ...(normalizedWork ? { work: normalizedWork } : {}),
+      context: selected.context,
+    },
+    destination: assignmentDestination(prompt.path),
+    requirements: [...workflow.requiredSections],
+    sources: selected.sources,
+    excluded: selected.excluded,
+    guidance: selected.guidance,
+    notices: [
+      ...workspace.notices,
+      ...selected.excluded.map((item) => `Excluded ${item.path}: ${item.reason}`),
+    ],
+    workflow,
+  }
+  const task = TaskRecordSchema.parse(record) as TaskRecord
+  const rel = `${TASKS.join("/")}/${task.id}`
+  const dir = await noSymlinkPath(workspace.vault, rel, true)
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  await noSymlinkPath(workspace.vault, rel)
   await writeFile(join(dir, "task.json"), `${JSON.stringify(task, null, 2)}\n`, {
     flag: "wx",
     mode: 0o600,
@@ -412,6 +688,87 @@ export async function readTask(vault: string, id: string): Promise<TaskRecord> {
     throw new Error("Invalid task record or mismatched task identity")
   relPath(result.data.course.root)
   relPath(result.data.destination)
+  const authoritative = workflowFor(result.data.kind, result.data.assignment?.mode)
+  if (
+    result.data.workflow &&
+    JSON.stringify(result.data.workflow) !== JSON.stringify(authoritative)
+  )
+    throw new Error("Task workflow was modified")
+  if (JSON.stringify(result.data.requirements) !== JSON.stringify(authoritative.requiredSections))
+    throw new Error("Task requirements were modified")
+  if (result.data.kind === "assignment") {
+    const assignment = result.data.assignment
+    if (!assignment || assignment.source !== result.data.sources[0]?.path)
+      throw new Error("Assignment task prompt identity is invalid")
+    const sourcePaths = new Set(result.data.sources.map((source) => source.path))
+    const guidancePaths = new Set(result.data.guidance.map((item) => item.path))
+    if (assignment.context.some((path) => !sourcePaths.has(path) && !guidancePaths.has(path)))
+      throw new Error("Assignment context does not match its source or guidance snapshots")
+    if (assignment.work && !sourcePaths.has(assignment.work))
+      throw new Error("Assignment work does not match its source snapshots")
+    if (
+      assignment.work &&
+      (!assignment.work.startsWith(`${result.data.course.root}/`) ||
+        !/\.(?:md|markdown|txt)$/i.test(assignment.work) ||
+        !/(^|\/)drafts?(\/|$)/i.test(assignment.work.slice(result.data.course.root.length)) ||
+        /(^|\/)_(?:meta|private)(\/|$)/i.test(assignment.work))
+    )
+      throw new Error("Assignment work path is not an approved Drafts text file")
+    const sourceContext = assignment.context.filter((path) => sourcePaths.has(path))
+    const expectedPaths = [
+      assignment.source,
+      ...sourceContext,
+      ...(assignment.work ? [assignment.work] : []),
+    ]
+    if (
+      new Set(assignment.context).size !== assignment.context.length ||
+      new Set(expectedPaths).size !== expectedPaths.length ||
+      sourcePaths.size !== expectedPaths.length ||
+      guidancePaths.size !== result.data.guidance.length ||
+      result.data.sources.some((item) => guidancePaths.has(item.path))
+    )
+      throw new Error("Assignment task source snapshots do not match its selected inputs")
+    for (const source of result.data.sources) {
+      relPath(source.path)
+      if (source.path !== assignment.work && isPrepOrDraft(source.path))
+        throw new Error("Assignment task includes prior prep or work as a course source")
+      const permittedGlobalGuidance =
+        source.path === "AGENTS.md" &&
+        result.data.guidance.some((item) => item.path === source.path)
+      if (
+        (!source.path.startsWith(`${result.data.course.root}/`) && !permittedGlobalGuidance) ||
+        /(^|\/)_(?:meta|private)(\/|$)/i.test(source.path)
+      )
+        throw new Error("Assignment task contains a prohibited source path")
+      if (/(^|\/)(?:credentials?|secrets?|passwords?|tokens?)(?:\.[^/]*)?$/i.test(source.path))
+        throw new Error("Assignment task contains a credential-like source path")
+    }
+    if (
+      assignment.work &&
+      assignment.mode !== "review" &&
+      !result.data.sources.some((source) => source.path === assignment.work)
+    )
+      throw new Error("Assignment work snapshot is invalid")
+    if (assignment.mode === "review" && !assignment.work)
+      throw new Error("Review task is missing student work")
+    for (const guidance of result.data.guidance) {
+      relPath(guidance.path)
+      const permittedGlobal = guidance.path === "AGENTS.md"
+      const permittedCourseGuidance =
+        guidance.path.startsWith(`${result.data.course.root}/`) &&
+        (!/(^|\/)_(?:meta|private)(\/|$)/i.test(guidance.path) ||
+          /\/_meta\/guidance\//i.test(guidance.path))
+      if (
+        (!permittedGlobal && !permittedCourseGuidance) ||
+        /(^|\/)(?:credentials?|secrets?|passwords?|tokens?)(?:\.[^/]*)?$/i.test(guidance.path)
+      )
+        throw new Error("Assignment task contains a prohibited guidance path")
+    }
+    if (result.data.destination !== assignmentDestination(assignment.source))
+      throw new Error("Assignment destination is invalid")
+    return result.data as TaskRecord
+  }
+  if (!result.data.week) throw new Error("Preparation task is missing its week")
   const safeSource = (path: string) => {
     relPath(path)
     const parts = path.toLocaleLowerCase().split("/")
@@ -454,7 +811,7 @@ export async function readTask(vault: string, id: string): Promise<TaskRecord> {
     throw new Error("Task destination is outside its course")
   const datedFallback = `${result.data.course.root}/Other/Prep/${result.data.week}`
   const conventional = new RegExp(
-    `^${result.data.course.root}/Week \\d{2,} - ([A-Za-z]{3}) (\\d{1,2})/Prep$`,
+    `^${result.data.course.root}/Week \\d+ - ([A-Za-z]{3}) (\\d{1,2})/Prep$`,
   ).exec(result.data.destination)
   const months = [
     "jan",

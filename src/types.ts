@@ -39,11 +39,18 @@ export interface WorkspaceContext {
 export interface TaskRecord {
   version: 1
   id: string
-  kind: "prep"
+  kind: "prep" | "assignment"
   status: "pending" | "completed"
   createdAt: string
   course: { code: string; title: string; root: string }
-  week: string
+  week?: string
+  assignment?: {
+    source: string
+    mode: "outline" | "draft" | "review"
+    work?: string
+    context: string[]
+  }
+  workflow?: { version: 1; instructions: string[]; requiredSections: string[] }
   destination: string
   requirements: string[]
   sources: SourceRecord[]

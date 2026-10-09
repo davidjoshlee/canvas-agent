@@ -6,13 +6,14 @@ import {
   readGuidanceSnapshot,
   readTask,
   resolvePrepDestination,
+  selectAssignmentInputs,
   selectPrepInputs,
   TaskRecordSchema,
 } from "./tasks.js"
 import type { CourseContext, TaskRecord } from "./types.js"
+import { workflowFor } from "./workflows.js"
 import { inspectWorkspace } from "./workspace.js"
 
-const REQUIRED = ["Summary", "Key concepts", "Discussion questions", "Sources"]
 const digest = (value: Buffer | string) => createHash("sha256").update(value).digest("hex")
 const within = (parent: string, child: string) => {
   const rel = relative(parent, child)
@@ -75,7 +76,10 @@ function checkCandidate(text: string, id: string, task: TaskRecord): void {
       body.push(lines[j] ?? "")
     sections.set(title, body.join("\n").trim())
   }
-  for (const heading of REQUIRED) {
+  const workflow = task.workflow ?? workflowFor("prep")
+  if (JSON.stringify(task.requirements) !== JSON.stringify(workflow.requiredSections))
+    throw new Error("Task requirements do not match the authoritative workflow")
+  for (const heading of workflow.requiredSections) {
     if (!sections.get(heading)) throw new Error(`Required section is missing or empty: ${heading}`)
   }
   if (
@@ -129,6 +133,26 @@ async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
     (c) => c.code === task.course.code && c.root === task.course.root,
   )
   if (!course) throw new Error("Task course is missing or no longer uniquely identifiable")
+  if (task.kind === "assignment") {
+    const assignment = task.assignment
+    if (!assignment) throw new Error("Assignment task metadata is missing")
+    const current = await selectAssignmentInputs(
+      vault,
+      course,
+      assignment.source,
+      assignment.work,
+      assignment.context,
+    )
+    const sameRecords = (a: unknown[], b: unknown[]) => JSON.stringify(a) === JSON.stringify(b)
+    if (!sameRecords(current.sources, task.sources))
+      throw new Error("Assignment inputs are stale: selected sources or their snapshots changed")
+    if (!sameRecords(current.guidance, task.guidance))
+      throw new Error("Course guidance changed or was modified since this task was created")
+    if (!sameRecords(current.excluded, task.excluded))
+      throw new Error("Assignment source restrictions or exclusions changed since task creation")
+    return
+  }
+  if (!task.week) throw new Error("Preparation task is missing its week")
   const expected = expectedDestination(course, task.week)
   if (task.destination !== expected)
     throw new Error("Task destination does not match the current authoritative course and week")
@@ -187,8 +211,13 @@ function validateOutputReference(task: TaskRecord, output: string): void {
   if (!output.startsWith(`${task.destination}/`))
     throw new Error("Completed output is outside the task destination")
   const filename = output.slice(task.destination.length + 1)
-  if (!/^01 Prep Brief(?:\.v(?:[2-9]|[1-9]\d+))?\.md$/.test(filename))
-    throw new Error("Completed output filename is not a supported version")
+  const valid =
+    task.kind === "prep"
+      ? /^01 Prep Brief(?:\.v(?:[2-9]|[1-9]\d+))?\.md$/.test(filename)
+      : new RegExp(
+          `^01 Assignment ${task.assignment?.mode === "outline" ? "Outline" : task.assignment?.mode === "draft" ? "Draft" : "Review"}(?:\\.v(?:[2-9]|[1-9]\\d+))?\\.md$`,
+        ).test(filename)
+  if (!valid) throw new Error("Completed output filename is not a supported version")
 }
 
 async function verifyTaskDestination(vault: string, task: TaskRecord): Promise<void> {
@@ -196,7 +225,14 @@ async function verifyTaskDestination(vault: string, task: TaskRecord): Promise<v
   const course = context.courses.find(
     (c) => c.code === task.course.code && c.root === task.course.root,
   )
-  if (!course || resolvePrepDestination(course, task.week) !== task.destination)
+  if (
+    !course ||
+    (task.kind === "prep"
+      ? !task.week || resolvePrepDestination(course, task.week) !== task.destination
+      : !task.assignment ||
+        task.destination !==
+          `${task.assignment.source.slice(0, task.assignment.source.lastIndexOf("/"))}/Drafts`)
+  )
     throw new Error("Task destination does not match the authoritative course and week")
 }
 
@@ -273,10 +309,13 @@ export async function completeTask(
     validateOutputReference(task, outputRel)
   } else {
     const files = await readdir(destination)
-    const base = "01 Prep Brief.md"
+    const base =
+      task.kind === "prep"
+        ? "01 Prep Brief.md"
+        : `01 Assignment ${task.assignment?.mode === "outline" ? "Outline" : task.assignment?.mode === "draft" ? "Draft" : "Review"}.md`
     let name = base
     let version = 2
-    while (files.includes(name)) name = `01 Prep Brief.v${version++}.md`
+    while (files.includes(name)) name = `${base.slice(0, -3)}.v${version++}.md`
     outputRel = `${task.destination}/${name}`
     const markerData = JSON.stringify({ hash: candidateHash, output: outputRel })
     try {

@@ -8,7 +8,7 @@ import { listCourses, syncCourses } from "./canvas.js"
 import { completeTask } from "./completion.js"
 import { createConfig, loadConfig } from "./config.js"
 import { assertNoSymlinks } from "./fs-safety.js"
-import { createPrepTask, readTask } from "./tasks.js"
+import { createAssignmentTask, createPrepTask, readTask } from "./tasks.js"
 import type { TaskRecord, ToolkitConfig, WorkspaceContext } from "./types.js"
 import { inspectWorkspace } from "./workspace.js"
 
@@ -21,9 +21,12 @@ function summary(task: TaskRecord) {
     status: task.status,
     course: task.course,
     week: task.week,
+    assignment: task.assignment,
     destination: task.destination,
     requirements: task.requirements,
+    workflow: task.workflow,
     sources: task.sources.map((s) => s.path),
+    guidance: task.guidance.map((s) => s.path),
     excluded: task.excluded,
     notices: task.notices,
     ...(task.output ? { output: task.output } : {}),
@@ -188,7 +191,39 @@ function makeProgram(): Command {
       )
     })
 
-  const task = program.command("task").description("show or complete persisted prep tasks")
+  program
+    .command("assignment")
+    .description("create an assignment outline, draft, or review task")
+    .argument("<course>", "course code or title")
+    .requiredOption("--source <path>", "approved vault-relative assignment prompt")
+    .requiredOption("--mode <mode>", "outline, draft, or review")
+    .option("--work <path>", "explicit Markdown/text student work in a Drafts folder")
+    .option(
+      "--context <path>",
+      "approved explicit context path (repeatable)",
+      (value: string, previous: string[]) => [...previous, value],
+      [] as string[],
+    )
+    .option("--json", "emit JSON")
+    .action(async (course, options) => {
+      const config = await loadConfig(program.opts().config)
+      const task = await createAssignmentTask(
+        config.vault.path,
+        course,
+        options.source,
+        options.mode,
+        options.work,
+        options.context,
+      )
+      const taskFile = taskMarkdownPath(config, task.id)
+      render(
+        { ...summary(task), taskFile },
+        options.json,
+        `Created ${task.assignment?.mode} assignment task ${task.id} for ${task.course.code}.\nRead: ${taskFile}`,
+      )
+    })
+
+  const task = program.command("task").description("show or complete persisted academic tasks")
   task
     .command("show")
     .description("show a task brief")
@@ -206,7 +241,7 @@ function makeProgram(): Command {
     })
   task
     .command("complete")
-    .description("validate and save a candidate prep brief")
+    .description("validate and save a candidate prep or assignment artifact")
     .argument("<id>", "task UUID")
     .requiredOption("--file <path>", "candidate Markdown file")
     .option("--json", "emit JSON")
