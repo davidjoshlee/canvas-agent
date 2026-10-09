@@ -13,7 +13,7 @@ Canvas Agent is a local, model-free toolkit for reading explicitly allowlisted C
 From a fresh checkout:
 
 ```sh
-git clone git@github.com:davidjoshlee/canvas-agent.git
+git clone https://github.com/davidjoshlee/canvas-agent.git
 cd canvas-agent
 npm ci
 npm run build

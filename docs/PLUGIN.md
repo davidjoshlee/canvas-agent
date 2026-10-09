@@ -6,10 +6,10 @@ This is a skills-only local toolkit integration, not a hosted service. Install t
 
 ## Codex
 
-With a compatible Codex CLI and repository access:
+With a compatible Codex CLI and repository access (configure GitHub Git authentication first; for GitHub CLI users, `gh auth login` followed by `gh auth setup-git`):
 
 ```sh
-codex plugin marketplace add git@github.com:davidjoshlee/canvas-agent.git --ref main
+codex plugin marketplace add https://github.com/davidjoshlee/canvas-agent.git --ref main
 codex plugin add canvas-agent@canvas-agent-tools
 ```
 
