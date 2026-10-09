@@ -13,6 +13,13 @@ export interface SourceRecord {
   type: string
   dates: string[]
   canvasUrl?: string
+  canvasId?: string
+  dueAt?: string
+  postedAt?: string
+  relatedPaths?: string[]
+  originalPath?: string
+  originalHash?: string
+  moduleCanvasId?: string
 }
 export interface ExcludedSource {
   path: string
@@ -44,13 +51,17 @@ export interface TaskRecord {
   createdAt: string
   course: { code: string; title: string; root: string }
   week?: string
+  period?: { kind: "week" | "session"; value: string; root?: string }
+  parentTaskId?: string
+  feedback?: string
+  questions?: string[]
   assignment?: {
     source: string
     mode: "outline" | "draft" | "review"
     work?: string
     context: string[]
   }
-  workflow?: { version: 1; instructions: string[]; requiredSections: string[] }
+  workflow?: { version: 1 | 2; instructions: string[]; requiredSections: string[] }
   destination: string
   requirements: string[]
   sources: SourceRecord[]

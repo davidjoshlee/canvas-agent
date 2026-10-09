@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import type { Dirent } from "node:fs"
 import { lstat, readdir, readFile } from "node:fs/promises"
-import { basename, join, relative, resolve, sep } from "node:path"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
 
 import { parse as parseYaml } from "yaml"
 import { assertNoSymlinks } from "./fs-safety.js"
@@ -154,7 +154,9 @@ async function inspectCourse(
       (entry) =>
         entry.isDirectory() &&
         !entry.isSymbolicLink() &&
-        /^Week \d+ - [A-Za-z]{3} \d{1,2}$/.test(entry.name),
+        /^(?:Week \d+ - [A-Za-z]{3} \d{1,2}|Milestone \d+(?: - [A-Za-z]{3} \d{1,2})?|Session \d+(?: - [A-Za-z]{3} \d{1,2})?)$/i.test(
+          entry.name,
+        ),
     )
     .map((entry) => `${root}/${entry.name}`)
     .sort()
@@ -222,15 +224,117 @@ async function inspectCourse(
     const isGuidance = isGuidancePath(entry.path)
     const parsed = await readDocument(entry, excluded)
     if (!parsed) continue
+    if (entry.name.endsWith(".extracted.md")) {
+      const originalPath = stringValue(parsed.data.original_path)
+      const originalHash = stringValue(parsed.data.original_hash)
+      if (
+        originalPath &&
+        /(?:^|\/)(?:credentials?|secrets?|passwords?|tokens?)(?:\.[^/]*)?$/i.test(originalPath)
+      ) {
+        excluded.push({ path: entry.path, reason: "Credential-like original; extraction omitted" })
+        continue
+      }
+      const relativeOriginal = originalPath && resolve(vault, originalPath)
+      if (!originalPath || !originalHash || !relativeOriginal?.startsWith(absoluteRoot + sep)) {
+        excluded.push({
+          path: entry.path,
+          reason: "Extraction sidecar has invalid original provenance; text omitted",
+        })
+        continue
+      }
+      try {
+        await assertNoSymlinks(relativeOriginal)
+        const originalInfo = await lstat(relativeOriginal)
+        if (!originalInfo.isFile() || originalInfo.size > 50 * 1024 * 1024)
+          throw new Error("Extraction original exceeds the regular-file size limit")
+        const original = await readFile(relativeOriginal)
+        if (createHash("sha256").update(original).digest("hex") !== originalHash) {
+          excluded.push({ path: entry.path, reason: "Extraction sidecar is stale; text omitted" })
+          continue
+        }
+        // A generated sidecar must not launder policy metadata from an original
+        // Markdown/text document. The sidecar's own frontmatter only proves
+        // provenance; the original's guidance policy remains authoritative.
+        if (textExtensions.has(extension(basename(originalPath)))) {
+          const originalEntry: ScanEntry = {
+            path: originalPath,
+            absolute: relativeOriginal,
+            name: basename(originalPath),
+            parent: dirname(originalPath),
+          }
+          const originalParsed = await readDocument(originalEntry, [])
+          if (!originalParsed || isRestricted(originalParsed.data)) {
+            excluded.push({
+              path: entry.path,
+              reason:
+                "Original document has malformed or restricted policy metadata; extraction omitted",
+            })
+            continue
+          }
+        }
+      } catch {
+        excluded.push({
+          path: entry.path,
+          reason: "Extraction original is missing or unsafe; text omitted",
+        })
+        continue
+      }
+      if (isRestricted(parsed.data)) {
+        excluded.push({ path: entry.path, reason: "Restricted policy metadata; text omitted" })
+        continue
+      }
+      sources.push({
+        ...toSource(entry, parsed),
+        originalPath,
+        originalHash,
+        ...(stringValue(parsed.data.module_canvas_id)
+          ? { moduleCanvasId: stringValue(parsed.data.module_canvas_id) as string }
+          : {}),
+      })
+      continue
+    }
     if (isRestricted(parsed.data)) {
       excluded.push({ path: entry.path, reason: "Restricted policy metadata; text omitted" })
       continue
     }
     const record = toSource(entry, parsed)
+    const relationText =
+      typeof parsed.data.related_paths === "string"
+        ? [parsed.data.related_paths]
+        : Array.isArray(parsed.data.related_paths)
+          ? parsed.data.related_paths.filter((v): v is string => typeof v === "string")
+          : []
+    const relatedPaths = [...new Set(relationText)]
+    if (relatedPaths.length) record.relatedPaths = relatedPaths
+    if (stringValue(parsed.data.due_at)) record.dueAt = stringValue(parsed.data.due_at) ?? undefined
+    if (!record.dueAt && isRecord(parsed.data.dates))
+      record.dueAt = stringValue(parsed.data.dates.due_at) ?? undefined
+    if (stringValue(parsed.data.canvas_id))
+      record.canvasId = stringValue(parsed.data.canvas_id) ?? undefined
     if (isGuidance) {
       guidance.push(entry.path)
     } else {
       sources.push(record)
+    }
+  }
+  const approvedPaths = new Set(sources.map((source) => source.path))
+  for (const imported of sources.filter((item) => item.moduleCanvasId)) {
+    const module = sources.find(
+      (item) =>
+        item.canvasId === imported.moduleCanvasId &&
+        /module|session|milestone/i.test(`${item.type} ${item.path}`),
+    )
+    if (module) module.relatedPaths = [...new Set([...(module.relatedPaths ?? []), imported.path])]
+    else notices.push(`Imported source ${imported.path} has no matching course module.`)
+  }
+  for (const source of sources) {
+    for (const related of source.relatedPaths ?? []) {
+      const target = related.startsWith(`${root}/`) ? related : `${root}/${related}`
+      if (!approvedPaths.has(target)) {
+        notices.push(
+          `Skipped unavailable related course source ${target} linked from ${source.path}.`,
+        )
+      }
     }
   }
   return {
@@ -362,6 +466,15 @@ function toSource(
     ...(stringValue(parsed.data.canvas_url)
       ? { canvasUrl: stringValue(parsed.data.canvas_url) ?? "" }
       : {}),
+    ...(stringValue(parsed.data.original_path)
+      ? { originalPath: stringValue(parsed.data.original_path) ?? "" }
+      : {}),
+    ...(stringValue(parsed.data.original_hash)
+      ? { originalHash: stringValue(parsed.data.original_hash) ?? "" }
+      : {}),
+    ...(stringValue(parsed.data.posted_at)
+      ? { postedAt: stringValue(parsed.data.posted_at) ?? "" }
+      : {}),
   }
 }
 
@@ -414,7 +527,20 @@ function inferType(path: string): string {
 
 function collectDates(value: unknown): string[] {
   if (!isRecord(value)) return []
-  return Object.values(value).flatMap((date) => {
+  const signalKeys = new Set([
+    "date",
+    "dates",
+    "due",
+    "due_at",
+    "unlock_at",
+    "start_at",
+    "end_at",
+    "period",
+    "class",
+    "session",
+  ])
+  return Object.entries(value).flatMap(([key, date]) => {
+    if (!signalKeys.has(key.toLowerCase())) return []
     if (typeof date !== "string") return []
     const match = date.match(/^(\d{4}-\d{2}-\d{2})(?:$|T)/)
     return match?.[1] ? [match[1]] : []

@@ -33,8 +33,20 @@ const candidate = (id: string, path = "GSB-101/Week 03 - Oct 12/lecture.md") => 
 ## Summary
 A concise summary of the lecture.
 
+## Overview
+The lecture introduces market structure and pricing.
+
+## Reading synthesis
+The supplied lecture connects competitive entry and pricing.
+
 ## Key concepts
 Market structure affects pricing.
+
+## Preparation questions
+No explicit preparation questions were posted in these sources.
+
+## Discussion points
+Discuss the connection between entry and pricing in the lecture.
 
 ## Discussion questions
 How does entry change pricing?
@@ -110,6 +122,69 @@ afterEach(async () => {
 })
 
 describe("safe task completion", () => {
+  it("continues completing persisted v1 prep tasks with their saved headings", async () => {
+    await setup()
+    const source = course.sources[0]
+    if (!source) throw new Error("Fixture source is missing")
+    course.sources = [source]
+    const task = await createPrepTask(vault, "GSB-101", "2026-10-12")
+    const taskPath = join(vault, "_meta", "tasks", task.id, "task.json")
+    const legacy = JSON.parse(await readFile(taskPath, "utf8"))
+    delete legacy.period
+    delete legacy.workflow
+    delete legacy.questions
+    legacy.requirements = ["Summary", "Key concepts", "Discussion questions", "Sources"]
+    await writeFile(taskPath, JSON.stringify(legacy))
+    await writeFile(
+      candidatePath,
+      `Task: ${task.id}\n\n## Summary\nA concise summary of the reading.\n\n## Key concepts\nMarket structure affects pricing.\n\n## Discussion questions\nNo questions were supplied.\n\n## Sources\n- \`${source.path}\`\n`,
+    )
+    const completed = await completeTask(vault, task.id, candidatePath)
+    expect(completed.task.status).toBe("completed")
+    expect(completed.task.workflow).toBeUndefined()
+  })
+
+  it("requires substantive source-linked coverage for every captured prep question", async () => {
+    await setup()
+    const source = course.sources[0]
+    if (!source) throw new Error("Fixture source is missing")
+    sourceText =
+      "The reading explains how commitment changes bargaining outcomes and strategic choices.\n\n## Preparation questions\nHow does commitment change bargaining outcomes?"
+    await writeFile(join(vault, source.path), sourceText)
+    course.sources[0] = { ...source, text: sourceText, hash: digest(sourceText) }
+    const task = await createPrepTask(vault, "GSB-101", "2026-10-12")
+    expect(task.workflow?.version).toBe(2)
+    expect(task.questions).toEqual(["How does commitment change bargaining outcomes?"])
+    const base = (answer: string) =>
+      `Task: ${task.id}\n\n${task.requirements
+        .map(
+          (heading) =>
+            `## ${heading}\n${heading === "Sources" ? `- \`${source.path}\`` : heading === "Preparation questions" ? `### How does commitment change bargaining outcomes?\n${answer}` : "A concise synthesis grounded in the supplied reading."}`,
+        )
+        .join("\n\n")}\n`
+    const questionElsewhere = base("A concise synthesis grounded in the supplied reading.")
+      .replace("### How does commitment change bargaining outcomes?", "")
+      .replace(
+        "## Summary\nA concise synthesis",
+        "## Summary\nHow does commitment change bargaining outcomes?\n\nA concise synthesis",
+      )
+    await writeFile(candidatePath, questionElsewhere)
+    await expect(completeTask(vault, task.id, candidatePath)).rejects.toThrow(
+      /exact Markdown subheading/,
+    )
+    await writeFile(candidatePath, base(""))
+    await expect(completeTask(vault, task.id, candidatePath)).rejects.toThrow(/substantive answer/)
+    await writeFile(
+      candidatePath,
+      base(
+        "The reading explains how commitment changes bargaining outcomes by limiting later strategic choices, which makes promises more credible. See `GSB-101/Week 03 - Oct 12/lecture.md`.",
+      ),
+    )
+    await expect(completeTask(vault, task.id, candidatePath)).resolves.toMatchObject({
+      task: { status: "completed" },
+    })
+  })
+
   it("rejects a symlinked recovery marker before writing any output", async () => {
     await setup()
     const task = await makeTask()
@@ -157,7 +232,10 @@ describe("safe task completion", () => {
     const task = await makeTask()
     for (const bad of [
       candidate("00000000-0000-4000-8000-000000000000"),
-      candidate(task.id).replace("## Summary\nA concise summary of the lecture.", "## Summary\n"),
+      candidate(task.id).replace(
+        "## Overview\nThe lecture introduces market structure and pricing.",
+        "## Overview\n",
+      ),
       candidate(task.id, "../../private.md"),
       candidate(task.id).replace("Market structure affects pricing.", "See _meta/tasks/secret."),
     ]) {
@@ -192,7 +270,9 @@ describe("safe task completion", () => {
     const task = await makeTask()
     await rm(join(vault, "GSB-101", "Week 03 - Oct 12"), { recursive: true })
     await symlink(tmpdir(), join(vault, "GSB-101", "Week 03 - Oct 12"))
-    await expect(completeTask(vault, task.id, candidatePath)).rejects.toThrow(/symlink/i)
+    await expect(completeTask(vault, task.id, candidatePath)).rejects.toThrow(
+      /symlink|symbolic link/i,
+    )
     await setup()
     const another = await makeTask()
     const linkCandidate = join(candidatePath, "..", "linked.md")

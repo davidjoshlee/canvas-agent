@@ -23,10 +23,67 @@ afterEach(async () => {
 })
 
 describe("workspace inventory", () => {
+  it("accepts only same-course extraction sidecars whose original hash is current", async () => {
+    const root = await fixture()
+    const original = Buffer.from("current original")
+    await put(root, "ACCT312/Canvas/Files/reading.pdf", original)
+    await put(
+      root,
+      "ACCT312/Canvas/Files/reading.pdf.extracted.md",
+      `---\noriginal_path: ACCT312/Canvas/Files/reading.pdf\noriginal_hash: ${createHash("sha256").update(original).digest("hex")}\n---\n\nExtracted reading body`,
+    )
+    await put(
+      root,
+      "ACCT312/Canvas/Files/stale.pdf.extracted.md",
+      `---\noriginal_path: ACCT312/Canvas/Files/reading.pdf\noriginal_hash: ${"0".repeat(64)}\n---\n\nSTALE BODY`,
+    )
+    await put(
+      root,
+      "ACCT312/Canvas/Files/cross.pdf.extracted.md",
+      `---\noriginal_path: OTHER/secret.pdf\noriginal_hash: ${"1".repeat(64)}\n---\n\nCROSS BODY`,
+    )
+    const course = selectCourse(await inspectWorkspace(root), "ACCT312")
+    expect(
+      course.sources.find((source) => source.path.endsWith("reading.pdf.extracted.md")),
+    ).toMatchObject({
+      text: "Extracted reading body",
+      originalPath: "ACCT312/Canvas/Files/reading.pdf",
+      originalHash: createHash("sha256").update(original).digest("hex"),
+    })
+    expect(course.sources.map((source) => source.text).join("\n")).not.toMatch(
+      /STALE BODY|CROSS BODY/,
+    )
+    expect(course.excluded.map((item) => item.path)).toEqual(
+      expect.arrayContaining([
+        "ACCT312/Canvas/Files/stale.pdf.extracted.md",
+        "ACCT312/Canvas/Files/cross.pdf.extracted.md",
+      ]),
+    )
+  })
+
+  it("does not let a generated sidecar bypass restricted original Markdown policy", async () => {
+    const root = await fixture()
+    const original = Buffer.from("---\nai_policy: prohibited\n---\n\nRestricted original body")
+    await put(root, "ACCT312/Canvas/Files/restricted.md", original)
+    await put(
+      root,
+      "ACCT312/Canvas/Files/restricted.md.extracted.md",
+      `---\noriginal_path: ACCT312/Canvas/Files/restricted.md\noriginal_hash: ${createHash("sha256").update(original).digest("hex")}\n---\n\nLEAKED EXTRACTED BODY`,
+    )
+    const course = selectCourse(await inspectWorkspace(root), "ACCT312")
+    expect(course.sources.map((source) => source.text).join("\n")).not.toContain(
+      "LEAKED EXTRACTED BODY",
+    )
+    expect(course.excluded).toContainEqual({
+      path: "ACCT312/Canvas/Files/restricted.md.extracted.md",
+      reason: "Original document has malformed or restricted policy metadata; extraction omitted",
+    })
+  })
+
   it("reads conventional nested course material, preserves relative paths and hashes original bytes", async () => {
     const root = await fixture()
     const bytes = Buffer.from(
-      "---\ntype: assignment\ndates:\n  due_at: 2026-10-12T18:30:00Z\n---\n# Case\nRead this.\n",
+      "---\ntype: assignment\ndates:\n  due_at: 2026-10-12T18:30:00Z\n  lock_at: 2026-10-13T00:00:00Z\n  created_at: 2026-08-01T00:00:00Z\n  updated_at: 2026-10-20T00:00:00Z\n---\n# Case\nRead this.\n",
     )
     await put(root, "ACCT312/_index.md", "# Financial Accounting\nCourse index.\n")
     await put(root, "ACCT312/Week 03/Assignments/Case.md", bytes)
@@ -52,6 +109,7 @@ describe("workspace inventory", () => {
       title: "Case",
       type: "assignment",
       dates: ["2026-10-12"],
+      dueAt: "2026-10-12T18:30:00Z",
       text: "# Case\nRead this.",
       hash: createHash("sha256").update(bytes).digest("hex"),
     })

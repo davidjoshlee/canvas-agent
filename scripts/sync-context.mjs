@@ -1,7 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { workflowFor } from "../src/workflows.ts"
+import { resolveRequirements } from "../src/requirements.ts"
+import { workflowForRequirements } from "../src/workflows.ts"
 
 const start = "<!-- canvas-agent-cli:start -->"
 const end = "<!-- canvas-agent-cli:end -->"
@@ -33,7 +34,10 @@ function block(text, file, open = start, close = end) {
 }
 
 export function workflowBlock(mode) {
-  const workflow = mode === "prep" ? workflowFor("prep") : workflowFor("assignment", mode)
+  const kind = mode === "prep" ? "prep" : "assignment"
+  const assignmentMode = mode === "prep" ? undefined : mode
+  const requirements = resolveRequirements(kind, assignmentMode, [], [])
+  const workflow = workflowForRequirements(kind, assignmentMode, requirements.sections, [], [])
   return [
     `<!-- canvas-agent-workflow:${mode}:start -->`,
     `### ${mode === "prep" ? "Prep" : `Assignment ${mode}`} outcome`,

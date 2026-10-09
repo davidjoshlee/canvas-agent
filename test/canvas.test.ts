@@ -1,10 +1,17 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import JSZip from "jszip"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { listCourses, setCanvasFetchForTests, syncCourses } from "../src/canvas.js"
+import {
+  listCourses,
+  setCanvasDnsForTests,
+  setCanvasFetchForTests,
+  syncCourses,
+} from "../src/canvas.js"
 import { createPrepTask } from "../src/tasks.js"
 import type { ToolkitConfig } from "../src/types.js"
+import { inspectWorkspace, selectCourse } from "../src/workspace.js"
 
 const dirs: string[] = []
 async function temp() {
@@ -14,6 +21,7 @@ async function temp() {
 }
 afterEach(async () => {
   setCanvasFetchForTests()
+  setCanvasDnsForTests()
   delete process.env.CANVAS_TEST_TOKEN
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
@@ -30,6 +38,124 @@ const json = (body: unknown, headers: Record<string, string> = {}) =>
   })
 
 describe("Canvas read-only sync", () => {
+  it("discovers linked file references and fetches verifier URLs without forwarding Canvas auth", async () => {
+    process.env.CANVAS_TEST_TOKEN = "private-token"
+    const dnsHosts: string[] = []
+    setCanvasDnsForTests(async (hostname) => {
+      dnsHosts.push(hostname)
+      return ["93.184.216.34"]
+    })
+    const vault = await temp()
+    const calls: Array<{ url: string; auth: string | null }> = []
+    setCanvasFetchForTests(
+      async (input, init) => {
+        const url = String(input)
+        calls.push({ url, auth: new Headers(init?.headers).get("authorization") })
+        if (url.includes("/courses?"))
+          return json([{ id: 1, course_code: "ACCT340", name: "Accounting" }])
+        if (url.includes("/courses/1?"))
+          return json({
+            id: 1,
+            course_code: "ACCT340",
+            name: "Accounting",
+            syllabus_body: '<p><a href="/files/45/download?verifier=secret">Reader</a></p>',
+          })
+        if (url.includes("/files?")) return json([])
+        if (url.endsWith("/files/45"))
+          return json({
+            id: 45,
+            filename: "reader.txt",
+            content_type: "text/plain",
+            url: "https://cdn.example.net/reader?verifier=secret",
+          })
+        if (url.startsWith("https://cdn.example.net/")) return new Response("Reader text")
+        if (
+          ["assignments?", "pages?", "modules?", "discussion_topics?"].some((part) =>
+            url.includes(part),
+          )
+        )
+          return json([])
+        throw new Error("unexpected synthetic request")
+      },
+      async () => {},
+    )
+    const result = await syncCourses(cfg(vault))
+    const cdnCall = calls.find((call) => call.url.startsWith("https://cdn.example.net/"))
+    expect(
+      cdnCall?.auth,
+      JSON.stringify({ urls: calls.map((call) => call.url), dnsHosts }),
+    ).toBeNull()
+    expect(result.notices.join(" ")).not.toContain("verifier")
+    expect(result.notices.join(" ")).not.toContain("private-token")
+    expect(
+      await readFile(
+        join(vault, "ACCT340", "Canvas", "Files", "45-reader.txt.extracted.md"),
+        "utf8",
+      ),
+    ).toContain("Reader text")
+    expect(await readFile(join(vault, "ACCT340", "Resources", "Syllabus.md"), "utf8")).toContain(
+      "related_paths:",
+    )
+  })
+  it("rejects external file hosts resolving to private addresses and non-443 ports before fetch", async () => {
+    process.env.CANVAS_TEST_TOKEN = "private-token"
+    const vault = await temp()
+    let externalFetched = false
+    let dnsCalls = 0
+    setCanvasDnsForTests(async (hostname) => {
+      dnsCalls++
+      return hostname.startsWith("ipv6.") ? ["2606:4700:4700::1111", "fd12::1"] : ["10.20.30.40"]
+    })
+    setCanvasFetchForTests(async (input) => {
+      const url = String(input)
+      if (url.startsWith("https://private.cdn.example.net")) externalFetched = true
+      if (url.includes("/courses?"))
+        return json([{ id: 1, course_code: "ACCT340", name: "Accounting" }])
+      if (url.includes("/courses/1?"))
+        return json({ id: 1, course_code: "ACCT340", name: "Accounting" })
+      if (url.includes("/files?"))
+        return json([
+          {
+            id: 45,
+            filename: "reader.txt",
+            url: "https://private.cdn.example.net/file",
+          },
+          {
+            id: 46,
+            filename: "reader-v6.txt",
+            url: "https://ipv6.cdn.example.net/file",
+          },
+        ])
+      return json([])
+    })
+    const result = await syncCourses(cfg(vault))
+    expect(dnsCalls).toBe(2)
+    expect(externalFetched).toBe(false)
+    expect(result.notices.join(" ")).toContain("Skipped external or unsafe Canvas file")
+
+    const portVault = await temp()
+    dnsCalls = 0
+    setCanvasFetchForTests(async (input) => {
+      const url = String(input)
+      if (url.includes("/courses?"))
+        return json([{ id: 1, course_code: "ACCT340", name: "Accounting" }])
+      if (url.includes("/courses/1?"))
+        return json({ id: 1, course_code: "ACCT340", name: "Accounting" })
+      if (url.includes("/files?"))
+        return json([
+          {
+            id: 45,
+            filename: "reader.txt",
+            url: "https://files.example.net:8443/file",
+          },
+        ])
+      if (url.startsWith("https://files.example.net")) externalFetched = true
+      return json([])
+    })
+    await syncCourses(cfg(portVault))
+    expect(dnsCalls).toBe(0)
+    expect(externalFetched).toBe(false)
+  })
   it("explains missing credentials before making a network request", async () => {
     const network = vi.fn()
     setCanvasFetchForTests(network)
@@ -74,6 +200,12 @@ describe("Canvas read-only sync", () => {
       syllabus_body: "<p>Course syllabus contents</p>",
     }
     let assignmentDescription = "<p>Hello <b>class</b></p><script>secret()</script>"
+    const docxZip = new JSZip()
+    docxZip.file(
+      "word/document.xml",
+      "<w:document><w:body><w:p><w:r><w:t>Local DOCX reading contents</w:t></w:r></w:p></w:body></w:document>",
+    )
+    const docxBytes = await docxZip.generateAsync({ type: "uint8array" })
     setCanvasFetchForTests(async (input) => {
       const u = String(input)
       if (u.includes("/courses?")) return json([course])
@@ -87,22 +219,49 @@ describe("Canvas read-only sync", () => {
             due_at: "2026-10-12T23:59:00Z",
           },
         ])
-      if (u.includes("/pages?")) return json([{ id: 23, title: "Overview", url: "overview" }])
+      if (u.includes("/pages?")) return json([{ page_id: 23, title: "Overview", url: "overview" }])
       if (u.endsWith("/pages/overview"))
         return json({
-          id: 23,
+          page_id: 23,
           title: "Overview",
           url: "overview",
           body: "<h1>Actual page body</h1>",
         })
       if (u.includes("/modules?"))
-        return json([{ id: 24, name: "Week 1", items: [{ title: "Read" }] }])
+        return json([
+          {
+            id: 24,
+            name: "Week 1",
+            items: [
+              { title: "Case", type: "Assignment", content_id: 22 },
+              { title: "Reading", type: "File", content_id: 26 },
+              { title: "Overview", type: "Page", page_url: "overview" },
+            ],
+          },
+        ])
       if (u.includes("/files?"))
         return json([
           { id: 25, filename: "notes.bin", url: "https://canvas.example.edu/files/25/download" },
+          {
+            id: 26,
+            filename: "reading.docx",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            url: "https://canvas.example.edu/files/26/download",
+          },
         ])
       if (u.includes("/files/25/download"))
         return new Response(new Uint8Array([0, 1, 2, 255]), { status: 200 })
+      if (u.includes("/files/26/download")) return new Response(docxBytes)
+      if (u.includes("discussion_topics?only_announcements=true"))
+        return json([
+          {
+            id: 27,
+            title: "Class update",
+            message: "Synthetic announcement",
+            posted_at: "2026-10-12T08:00:00Z",
+          },
+        ])
+      if (u.includes("discussion_topics?")) return json([])
       throw new Error("unexpected request")
     })
     const result = await syncCourses(cfg(vault))
@@ -117,15 +276,46 @@ describe("Canvas read-only sync", () => {
     expect(await readFile(join(vault, "ACCT340", "00 Home.md"), "utf8")).toContain("Intro")
     const page = files.find((p) => p.includes("Overview")) ?? ""
     expect(await readFile(page, "utf8")).toContain("Actual page body")
+    expect(page).toContain("Overview-23.md")
+    const announcement = files.find((p) => p.includes("Announcements")) ?? ""
+    expect(await readFile(announcement, "utf8")).toContain('posted_at: "2026-10-12T08:00:00Z"')
     const binary = files.find((p) => p.endsWith("notes.bin")) ?? ""
     expect([...(await readFile(binary))]).toEqual([0, 1, 2, 255])
+    const extractedPath = files.find((p) => p.endsWith("reading.docx.extracted.md")) ?? ""
+    expect(await readFile(extractedPath, "utf8")).toContain("Local DOCX reading contents")
     const task = await createPrepTask(vault, "ACCT340", "2026-10-12")
     expect(task.sources.map((source) => source.path)).toContain(
       "ACCT340/Canvas/Assignments/Case-22.md",
     )
-    expect(task.sources.map((source) => source.path)).toContain("ACCT340/Resources/Syllabus.md")
     expect(task.sources.find((source) => source.path.includes("Assignments"))?.dates).toContain(
       "2026-10-12",
+    )
+    const syncedCourse = selectCourse(await inspectWorkspace(vault), "ACCT340")
+    expect(
+      syncedCourse.sources.find((source) => source.path === announcement.replace(`${vault}/`, ""))
+        ?.postedAt,
+    ).toBe("2026-10-12T08:00:00Z")
+    const module = syncedCourse.sources.find((source) => source.path.includes("Modules"))
+    expect(module?.relatedPaths).toEqual(
+      expect.arrayContaining([
+        "ACCT340/Canvas/Assignments/Case-22.md",
+        "ACCT340/Canvas/Files/26-reading.docx.extracted.md",
+        "ACCT340/Canvas/Pages/Overview-23.md",
+      ]),
+    )
+    const modulePrep = await createPrepTask(vault, "ACCT340", undefined, { session: "Week 1" })
+    expect(modulePrep.sources.map((source) => source.path)).toContain(
+      "ACCT340/Canvas/Files/26-reading.docx.extracted.md",
+    )
+    expect(
+      modulePrep.sources.find(
+        (source) => source.path === "ACCT340/Canvas/Files/26-reading.docx.extracted.md",
+      ),
+    ).toMatchObject({
+      originalPath: "ACCT340/Canvas/Files/26-reading.docx",
+    })
+    expect(modulePrep.sources.map((source) => source.path)).toContain(
+      "ACCT340/Canvas/Pages/Overview-23.md",
     )
     await writeFile(assignment, "student edit")
     assignmentDescription = "<p>Updated remote description</p>"

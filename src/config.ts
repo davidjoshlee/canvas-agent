@@ -1,5 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { dirname, isAbsolute, relative, resolve } from "node:path"
+import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { z } from "zod"
 import { assertNoSymlinks } from "./fs-safety.js"
 import type { ToolkitConfig } from "./types.js"
@@ -32,6 +32,9 @@ function validateBaseUrl(value: string): string {
 }
 
 export async function loadConfig(configPath: string): Promise<ToolkitConfig> {
+  // Check every existing path component before opening the file. A symlinked
+  // config can otherwise redirect a read outside the selected config folder.
+  await assertNoSymlinks(resolve(configPath), true)
   let raw: string
   try {
     raw = await readFile(configPath, "utf8")
@@ -95,6 +98,116 @@ export async function createConfig(
     { flag: "wx", mode: 0o600 },
   )
   return config
+}
+
+/** Create the first-run config and a private, intentionally blank adjacent .env template. */
+export async function setupConfig(
+  configPath: string,
+  input: { vault?: string; baseUrl: string; tokenEnv?: string },
+): Promise<ToolkitConfig> {
+  const path = resolve(configPath)
+  const envPath = join(dirname(path), ".env")
+  await assertNoSymlinks(path, true)
+  await assertNoSymlinks(envPath, true)
+  for (const candidate of [path, envPath]) {
+    try {
+      await lstat(candidate)
+      throw new Error(`Setup file already exists: ${candidate}`)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    }
+  }
+  const vault = expandHome(input.vault ?? "~/school-vault")
+  await mkdir(dirname(path), { recursive: true })
+  // Check/create the vault before persisting setup files. If a later exclusive
+  // write fails, preserve the files for diagnosis rather than unlinking a config
+  // another process or the student may already have edited.
+  const vaultPath = resolve(dirname(path), vault)
+  await assertNoSymlinks(vaultPath, true)
+  await mkdir(vaultPath, { recursive: true })
+  await assertNoSymlinks(vaultPath)
+  const config = await createConfig(path, {
+    vault,
+    baseUrl: input.baseUrl,
+    tokenEnv: input.tokenEnv,
+  })
+  await writeFile(envPath, `${config.canvas.tokenEnv}=\n`, { flag: "wx", mode: 0o600 })
+  return config
+}
+
+function expandHome(path: string): string {
+  if (path === "~") return process.env.HOME ?? path
+  if (path.startsWith("~/")) return join(process.env.HOME ?? "~", path.slice(2))
+  return path
+}
+
+/** Load simple KEY=value lines without shell evaluation; process.env always wins, even if empty. */
+export async function loadAdjacentEnv(configPath: string): Promise<void> {
+  const envPath = join(dirname(resolve(configPath)), ".env")
+  await assertNoSymlinks(envPath, true)
+  try {
+    const stat = await lstat(envPath)
+    if (!stat.isFile() || stat.isSymbolicLink())
+      throw new Error("Adjacent .env must be a regular file")
+    if (stat.size > 64 * 1024) throw new Error("Adjacent .env file exceeds the 64 KB limit")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+    throw error
+  }
+  let raw: string
+  try {
+    raw = await readFile(envPath, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+    throw new Error("Cannot read adjacent .env file")
+  }
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#")) continue
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/)
+    if (!match) continue
+    const name = match[1]
+    if (!name) continue
+    if (Object.hasOwn(process.env, name)) continue
+    let value = match[2] ?? ""
+    // Support basic quoted values while deliberately rejecting shell semantics.
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    )
+      value = value.slice(1, -1)
+    process.env[name] = value
+  }
+}
+
+/** Update only the allowlist using a same-directory atomic replacement. */
+export async function saveAllowlist(
+  configPath: string,
+  allowlist: string[],
+): Promise<ToolkitConfig> {
+  const config = await loadConfig(configPath)
+  const path = resolve(configPath)
+  await assertNoSymlinks(path)
+  const original = await readFile(path, "utf8")
+  const raw = JSON.parse(original) as Record<string, unknown>
+  const courses = raw.courses as Record<string, unknown>
+  const updated = {
+    ...raw,
+    courses: { ...courses, allowlist: [...new Set(allowlist.map(String))] },
+  }
+  ConfigSchema.parse(updated)
+  const temp = `${path}.${process.pid}.${Date.now()}.tmp`
+  await writeFile(temp, `${JSON.stringify(updated, null, 2)}\n`, { flag: "wx", mode: 0o600 })
+  try {
+    await assertNoSymlinks(path)
+    if ((await readFile(path, "utf8")) !== original)
+      throw new Error("Config changed during allowlist update; no changes were written")
+    await rename(temp, path)
+  } catch (error) {
+    await unlink(temp).catch(() => undefined)
+    throw error
+  }
+  return { ...config, courses: { allowlist: updated.courses.allowlist as string[] } }
 }
 
 function requireRelative(from: string, to: string): string {

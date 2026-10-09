@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { workflowFor } from "../src/workflows.js"
+import { resolveRequirements } from "../src/requirements.js"
+import { workflowForRequirements } from "../src/workflows.js"
 
 const roots: string[] = []
 const prompt = "GSB-101/Assignments/Case response/prompt.md"
@@ -87,7 +88,16 @@ describe("compiled assignment handoffs", () => {
       const shown = cli(["task", "show", handoff.id, "--config", config, "--json"])
       expect(shown.status).toBe(0)
       const task = JSON.parse(shown.stdout)
-      expect(task.workflow).toEqual(workflowFor("assignment", mode))
+      const requirements = resolveRequirements("assignment", mode, task.sources, task.guidance)
+      expect(task.workflow).toEqual(
+        workflowForRequirements(
+          "assignment",
+          mode,
+          requirements.sections,
+          requirements.questions,
+          requirements.guidanceInstructions,
+        ),
+      )
       expect(task.sources.map((source: { path: string }) => source.path)).toEqual(
         expect.arrayContaining([prompt, context, work]),
       )

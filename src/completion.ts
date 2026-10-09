@@ -6,9 +6,12 @@ import {
   readGuidanceSnapshot,
   readTask,
   resolvePrepDestination,
+  resolveSessionRoot,
   selectAssignmentInputs,
+  selectLegacyPrepInputs,
   selectPrepInputs,
   TaskRecordSchema,
+  verifySourceSnapshot,
 } from "./tasks.js"
 import type { CourseContext, TaskRecord } from "./types.js"
 import { workflowFor } from "./workflows.js"
@@ -76,7 +79,10 @@ function checkCandidate(text: string, id: string, task: TaskRecord): void {
       body.push(lines[j] ?? "")
     sections.set(title, body.join("\n").trim())
   }
-  const workflow = task.workflow ?? workflowFor("prep")
+  const workflow = task.workflow ?? {
+    ...workflowFor("prep"),
+    requiredSections: [...task.requirements],
+  }
   if (JSON.stringify(task.requirements) !== JSON.stringify(workflow.requiredSections))
     throw new Error("Task requirements do not match the authoritative workflow")
   for (const heading of workflow.requiredSections) {
@@ -114,12 +120,59 @@ function checkCandidate(text: string, id: string, task: TaskRecord): void {
     if (/(^|\/)_(?:meta|private)(\/|$)/i.test(citation) && !approvedGuidance.has(citation))
       throw new Error(`Candidate cites a private path: ${citation}`)
   }
-  const sourceSection = sections.get("Sources") ?? ""
+  const sourceHeading = [...sections.keys()].find((heading) => /sources/i.test(heading))
+  const sourceSection = sourceHeading ? (sections.get(sourceHeading) ?? "") : text
   if (
     ![...sourceSection.matchAll(/`([^`]+)`/g)].some((m) => allowed.has(m[1] ?? "")) &&
     allowed.size > 0
   )
     throw new Error("Sources section must cite exact task source paths in backticks")
+  if (task.workflow?.version === 2 && task.questions?.length)
+    validateQuestionAnswers(text, task.questions, task.sources, task.requirements)
+}
+
+function validateQuestionAnswers(
+  text: string,
+  questions: string[],
+  sources: TaskRecord["sources"],
+  requiredSections: string[],
+): void {
+  for (const question of questions) {
+    const escaped = question.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const heading = new RegExp(`^#{3,6}\\s+${escaped}\\s*$`, "im")
+    const match = heading.exec(text)
+    if (!match || match.index === undefined)
+      throw new Error(
+        `Candidate must include an exact Markdown subheading for required question: ${question}`,
+      )
+    const before = text.slice(0, match.index)
+    const parentSections = [...before.matchAll(/^##\s+(.+?)\s*$/gm)]
+    const parentSection = parentSections[parentSections.length - 1]?.[1]?.trim()
+    if (
+      !parentSection ||
+      !requiredSections.includes(parentSection) ||
+      /sources/i.test(parentSection)
+    )
+      throw new Error(
+        `Required question must be answered under a non-Sources required section: ${question}`,
+      )
+    const bodyStart = match.index + match[0].length
+    const nextHeading = /\n#{1,6}\s+/g
+    nextHeading.lastIndex = bodyStart
+    const boundary = nextHeading.exec(text)?.index ?? text.length
+    const answer = text.slice(bodyStart, boundary).trim()
+    const hasSourceCitation = [...answer.matchAll(/`([^`]+)`/g)].some((item) =>
+      sources.some((source) => source.path === item[1]),
+    )
+    const identifiesGap =
+      /\b(?:not available|not present|does not address|do not address|insufficient (?:evidence|information)|cannot be determined from the supplied sources)\b/i.test(
+        answer,
+      )
+    if (answer.length < 40 || (!hasSourceCitation && !identifiesGap))
+      throw new Error(
+        `Required question needs a substantive answer with an exact source citation or explicit evidence gap: ${question}`,
+      )
+  }
 }
 
 function expectedDestination(course: CourseContext, week: string): string {
@@ -142,6 +195,9 @@ async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
       assignment.source,
       assignment.work,
       assignment.context,
+      task.parentTaskId
+        ? task.sources.find((source) => source.path === assignment.work)
+        : undefined,
     )
     const sameRecords = (a: unknown[], b: unknown[]) => JSON.stringify(a) === JSON.stringify(b)
     if (!sameRecords(current.sources, task.sources))
@@ -150,16 +206,35 @@ async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
       throw new Error("Course guidance changed or was modified since this task was created")
     if (!sameRecords(current.excluded, task.excluded))
       throw new Error("Assignment source restrictions or exclusions changed since task creation")
+    for (const source of task.sources) await verifySourceSnapshot(vault, source)
     return
   }
-  if (!task.week) throw new Error("Preparation task is missing its week")
-  const expected = expectedDestination(course, task.week)
+  const period =
+    task.period ?? (task.week ? { kind: "week" as const, value: task.week } : undefined)
+  if (!period) throw new Error("Preparation task is missing its period")
+  const currentSessionRoot =
+    period.kind === "session" ? resolveSessionRoot(course, period.value) : undefined
+  if (period.kind === "session" && task.period?.root !== currentSessionRoot)
+    throw new Error("Task session root no longer matches the selected module")
+  const expected =
+    period.kind === "week"
+      ? expectedDestination(course, period.value)
+      : currentSessionRoot &&
+          (/(?:^|\/)Week\s+\d+\b/i.test(currentSessionRoot) ||
+            /(?:^|\/)Milestone\s+\d+\b/i.test(currentSessionRoot))
+        ? `${currentSessionRoot}/Prep`
+        : course.root +
+          "/Other/Prep/session-" +
+          (period.value
+            .toLocaleLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "") || "session")
   if (task.destination !== expected)
-    throw new Error("Task destination does not match the current authoritative course and week")
-  const { sources: currentRelevant, excluded: currentExcluded } = selectPrepInputs(
-    course,
-    task.week,
-  )
+    throw new Error("Task destination does not match the current authoritative course and period")
+  const { sources: currentRelevant, excluded: currentExcluded } =
+    (!task.workflow || task.workflow.version === 1) && period.kind === "week"
+      ? selectLegacyPrepInputs(course, period.value)
+      : selectPrepInputs(course, period)
   const snap = new Map(task.sources.map((s) => [s.path, s]))
   if (
     currentRelevant.length !== snap.size ||
@@ -174,10 +249,7 @@ async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
   )
     throw new Error("Course guidance changed since this task was created")
   for (const saved of task.sources) {
-    const path = await noLinks(vault, saved.path)
-    const bytes = await readFile(path)
-    if (digest(bytes) !== saved.hash)
-      throw new Error(`Source or guidance changed since task creation: ${saved.path}`)
+    await verifySourceSnapshot(vault, saved)
   }
   for (const saved of task.guidance) {
     const current = await readGuidanceSnapshot(vault, saved.path)
@@ -221,6 +293,7 @@ function validateOutputReference(task: TaskRecord, output: string): void {
 }
 
 async function verifyTaskDestination(vault: string, task: TaskRecord): Promise<void> {
+  const period = task.period
   const context = await inspectWorkspace(resolve(vault))
   const course = context.courses.find(
     (c) => c.code === task.course.code && c.root === task.course.root,
@@ -228,12 +301,48 @@ async function verifyTaskDestination(vault: string, task: TaskRecord): Promise<v
   if (
     !course ||
     (task.kind === "prep"
-      ? !task.week || resolvePrepDestination(course, task.week) !== task.destination
+      ? period?.kind === "session"
+        ? (() => {
+            const currentRoot = resolveSessionRoot(course, period.value)
+            return (
+              task.period?.root !== currentRoot ||
+              task.destination !==
+                (/(?:^|\/)Week\s+\d+\b/i.test(currentRoot) ||
+                /(?:^|\/)Milestone\s+\d+\b/i.test(currentRoot)
+                  ? `${currentRoot}/Prep`
+                  : course.root +
+                    "/Other/Prep/session-" +
+                    (period.value
+                      .toLocaleLowerCase()
+                      .replace(/[^a-z0-9]+/g, "-")
+                      .replace(/^-|-$/g, "") || "session"))
+            )
+          })()
+        : !task.week || resolvePrepDestination(course, task.week) !== task.destination
       : !task.assignment ||
         task.destination !==
           `${task.assignment.source.slice(0, task.assignment.source.lastIndexOf("/"))}/Drafts`)
   )
     throw new Error("Task destination does not match the authoritative course and week")
+}
+
+export async function readVerifiedCompletedOutput(
+  vault: string,
+  id: string,
+): Promise<{ task: TaskRecord; output: string; bytes: Buffer }> {
+  await assertNoSymlinks(resolve(vault))
+  const task = await readTask(vault, id)
+  if (task.status !== "completed" || !task.completedAt || !task.output || !task.outputHash)
+    throw new Error("Task is not completed with a saved output")
+  if (task.kind !== "assignment" || !task.assignment)
+    throw new Error("Only completed assignment outputs can be revised or approved")
+  validateOutputReference(task, task.output)
+  await verifyTaskDestination(vault, task)
+  const saved = await noLinks(vault, task.output)
+  const bytes = await readFile(saved)
+  if (digest(bytes) !== task.outputHash)
+    throw new Error("Completed output is missing or has been modified")
+  return { task, output: task.output, bytes }
 }
 
 async function completedResult(

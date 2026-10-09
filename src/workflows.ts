@@ -1,7 +1,7 @@
 export type AssignmentMode = "outline" | "draft" | "review"
 
 export interface AcademicWorkflow {
-  version: 1
+  version: 1 | 2
   instructions: string[]
   requiredSections: string[]
 }
@@ -70,4 +70,34 @@ export function workflowFor(kind: "prep" | "assignment", mode?: AssignmentMode):
     instructions: [...ASSIGNMENT_INSTRUCTIONS[mode]],
     requiredSections: [...ASSIGNMENT_SECTIONS[mode]],
   }
+}
+
+/** Build the v2 task-specific workflow around the stable academic safety contract. */
+export function workflowForRequirements(
+  kind: "prep" | "assignment",
+  mode: AssignmentMode | undefined,
+  sections: string[],
+  questions: string[],
+  guidanceInstructions: string[] = [],
+): AcademicWorkflow {
+  const base = workflowFor(kind, mode)
+  const instructions = [...base.instructions]
+  if (kind === "prep") {
+    instructions[2] =
+      "Use the persisted required headings exactly. Synthesize the supplied readings into useful concepts, evidence, and applications; answer listed questions in the most relevant question or discussion section."
+    instructions.push(
+      "Keep the preparation brief structure declared in course guidance when one is present.",
+    )
+  }
+  if (questions.length) {
+    instructions.push(
+      `Address every question captured from the supplied task sources: ${questions.map((question) => `“${question}”`).join("; ")}`,
+      "For each question, use the exact question text as a Markdown subheading beneath the relevant required section, then provide a substantive response with an exact supporting source path in backticks. If supplied sources do not answer it, state that evidence gap explicitly. Empty or merely restated answers do not satisfy this requirement.",
+    )
+  }
+  for (const instruction of guidanceInstructions) {
+    if (instruction.length <= 500 && !instructions.includes(instruction))
+      instructions.push(instruction)
+  }
+  return { version: 2, instructions, requiredSections: [...sections] }
 }

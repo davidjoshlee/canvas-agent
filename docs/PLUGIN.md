@@ -1,12 +1,14 @@
 # Canvas Agent plugin
 
-The plugin packages three reusable skills: `setup-and-sync` for CLI onboarding, course selection and sync; `canvas-workspace` for source-bound prep candidates and completion; and `assignment-workflow` for explicit outline, draft, and review tasks. Its portable manifest is `plugins/canvas-agent/plugin.json`; a `.codex-plugin/plugin.json` compatibility manifest is included. Each skill's CLI reference is bundled inside the plugin, so an installed cache does not depend on this source checkout for instructions.
+The plugin packages three reusable skills: `setup-and-sync` for onboarding, auth/config/vault diagnostics, sync and upcoming work; `canvas-workspace` for current-week, explicit-week or session prep; and `assignment-workflow` for outline, draft, review, revision and local approval. Its portable manifest is `plugins/canvas-agent/plugin.json`; a `.codex-plugin/plugin.json` compatibility manifest is included. Each skill's CLI reference is bundled so an installed cache does not depend on this checkout for instructions.
 
 This is a skills-only local toolkit integration, not a hosted service. Install the CLI separately (`npm ci`, `npm run build` in the toolkit checkout), then use a host with shell and local filesystem access. An installed plugin cache is not a runnable checkout. Your Canvas credentials and vault are never bundled; supply only the chosen config path to the agent. No model/provider key is required by the toolkit.
 
 ## Codex
 
 With a compatible Codex CLI and repository access (configure GitHub Git authentication first; for GitHub CLI users, `gh auth login` followed by `gh auth setup-git`):
+
+For the unmerged 0.4 preview, replace `--ref main` below with `--ref feat/student-workflow-parity`; keep the CLI checkout on that same branch. Do not mix preview skill instructions with an older CLI. The local marketplace can be refreshed using `codex plugin add canvas-agent@canvas-agent-tools`; verify the installed version and start a fresh session.
 
 ```sh
 codex plugin marketplace add https://github.com/davidjoshlee/canvas-agent.git --ref main
@@ -31,7 +33,7 @@ For assignment work, provide the course, exact prompt path and mode (`outline`, 
 
 ## Instruction parity
 
-Root `AGENTS.md` and all plugin skills embed the same core CLI contract: environment, command syntax, student context, handoff flow and safety boundaries. Workflow instructions are embedded from the runtime's `workflowFor` contract so task JSON and plugin entry points use the same mode definitions.
+Root `AGENTS.md` and all plugin skills embed the same core CLI contract. Workflow blocks are generated from the runtime's resolved v2 default requirements and `workflowForRequirements`; course-specific task headings take precedence over those defaults. Existing validated v1 tasks keep their original structure. The agent must read each saved task rather than assume default headings.
 
 This is content parity, not a priority override. Codex loads [AGENTS.md by directory](https://learn.chatgpt.com/docs/agent-configuration/agents-md), while [skills load their full instructions when selected](https://learn.chatgpt.com/docs/build-skills). Other hosts control their own discovery and precedence. Explicitly select the appropriate installed skill when operating outside this repository; installing a plugin alone does not inject every skill body.
 

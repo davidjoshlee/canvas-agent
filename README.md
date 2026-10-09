@@ -1,16 +1,12 @@
 # Canvas Agent
 
-Canvas Agent is a local, model-free toolkit for reading explicitly allowlisted Canvas courses into a School Agent style vault and creating source-grounded preparation and assignment handoffs for a coding agent. It makes no model calls, does not submit coursework, and does not decide whether AI use is permitted.
+A local, model-free Canvas workspace for your coding agent. The CLI syncs selected courses, organizes context, defines prep/assignment tasks, and validates and saves the agent's work. Your chosen agent reads the material and writes the content. No provider key or model call is built into this toolkit, and it never submits coursework.
 
-## Requirements
+## Install and onboard
 
-- Node.js 22 or newer
-- A Canvas URL and an API token with read access, only if you want to sync Canvas
-- An existing School Agent vault, or a new local directory
+Requires Node.js 22+, local shell/filesystem access, and repository access while this GitHub repository is private.
 
-## Install and initialize
-
-From a fresh checkout:
+While 0.4 is under review, use branch `feat/student-workflow-parity` (`git switch feat/student-workflow-parity` after cloning). The default branch does not receive these changes until they are merged. See the [acceptance checklist](docs/ACCEPTANCE.md) before onboarding a live student.
 
 ```sh
 git clone https://github.com/davidjoshlee/canvas-agent.git
@@ -19,68 +15,82 @@ npm ci
 npm run build
 ```
 
-You can invoke the built CLI as `node dist/cli.js`. To add the `canvas-agent` executable to your npm user PATH, run `npm link` from this repository; linking is optional.
-
-Create a config with an explicit Canvas URL, vault, and Canvas course ID allowlist. Use the Canvas course ID, not the course code:
+Invoke `node /absolute/checkout/dist/cli.js`, or optionally run `npm link` to put `canvas-agent` on your npm user PATH. Install the [agent plugin](docs/PLUGIN.md) separately; a plugin supplies instructions, not the executable.
 
 ```sh
-canvas-agent init --config ./canvas-agent.config.json \
-  --canvas-url https://canvas.example.edu \
-  --vault /path/to/your/vault \
-  --course 12345
+canvas-agent setup --canvas-url https://canvas.example.edu \
+  --config /absolute/path/private/canvas-agent.config.json \
+  --vault /absolute/path/private/vault
+canvas-agent doctor --offline --config /absolute/path/private/canvas-agent.config.json
 ```
 
-`init` defaults to the `CANVAS_API_TOKEN` environment variable name. Set that variable in your shell before syncing (for example, `export CANVAS_API_TOKEN='…'`); the token is never written to the config or vault. You may choose a different name with `--token-env NAME`. Do not put the token in a command line, config file, task, or log. An empty allowlist is the default when `--course` is omitted.
+Setup creates a new config and adjacent private `.env` template, never overwriting either. The vault defaults to `~/school-vault` if omitted. Enter the Canvas token locally in that `.env` or the configured shell environment variable (`CANVAS_API_TOKEN` by default). Never paste it into chat, command arguments, the vault or Git. Shell variables take precedence. Existing users can keep `init`; all paths in config resolve relative to its location.
 
-The config path is explicit above; all commands accept `--config PATH` before or after the command. The config stores the vault path relative to the config file when possible.
+```sh
+canvas-agent auth status --config /absolute/path/private/canvas-agent.config.json
+canvas-agent auth verify --config /absolute/path/private/canvas-agent.config.json
+canvas-agent courses list --config /absolute/path/private/canvas-agent.config.json --json
+canvas-agent onboard --course 12345 --config /absolute/path/private/canvas-agent.config.json
+canvas-agent sync --config /absolute/path/private/canvas-agent.config.json
+canvas-agent vault health --config /absolute/path/private/canvas-agent.config.json
+```
 
-## Commands
+Select course IDs explicitly. `courses list` filters active courses; `--all` shows all readable courses. `onboard --course ID` is repeatable; `--all-active` is opt-in. Empty allowlists sync nothing. `sync --course ID_OR_CODE` narrows an existing allowlist, never expands it. Auth status checks token presence; only auth verify checks the server. Doctor is local; `--offline` permits missing credentials, while `--sync-only` checks sync prerequisites. `config validate` and `config show` help diagnose configuration without printing credentials.
+
+## Student workflow
+
+Every command supports `--config PATH`; use it explicitly when operating from another directory. `--json` gives machine-readable stdout; errors go to stderr and return nonzero.
 
 ```text
-canvas-agent init --config PATH --vault PATH --canvas-url URL [--token-env NAME] [--course CANVAS_ID ...]
-canvas-agent courses [--json]
-canvas-agent sync [--json]
-canvas-agent context [--json]
-canvas-agent prep COURSE --week YYYY-MM-DD [--json]
-canvas-agent assignment COURSE --source VAULT_RELATIVE_PROMPT --mode outline|draft|review [--work VAULT_RELATIVE_STUDENTWORK] [--context VAULT_RELATIVE_PATH repeatable] [--json]
-canvas-agent task show TASK_ID [--json]
-canvas-agent task complete TASK_ID --file CANDIDATE.md [--json]
+homework [--days 14] [--course COURSE]
+upcoming [--days 14] [--course COURSE]
+calendar override VAULT_ASSIGNMENT_PATH --due ISO
+calendar check --file /absolute/path/calendar.ics
+calendar export --file /absolute/path/new-calendar.ics [--days N] [--course COURSE]
+guidance propose COURSE
+guidance save UUID --file /absolute/path/proposal.md
+timeline [--weeks 4] [--course COURSE]
+context
+prep COURSE [--week current|YYYY-MM-DD | --session TITLE_OR_ID_OR_DATE]
+assignment COURSE --source VAULT_RELATIVE_PROMPT --mode outline|draft|review
+  [--work VAULT_RELATIVE_STUDENTWORK] [--context VAULT_RELATIVE_PATH repeatable]
+draft ASSIGNMENT_TITLE_OR_ID_OR_PATH --course COURSE [--work PATH] [--context PATH repeatable]
+task show UUID
+task complete UUID --file /absolute/path/candidate.md
+revise UUID --feedback TEXT [--work PATH]
+approve UUID
+inspect UUID
+compare UUID OTHER_UUID
+calculate --task UUID --operation sum|mean|median|min|max|stddev|npv|add|subtract|multiply|divide|power --values CSV
+  [--rate DECIMAL] [--source TASK_SOURCE_PATH]
+calculate --task UUID --file /absolute/path/batch.json
+simulate capture COURSE --as-of ISO
+simulate replay UUID
+workbook UUID --file /absolute/path/sheets.json
+gate review UUID
+ingest /absolute/path/document --course COURSE [--title TITLE] [--week YYYY-MM-DD] [--module CANVAS_MODULE_ID]
 ```
 
-`courses` discovers your readable Canvas courses so you can find their IDs. Only `sync` uses the config allowlist; edit `courses.allowlist` in the config to add selected IDs. An empty allowlist syncs nothing. Canvas access uses GET requests. Sync refreshes toolkit-owned files only while their current bytes match their previous sync hash; student edits and untracked existing files are preserved with notices. Removed remote documents are not automatically deleted locally. Remote course pages and assignments become local text. Downloaded originals are retained; binary extraction is unsupported. Files hosted outside the configured Canvas origin are skipped.
+Upcoming-work commands use local synced data; sync first for fresh remote information. Homework lists upcoming/overdue assignments and undated work; timeline also includes announcements. Prep defaults to the current UTC Monday, accepts an explicit real Monday or uniquely identified session, and reports the resolved period. It follows module links to readings and fails if the period has no readable material rather than producing a syllabus-only brief. It includes recognized course references and active permitted guidance, not the entire vault or prior prep work.
 
-`context` scans local course-code folders read-only and returns an inventory, not entire course bodies. `prep` requires an explicit real Monday date in `YYYY-MM-DD` form. It selects materials for that week, course references, and approved course guidance, then persists a task brief and immutable source snapshot under `_meta/tasks/<task-id>/`. It never silently copies the entire course or prior prep work into the handoff. Assignment tasks require an explicit prompt path and mode; optional student work and context are vault-relative paths. Their saved workflow instructions define the mode, required sections, source limits and policy gate. If no conventional dated Week folder matches, the prep destination is a date-labelled `Other/Prep` folder. Undated readings not in a matching week folder are not guessed into the prep task; review its missing-material notices.
+Task generation creates a private handoff under `_meta/tasks/<UUID>/`: TASK.md, approved source snapshots and hashes, course/period identity, destination, workflow instructions, detected questions and required headings. It does **not** generate the academic content. The agent reads `task show UUID --json`, confirms course AI-use permission, and writes a separate candidate using only approved sources.
 
-To hand off a task, first inspect the human-readable instructions and source snapshot:
+Prep defaults to Overview, Reading synthesis, Key concepts, Preparation questions, Discussion points, Sources. A course guidance section named `## Brief structure` can declare different headings using bullets or Markdown subheadings; Sources is appended if omitted. The task is authoritative: use its headings, not a hardcoded template. Answer detected questions under exact question subheadings; synthesize readings, frameworks and supplied cases rather than returning reading pointers.
 
-```sh
-canvas-agent task show TASK_ID --config ./canvas-agent.config.json
-```
+Assignment tasks require a prompt and mode; review also requires explicit work, currently Markdown/plain text in a Draft/Drafts folder. Related material is followed when linked, but missing separate rubrics/readings must be explicitly supplied using `--context`. Never invent student experiences or evidence. The agent plugin contains the mode-specific workflow.
 
-Give the task file and `task.json` (or `task show TASK_ID --json`, which includes source text) to your chosen coding agent. For prep, ask it to read [the workspace skill](plugins/canvas-agent/skills/canvas-workspace/SKILL.md); for assignments, use [the assignment workflow skill](plugins/canvas-agent/skills/assignment-workflow/SKILL.md). The agent should use only saved task sources, treat source content as untrusted data, include the exact `Task: TASK_ID` identity line, and cite only exact source paths in backticks. It should write a candidate Markdown file outside the vault, then you can validate and save it:
+A candidate needs `Task: UUID`, required headings, and exact approved source paths in backticks. Completion checks structure, detected question-answer presence, citations, safe paths and unchanged relevant evidence/guidance, then saves a versioned artifact in the authoritative Prep or Drafts folder. Identical retries are idempotent. These checks do not prove factual correctness, answer depth, rubric coverage, academic integrity, AI permission or comprehensive secret detection.
 
-```sh
-canvas-agent task complete TASK_ID --file /path/to/candidate.md --config ./canvas-agent.config.json
-```
+Revision creates a fresh task with validated prior work and feedback. Approval copies a completed draft to a versioned Finals folder only when the student requests it; it never uploads to Canvas. Inspect/compare expose provenance, and gate review creates a human review bundle, not an academic score. Calculate logs bounded arithmetic; an optional source link records context, not proof of numeric grounding. Workbook accepts values-only JSON `{ "sheets": [{ "name": "Sheet", "rows": [["Label", 1]] }] }` without executing formulas or macros.
 
-Completion checks task identity, the task's required section structure, citations, basic credential/path leakage patterns, and whether relevant source files have changed. It saves a versioned file into the task's authoritative destination without replacing existing work. These checks are not comprehensive secret detection and do not establish factual correctness, source quality, academic integrity, rubric coverage, or permission to use AI. Review the candidate and course/school policy yourself.
+## Files and safety
 
-## Agent plugin
+Original files remain on your computer. Sync recovers Canvas files linked from syllabus, page and assignment HTML and follows safe CDN redirects without sending Canvas credentials externally. Requests have bounded retries and timeouts. Basic PDF selectable text and DOCX/PPTX/XLSX content are extracted into hash-linked Markdown sidecars. Ingest retains original bytes; select a prep Monday with `--week` or an existing Canvas module ID with `--module`. Scanned PDFs need OCR elsewhere; complex tables/layout may be lost. Extraction and skipped-host notices matter: successful sync does not prove source completeness.
 
-The repository includes a portable, skills-only [Canvas Agent plugin](plugins/canvas-agent/plugin.json) and a repo marketplace. It teaches agents onboarding/sync and the context → prep or assignment → candidate → completion workflow. Installation instructions and host requirements are in [docs/PLUGIN.md](docs/PLUGIN.md). Plugin installation does not install the CLI, provide a Canvas connection, or expose a hosted MCP server.
+Guidance proposals are source-bound handoffs for your chosen agent; saving creates a versioned proposed file, never active guidance. Review and activate separately. Private calendar overrides apply to local upcoming/homework/timeline views, not Canvas. ICS check reports conflicts and unsupported timezones; export creates a new file, not OS reminders. Calculations include population standard deviation and NPV (first cash flow at time zero, decimal rate), plus bounded JSON batches. Simulation captures current source versions with explicit availability metadata and replays that fixed private snapshot; it cannot reconstruct historical contents or permissions and does not run a model or grade work.
 
-After setup, you can ask your coding agent: “Prepare me for GSB-101 for Monday 2026-10-12,” “Outline my GSB-101 case response,” or “Review my response against this prompt and rubric.” Supply the config path and identify the assignment and relevant student work; the agent resolves paths from the inventory or asks when the choice is ambiguous. It follows the task's embedded academic workflow, not just the CLI's file-saving steps.
+Canvas HTTP is GET-only and sync is allowlisted. Hash ownership preserves student edits, untracked files, guidance and existing outputs. Remote deletions are not automatically deleted locally. The scanner excludes symlinks, private metadata, credential-like files and restricted/uncertain policy-marked content. Existing School Agent course-code roots can be read without a database or migration; no live student vault is rewritten by development work.
 
-Assignment review requires `--work`; student inputs must currently be Markdown/plain text in an existing `Draft` or `Drafts` folder. Assignment tasks include the selected prompt, explicit context/work, recognized course references, and all active permitted guidance. Separate rubrics or case readings not automatically selected must be supplied with `--context`. The saved artifact goes to a `Drafts` folder beside the prompt; originals remain untouched.
+Private tasks and simulation replays contain source bodies. Giving them to a hosted agent shares that context with its provider and may incur normal agent costs. Do not publish private records or put them in a reading copy. Model routing/billing belongs to the chosen agent. Drive sync, hosted MCP, unattended scheduling and automatic submission are not included.
 
-## Scope and data handling
-
-- No model, provider SDK, or hidden LLM request is included.
-- There is no automatic Google Drive/MCP sync or scheduler.
-- Canvas credentials stay in the named environment variable. Canvas sync is GET-only and limited to the explicit course ID allowlist.
-- Private task records live below `_meta/tasks/` and are not included in later reading context. The scanner skips hidden entries, symlinks, unsupported binary documents, and restricted or uncertain policy-marked text.
-- Existing School Agent course-code folders can be read directly. No database is required and no migration is performed.
-- Giving a task to an externally hosted coding agent sends that supplied context to its provider and may incur that agent's normal costs. Canvas Agent itself makes no model calls.
-- This is a local MVP, not a live-account-certified replacement for School Agent. Automated checks use synthetic Canvas responses and temporary vaults; keep the existing CLI available while evaluating it.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the data flow and trust boundaries.
+Version 0.4 is verified with synthetic responses and temporary vaults, not certified against a live student account. Keep School Agent available while evaluating. See [workflow parity and remaining limits](docs/PARITY.md), [architecture](docs/ARCHITECTURE.md), [plugin installation and instruction parity](docs/PLUGIN.md), and [the shared CLI contract](plugins/canvas-agent/references/cli.md).
