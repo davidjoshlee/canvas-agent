@@ -23,6 +23,10 @@ in PARITY.md/ACCEPTANCE.md are not independent completion certificates.
 - Canvas GitHub remains private. The owner has now approved committing/pushing
   the parity branch for review, not merging or changing repository visibility.
   Earlier remote observations below are historical, not current release evidence.
+  Implementation commit `1c54fb8` and whitespace/review-note follow-up `66b73e1`
+  are pushed on `feat/student-workflow-parity`; draft PR
+  [#1](https://github.com/davidjoshlee/canvas-agent/pull/1) is open against main.
+  This review handoff is not a merge, release or full parity certificate.
 - The owner also approved the two separate public School preservation fixes.
   Local School fix commit `e5161248253aeb40d448c8b2176b0f4d9c2d0dd9`, on
   `fix/preserve-prep-and-approved-finals`, preserves changed prep/Final output
@@ -61,7 +65,7 @@ not certify a runtime install or compatibility of alternating writers.
 | Frozen evaluation/window/comparison/M1 and dogfood sweeps | Versioned immutable captures/visibility, cutoff/window orchestration, human scorecards and checkpoint recovery | Implemented selected flows; live source coverage/human verdicts remain unverified |
 | One-way reading copies and Obsidian access | Local snapshot/mirror hooks, exclusions/ownership, configured-path checks | Local mechanics verified; actual selected Drive upload/phone/sharing/OS delivery not verified |
 | Agent-context parity and clean package | Current fresh install/five mock requests capture all three complete skills, full AGENTS and combined context. The authorized isolated cache is archived/refreshed and matches all seven current files; matching-cache native Luna frozen draft plus fresh exact-output recovery preserve eight original/eleven recovery files. Topic lookup is used; two candidate gate failures and one recovery literal-query miss remain retained | Current-guidance selected matching-cache forward/recovery established; raw authenticated injection/semantic attention, other hosts and mid-generation interruption unverified |
-| GitHub handoff/release for another user | Current remote/private/no-PR inspection | Not shipped; do not confuse the local package smoke with GitHub availability |
+| GitHub handoff/release for another user | Parity implementation pushed to private repository; draft PR #1 open against main | Review handoff available to authorized repository users; not merged/released, no visibility change |
 
 ## Intentional design boundaries, not hidden parity
 
