@@ -46,7 +46,7 @@ Revision preserves edits and produces a new full artifact. Approve only at expli
 
 ### Conditional detail
 
-Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, dogfood/sweep/window resume, migration/preserve-school, vault history, legacy/playbooks/feedback, guidance, correctness, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
+Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, dogfood/sweep/window resume, vault history, playbooks/feedback, guidance, correctness, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
 <!-- canvas-agent-cli:end -->
 
 ## Assignment task workflow

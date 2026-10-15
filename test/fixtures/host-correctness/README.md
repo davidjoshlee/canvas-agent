@@ -4,7 +4,7 @@ A fresh Luna host received only checkout/config/course scope for invented ECON90
 not the original task ID, review ID, candidate or expected defects. It manually
 read source instructions; this was not native plugin activation or `/goal` resume.
 The parent seeded a structurally accepted flawed draft and three calculation
-records using scripts/create-correctness-host-acceptance.mjs.
+records using test/helpers/create-correctness-fixture.mjs.
 
 The host discovered the completed draft, created two ordinary review tasks during
 workflow exploration, then found correctness prepare and saved the separate note.

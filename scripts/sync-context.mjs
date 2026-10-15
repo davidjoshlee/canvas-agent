@@ -1,8 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { resolveRequirements } from "../src/requirements.ts"
-import { entrypointOutcomes, workflowForRequirements } from "../src/workflows.ts"
+import { resolveRequirements } from "../src/tasks/requirements.ts"
+import { entrypointOutcomes, workflowForRequirements } from "../src/tasks/workflows.ts"
 
 const start = "<!-- canvas-agent-cli:start -->"
 const end = "<!-- canvas-agent-cli:end -->"

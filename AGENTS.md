@@ -81,7 +81,7 @@ Revision preserves edits and produces a new full artifact. Approve only at expli
 
 ### Conditional detail
 
-Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, dogfood/sweep/window resume, migration/preserve-school, vault history, legacy/playbooks/feedback, guidance, correctness, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
+Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, dogfood/sweep/window resume, vault history, playbooks/feedback, guidance, correctness, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
 <!-- canvas-agent-cli:end -->
 
 ## Developing the toolkit
@@ -92,6 +92,6 @@ Canvas access is GET-only. Only explicitly allowlisted courses sync. Credentials
 
 Preserve School Agent course-code vault roots and student-owned files. Never overwrite originals, guidance, drafts, or completed outputs. Reject traversal, symlinks, restricted/prohibited context, stale source evidence, ambiguous course selection, and mismatched task identity. Private tasks belong in `_meta/tasks/` and must not be included in a reading copy.
 
-Run `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`. Test the compiled CLI with synthetic fixtures. Edit the shared CLI contract only in `plugins/canvas-agent/references/cli.md` and academic workflow definitions in `src/workflows.ts`, then run `npm run context:sync`; `npm run context:check` rejects drift. Do not publish, commit, or touch sibling repositories unless the user requests it.
+Run `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`. Test the compiled CLI with synthetic fixtures. Edit the shared CLI contract only in `plugins/canvas-agent/references/cli.md` and academic workflow definitions in `src/tasks/workflows.ts`, then run `npm run context:sync`; `npm run context:check` rejects drift. Do not publish, commit, or touch sibling repositories unless the user requests it.
 
-Parallel work: own only the assigned module/tests. Shared public types are in `src/types.ts`; coordinate interface changes with the parent. See CONTRACT.md.
+Source and tests are grouped by feature. Start with `docs/ARCHITECTURE.md` and `docs/DEVELOPMENT.md`; `src/cli.ts` is only the stable executable entry. Shared persisted types live in `src/shared/types.ts`. Keep historical audit reports, one-off host experiments and School migration/index utilities out of the maintained product. Preserve older saved-task readers. See CONTRACT.md.
