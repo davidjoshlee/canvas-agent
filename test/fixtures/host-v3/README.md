@@ -81,4 +81,3 @@ of source/active/restricted-guide originals. The proposal distinguishes explicit
 fixture permission from unspecified grading/attendance/exam policies and preserves
 assignment-specific scope. It is a retained primary-host artifact, not an
 independent reviewer/model grade, authenticated policy or real-course acceptance.
-

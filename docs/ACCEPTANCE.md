@@ -30,8 +30,8 @@ two workers and explicit 20-second test/hook allowances. Typecheck, lint,
 context/build and whitespace checks pass. The owner authorized Canvas commit/push
 for review. The fresh installed Canvas package smoke also passes all 153 commands
 with zero dependency-audit findings. This does not exercise a real Canvas account
-or host plugin. The authorization is
-for review, not merging or making either repository public. Real student vault,
+or host plugin. This does not authorize merging or making either repository public.
+Real student vault,
 credentials and private School checkout are untouched.
 
 Initial release verification used synthetic Canvas responses and isolated temporary vaults, not a live student's account. Those tests did not use production course files or credentials.
