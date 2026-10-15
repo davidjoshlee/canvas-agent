@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "canvas-agent",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "Onboard, sync, and create source-bound Canvas prep and assignment workflows using your chosen coding agent",
   "author": { "name": "David Lee", "url": "https://github.com/davidjoshlee" },
   "homepage": "https://github.com/davidjoshlee/canvas-agent",

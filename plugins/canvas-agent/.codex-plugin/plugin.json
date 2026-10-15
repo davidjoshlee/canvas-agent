@@ -1,6 +1,6 @@
 {
   "name": "canvas-agent",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "Local Canvas onboarding and model-free prep and assignment workflows",
   "skills": "./skills/"
 }

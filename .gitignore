@@ -3,4 +3,5 @@ dist/
 coverage/
 canvas-agent.config.json
 .env*
+*.auth.json
 *.log

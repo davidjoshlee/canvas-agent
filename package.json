@@ -1,18 +1,30 @@
 {
   "name": "canvas-agent",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Model-free Canvas workspace and task handoffs for coding agents",
   "bin": {
     "canvas-agent": "dist/cli.js"
   },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "plugins/canvas-agent/**",
+    "docs/**",
+    "AGENTS.md",
+    "CONTRACT.md",
+    "README.md",
+    "LICENSE",
+    "npm-shrinkwrap.json"
+  ],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "context:sync": "tsx scripts/sync-context.mjs --write",
     "context:check": "tsx scripts/sync-context.mjs --check",
+    "package:smoke": "npm run context:check && npm run build && node scripts/package-smoke.mjs",
     "pretest": "npm run context:check && npm run build",
     "test": "vitest run",
     "dev": "tsx src/cli.ts"
@@ -20,8 +32,20 @@
   "engines": {
     "node": ">=22"
   },
+  "overrides": {
+    "mammoth": {
+      "argparse": "2.0.1"
+    }
+  },
+  "bundleDependencies": [
+    "mammoth"
+  ],
   "dependencies": {
     "commander": "^14.0.0",
+    "jszip": "3.10.1",
+    "mammoth": "1.12.1",
+    "pdfjs-dist": "4.10.38",
+    "turndown": "7.2.4",
     "yaml": "^2.8.1",
     "zod": "^4.1.0"
   },

@@ -62,6 +62,31 @@ afterEach(async () => {
 })
 
 describe("assignment task workflows", () => {
+  it("binds group contribution scope to the saved prompt and rejects changed identities", async () => {
+    await setup()
+    const prompt = course.sources[0]
+    if (!prompt) throw new Error("Missing synthetic prompt")
+    prompt.text = "Group category: 7\nPrompt requirements"
+    prompt.hash = hash(prompt.text)
+    await writeFile(join(vault, prompt.path), prompt.text)
+    const task = await createAssignmentTask(vault, course.code, prompt.path, "draft")
+    expect(task.groupScopeVersion).toBe(1)
+    expect(task.assignment?.groupCategoryId).toBe("7")
+    expect(task.workflow?.instructions.join(" ")).toContain(
+      "student's explicitly identified contribution",
+    )
+    expect(task.workflow?.instructions.join(" ")).toContain("PENDING")
+    await expect(readTask(vault, task.id)).resolves.toEqual(task)
+    const path = join(vault, "_meta/tasks", task.id, "task.json")
+    const changed = JSON.parse(await readFile(path, "utf8"))
+    changed.assignment.groupCategoryId = "8"
+    await writeFile(path, JSON.stringify(changed))
+    await expect(readTask(vault, task.id)).rejects.toThrow()
+    changed.assignment.groupCategoryId = "7"
+    delete changed.groupScopeVersion
+    await writeFile(path, JSON.stringify(changed))
+    await expect(readTask(vault, task.id)).rejects.toThrow()
+  })
   it.each(["outline", "draft", "review"] as const)(
     "persists the complete %s workflow",
     async (mode) => {
@@ -123,6 +148,11 @@ describe("assignment task workflows", () => {
     const unrelated = "Unrelated optional reading"
     const extraGuidance = "Additional course policy"
     await mkdir(join(vault, "GSB-101", "Resources", "References"), { recursive: true })
+    await mkdir(join(vault, "GSB-101", "Resources", "Files"), { recursive: true })
+    await writeFile(
+      join(vault, "GSB-101", "Resources", "Files", "Detailed syllabus.pdf.md"),
+      "Detailed course policy",
+    )
     await writeFile(join(vault, "GSB-101", "Resources", "Syllabus.md"), syllabus)
     await writeFile(join(vault, "GSB-101", "Resources", "References", "reading.md"), reference)
     await writeFile(join(vault, "GSB-101", "Resources", "unrelated.md"), unrelated)
@@ -137,6 +167,7 @@ describe("assignment task workflows", () => {
     })
     course.sources.push(
       record("GSB-101/Resources/Syllabus.md", syllabus),
+      record("GSB-101/Resources/Files/Detailed syllabus.pdf.md", "Detailed course policy"),
       record("GSB-101/Resources/References/reading.md", reference),
       record("GSB-101/Resources/unrelated.md", unrelated),
     )
@@ -149,6 +180,7 @@ describe("assignment task workflows", () => {
     )
     expect(task.sources.map((item) => item.path)).toEqual([
       "GSB-101/Assignments/prompt.md",
+      "GSB-101/Resources/Files/Detailed syllabus.pdf.md",
       "GSB-101/Resources/References/reading.md",
       "GSB-101/Resources/Syllabus.md",
     ])
