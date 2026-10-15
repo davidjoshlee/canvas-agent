@@ -103,6 +103,20 @@ try {
     ),
   )[0]
   const bundledRoots = new Set(packed.bundled.map((name) => `node_modules/${name}/`))
+  const packagedDocs = new Set(["docs/ARCHITECTURE.md", "docs/PLUGIN.md", "docs/DEVELOPMENT.md"])
+  assert(
+    packed.files.every(({ path }) => !path.startsWith("docs/") || packagedDocs.has(path)),
+    "Historical reports or unexpected documents leaked into the package",
+  )
+  assert(
+    packed.files.every(
+      ({ path }) =>
+        !/^dist\/(?:migration|root-migration|index-reconciliation|school-index|preservation-migration|legacy)[^/]*\.(?:js|d\.ts)$/.test(
+          path,
+        ),
+    ),
+    "Removed compatibility modules leaked into generated output",
+  )
   assert(bundledRoots.has("node_modules/mammoth/"), "Word reader was not bundled")
   assert(!bundledRoots.has("node_modules/sprintf-js/"), "Vulnerable formatter was bundled")
   assert(
@@ -335,75 +349,6 @@ try {
     await writeFile(join(vault, path), body)
   }
   cli(["vault", "health"])
-  // The installed CLI reads an explicit, separate synthetic School index.
-  const diagnosticVault = join(root, "index-diagnostic-vault")
-  const diagnosticCourse = join(diagnosticVault, "SYNTH401")
-  const diagnosticConfig = join(root, "index-diagnostic.config.json")
-  const diagnosticIndex = join(root, "index-diagnostic.sqlite")
-  await mkdir(diagnosticCourse, { recursive: true })
-  await writeFile(
-    join(diagnosticCourse, "_index.md"),
-    "---\ncanvas_id: '17'\ncanvas_url: https://canvas.example.test/courses/17\ntype: _index.md\n---\nSynthetic manifest\n",
-  )
-  const diagnosticReading =
-    "---\ncanvas_id: '501'\ncanvas_url: https://canvas.example.test/files/501\ntype: files\nsource: sync\n---\nSynthetic relocated reading\n"
-  await writeFile(join(diagnosticCourse, "new.md"), diagnosticReading)
-  await writeFile(
-    diagnosticConfig,
-    JSON.stringify({
-      version: 1,
-      canvas: { baseUrl: "https://canvas.example.test", tokenEnv: "SYNTHETIC_UNUSED" },
-      vault: { path: diagnosticVault },
-      courses: { allowlist: [] },
-    }),
-  )
-  const { DatabaseSync } = await import("node:sqlite")
-  const diagnosticDb = new DatabaseSync(diagnosticIndex)
-  diagnosticDb.exec(
-    "CREATE TABLE migrations(version INTEGER); INSERT INTO migrations VALUES(5); CREATE TABLE courses(canvas_id TEXT, workflow_state TEXT, vault_path TEXT)",
-  )
-  for (const table of ["modules", "assignments", "announcements", "files"])
-    diagnosticDb.exec(
-      `CREATE TABLE ${table}(canvas_id TEXT, course_canvas_id TEXT, vault_path TEXT${table === "assignments" ? ", deleted INTEGER" : ""})`,
-    )
-  diagnosticDb
-    .prepare("INSERT INTO courses VALUES(?, ?, ?)")
-    .run("17", "available", diagnosticCourse)
-  diagnosticDb
-    .prepare("INSERT INTO files VALUES(?, ?, ?)")
-    .run("501", "17", join(diagnosticCourse, "old.md"))
-  diagnosticDb.close()
-  const diagnosticBefore = await readFile(diagnosticIndex)
-  commands.push("vault reconcile-index")
-  const reconciliation = JSON.parse(
-    run(
-      bin,
-      [
-        "vault",
-        "reconcile-index",
-        "--school-index",
-        diagnosticIndex,
-        "--course",
-        "17",
-        "--config",
-        diagnosticConfig,
-        "--json",
-      ],
-      workspace,
-    ),
-  )
-  assert.equal(reconciliation.proposedRelinks, 1)
-  assert.equal(reconciliation.findings[0].status, "unique-relocation")
-  assert.equal(reconciliation.changesMade, false)
-  assert.deepEqual(await readFile(diagnosticIndex), diagnosticBefore)
-  assert.equal(await readFile(join(diagnosticCourse, "new.md"), "utf8"), diagnosticReading)
-  commands.push("vault reconcile-index missing-scope refusal")
-  run(
-    bin,
-    ["vault", "reconcile-index", "--school-index", diagnosticIndex, "--config", diagnosticConfig],
-    workspace,
-    1,
-  )
   await mkdir(join(vault, "_meta"), { recursive: true })
   await writeFile(
     join(vault, "_meta/canvas-courses.json"),
@@ -532,13 +477,6 @@ try {
     "completed",
   )
   await mkdir(join(vault, "CS101/_meta"), { recursive: true })
-  const legacyPlaybook =
-    "---\ncanvas_id: course-playbook\ncanvas_url: https://canvas.example.test/courses/1\ntype: course-playbook.md\nai_policy: allowed\nredistribution: allowed\n---\nSynthetic unverified legacy learning context.\n"
-  const legacyPlaybookPath = join(vault, "CS101/_meta/course-playbook.md")
-  await writeFile(legacyPlaybookPath, legacyPlaybook)
-  assert.equal(cli(["legacy", "playbook-inspect", "CS101"]).historicalDatesVerified, false)
-  assert.equal(cli(["legacy", "playbook-import", "CS101"]).reused, false)
-  assert.equal(await readFile(legacyPlaybookPath, "utf8"), legacyPlaybook)
   cli(["context"])
   cli(["upcoming", "--course", "CS101"])
   async function complete(task, frozen = false) {
@@ -648,7 +586,7 @@ try {
       [
         "--input-type=module",
         "-e",
-        `const {createDogfood}=await import(${JSON.stringify(pathToFileURL(join(installed, "dist/dogfood.js")).href)}); console.log(JSON.stringify(await createDogfood(${JSON.stringify(vault)}, {course:"CS101",period:{kind:"week",value:"2026-10-05"},assignment:null})));`,
+        `const {createDogfood}=await import(${JSON.stringify(pathToFileURL(join(installed, "dist/evaluation/dogfood.js")).href)}); console.log(JSON.stringify(await createDogfood(${JSON.stringify(vault)}, {course:"CS101",period:{kind:"week",value:"2026-10-05"},assignment:null})));`,
       ],
       workspace,
     ),
@@ -672,7 +610,7 @@ try {
       [
         "--input-type=module",
         "-e",
-        `const {createDogfoodSweep}=await import(${JSON.stringify(pathToFileURL(join(installed, "dist/dogfood-sweep.js")).href)}); console.log(JSON.stringify(await createDogfoodSweep(${JSON.stringify(vault)}, "SWEEP101", 1)));`,
+        `const {createDogfoodSweep}=await import(${JSON.stringify(pathToFileURL(join(installed, "dist/evaluation/sweep.js")).href)}); console.log(JSON.stringify(await createDogfoodSweep(${JSON.stringify(vault)}, "SWEEP101", 1)));`,
       ],
       workspace,
     ),
@@ -929,7 +867,7 @@ try {
       [
         "--input-type=module",
         "-e",
-        `const {createSimulationWindow}=await import(${JSON.stringify(pathToFileURL(join(installed, "dist/simulation-window.js")).href)}); let checkpoints=0; try { await createSimulationWindow(${JSON.stringify(vault)}, ${JSON.stringify(snapshot.id)}, "CS101", "2026-10-05..2026-10-05", undefined, {afterCheckpoint:async()=>{if(++checkpoints===3)throw new Error("synthetic interruption")}}); throw new Error("Expected interruption"); } catch(error) {if(!error.windowId)throw error; console.log(JSON.stringify({id:error.windowId}));}`,
+        `const {createSimulationWindow}=await import(${JSON.stringify(pathToFileURL(join(installed, "dist/evaluation/window.js")).href)}); let checkpoints=0; try { await createSimulationWindow(${JSON.stringify(vault)}, ${JSON.stringify(snapshot.id)}, "CS101", "2026-10-05..2026-10-05", undefined, {afterCheckpoint:async()=>{if(++checkpoints===3)throw new Error("synthetic interruption")}}); throw new Error("Expected interruption"); } catch(error) {if(!error.windowId)throw error; console.log(JSON.stringify({id:error.windowId}));}`,
       ],
       workspace,
     ),

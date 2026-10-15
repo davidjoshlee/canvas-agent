@@ -1,6 +1,6 @@
 ---
 name: setup-and-sync
-description: Install and onboard Canvas Agent, diagnose config/auth/vault issues, migrate selected School Agent vault courses, sync courses, or inspect upcoming work. Not for operating School Agent or writing prep candidates.
+description: Install and onboard Canvas Agent, diagnose config/auth/vault issues, sync courses, or inspect upcoming work. Not for operating School Agent or writing prep candidates.
 ---
 
 # Canvas Agent setup and sync
@@ -46,7 +46,7 @@ Revision preserves edits and produces a new full artifact. Approve only at expli
 
 ### Conditional detail
 
-Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, dogfood/sweep/window resume, migration/preserve-school, vault history, legacy/playbooks/feedback, guidance, correctness, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
+Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, dogfood/sweep/window resume, vault history, playbooks/feedback, guidance, correctness, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
 <!-- canvas-agent-cli:end -->
 
-Locate the separately installed CLI; if absent, install from the authorized checkout using Node 22+, npm ci and npm run build. New setup defaults to ~/canvas-vault. Have the student provision credentials locally; doctor/auth verify, explicitly select course IDs, sync and inspect notices. Stop on auth failure for user action, not indefinite retries. Homework/timeline use local data; sync only for requested fresh information. Route generation to the prep/assignment skill. Consult [CLI details](../../references/cli.md) before advanced auth, migration or reading-copy operations.
+Locate the separately installed CLI; if absent, install from the authorized checkout using Node 22+, npm ci and npm run build. New setup defaults to ~/canvas-vault. Have the student provision credentials locally; doctor/auth verify, explicitly select course IDs, sync and inspect notices. Stop on auth failure for user action, not indefinite retries. Homework/timeline use local data; sync only for requested fresh information. Route generation to the prep/assignment skill. Consult [CLI details](../../references/cli.md) before advanced auth or reading-copy operations.

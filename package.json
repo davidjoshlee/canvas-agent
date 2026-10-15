@@ -11,7 +11,9 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "plugins/canvas-agent/**",
-    "docs/**",
+    "docs/ARCHITECTURE.md",
+    "docs/PLUGIN.md",
+    "docs/DEVELOPMENT.md",
     "AGENTS.md",
     "CONTRACT.md",
     "README.md",
@@ -19,7 +21,7 @@
     "npm-shrinkwrap.json"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "context:sync": "tsx scripts/sync-context.mjs --write",
@@ -27,6 +29,7 @@
     "package:smoke": "npm run context:check && npm run build && node scripts/package-smoke.mjs",
     "pretest": "npm run context:check && npm run build",
     "test": "vitest run",
+    "test:ci": "npm test -- --maxWorkers=2 --testTimeout=20000 --hookTimeout=20000",
     "dev": "tsx src/cli.ts"
   },
   "engines": {
