@@ -51,8 +51,9 @@ No development or cleanup command may touch a student's real vault or credential
 
 ## Maintainer checks
 
-Keep domain implementations under src/<feature>, command registration under cli,
-and synthetic tests under matching test/<feature> directories. The executable
+Keep domain implementations under src/<feature>, core command registration under
+cli, and synthetic tests under matching test/<feature> directories. Optional
+feature-owned command registrars may live with their implementation. The executable
 entry remains src/cli.ts → dist/cli.js. No domain runs I/O at import time.
 Update shared CLI instructions only in plugins/canvas-agent/references/cli.md
 and workflows in src/tasks/workflows.ts, then run context:sync and context:check.

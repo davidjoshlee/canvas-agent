@@ -3,7 +3,7 @@
 This candidate was authored by a fresh Luna host from the source AGENTS.md,
 canonical CLI instructions and the existing synthetic ECON902 proposal, not
 from a supplied answer. Inputs are created by
-`scripts/create-guidance-host-acceptance.mjs`: invented syllabus/common guide,
+`test/helpers/create-guidance-fixture.mjs`: invented syllabus/common guide,
 two graded memo prompts and two selected current cached own-feedback values.
 One superseded feedback value remains archived but is not selected.
 

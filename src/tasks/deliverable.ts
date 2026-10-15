@@ -1,4 +1,4 @@
-// Deterministic parser ported from the owner's School Agent source; see docs/PARITY.md.
+// Deterministic parser derived from School Agent; synthetic regressions define its behavior.
 /**
  * Deterministic (no LLM) answer to "what does this assignment actually ask
  * the student to produce?" A regex-based parser, not a model call, because

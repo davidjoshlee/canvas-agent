@@ -1,4 +1,4 @@
-// Deterministic parser ported from the owner's School Agent source; see docs/PARITY.md.
+// Deterministic parser derived from School Agent; synthetic regressions define its behavior.
 /**
  * Enumerator + part-marker parsing internals for deliverable.ts, split out
  * to keep both files under the LOC ceiling. Not part of the public
