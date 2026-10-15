@@ -24,13 +24,31 @@ afterEach(async () => {
 describe("compiled CLI acceptance", () => {
   it.each([
     ["upcoming"],
+    ["cost"],
+    ["auth", "import-school-keychain"],
     ["calendar", "override"],
     ["calendar", "check"],
     ["calendar", "export"],
     ["guidance", "propose"],
+    ["guidance", "list"],
+    ["guidance", "show"],
     ["guidance", "save"],
+    ["gate", "m1"],
+    ["dogfood"],
+    ["dogfood", "show"],
+    ["dogfood", "resume"],
+    ["dogfood", "sweep", "show"],
+    ["dogfood", "sweep", "resume"],
     ["simulate", "capture"],
     ["simulate", "replay"],
+    ["simulate", "compare"],
+    ["simulate", "task", "create"],
+    ["simulate", "task", "show"],
+    ["simulate", "task", "complete"],
+    ["simulate", "task", "calculate"],
+    ["simulate", "task", "calculations"],
+    ["simulate", "task", "workbook"],
+    ["simulate", "task", "workbooks"],
   ])("registers the student command %s", (...command) => {
     const result = cli([...command.flat(), "--help"])
     expect(result.status, result.stderr).toBe(0)

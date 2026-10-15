@@ -1,0 +1,64 @@
+{
+  "operations": [
+    {
+      "operation": "subtract",
+      "values": [50, 30],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "multiply",
+      "values": [600, 20],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "subtract",
+      "values": [12000, 8000],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "divide",
+      "values": [8000, 20],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "subtract",
+      "values": [1000, 600],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "divide",
+      "values": [200, 600],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "subtract",
+      "values": [50, 30],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "multiply",
+      "values": [600, 20],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "subtract",
+      "values": [12000, 8000],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "divide",
+      "values": [8000, 20],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "subtract",
+      "values": [1000, 600],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "subtract",
+      "values": [600, 400],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    }
+  ]
+}

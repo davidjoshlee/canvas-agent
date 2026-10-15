@@ -1,0 +1,13 @@
+{
+  "operations": [
+    { "operation": "multiply", "values": [500, 40], "source": "ECON101/Assignments/pricing.md" },
+    { "operation": "multiply", "values": [150, 12], "source": "ECON101/Assignments/pricing.md" },
+    { "operation": "multiply", "values": [100, 3], "source": "ECON101/Assignments/pricing.md" },
+    {
+      "operation": "sum",
+      "values": [1800, -300, -1000],
+      "source": "ECON101/Assignments/pricing.md"
+    },
+    { "operation": "add", "values": [20000, 500], "source": "ECON101/Assignments/pricing.md" }
+  ]
+}

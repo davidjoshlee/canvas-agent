@@ -49,6 +49,46 @@ afterEach(async () => {
 })
 
 describe("setup and local upcoming inventory", () => {
+  it("isolates new default vaults from School while preserving explicit existing paths", async () => {
+    const root = await temp()
+    const schoolVault = join(root, "school-vault")
+    await mkdir(schoolVault)
+    const original = "Synthetic School-owned work must remain unchanged.\n"
+    await writeFile(join(schoolVault, "original.md"), original)
+    vi.stubEnv("HOME", root)
+    try {
+      const direct = await setupConfig(join(root, "direct/config.json"), {
+        baseUrl: "https://canvas.example.test",
+      })
+      expect(direct.vault.path).toBe(join(root, "canvas-vault"))
+      const configPath = join(root, "cli/config.json")
+      const result = await invoke([
+        "setup",
+        "--canvas-url",
+        "https://canvas.example.test",
+        "--config",
+        configPath,
+        "--json",
+      ])
+      expect(result.code).toBe(0)
+      expect(JSON.parse(result.stdout).vault).toBe(join(root, "canvas-vault"))
+      const explicitPath = join(root, "existing/config.json")
+      await createConfig(explicitPath, {
+        vault: schoolVault,
+        baseUrl: "https://canvas.example.test",
+      })
+      const before = await readFile(explicitPath)
+      expect((await loadConfig(explicitPath)).vault.path).toBe(schoolVault)
+      await expect(
+        setupConfig(explicitPath, { baseUrl: "https://canvas.example.test" }),
+      ).rejects.toThrow("already exists")
+      expect(await readFile(explicitPath)).toEqual(before)
+      expect(await readFile(join(schoolVault, "original.md"), "utf8")).toBe(original)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it("creates a blank private env template and refuses either existing setup file", async () => {
     const root = await temp()
     const configPath = join(root, "agent.json")
@@ -103,6 +143,8 @@ describe("setup and local upcoming inventory", () => {
       configured: true,
       tokenEnv: "PARITY_CANVAS_TOKEN",
       available: false,
+      renewal: "unrecorded",
+      verified: false,
     })
   })
 
@@ -153,6 +195,74 @@ describe("setup and local upcoming inventory", () => {
     )
     expect((await loadConfig(configPath)).courses.allowlist).toEqual(["101"])
   })
+
+  it.each([403, 404, 401, "malformed", "invalid-profile", "active-denied"] as const)(
+    "onboards with discovery %s only when active enrollment and profile evidence remain valid",
+    async (mode) => {
+      const root = await temp(),
+        configPath = join(root, "agent.json")
+      const config = await createConfig(configPath, {
+        vault: "./vault",
+        baseUrl: "https://canvas.example.edu",
+        tokenEnv: "PARITY_CANVAS_TOKEN",
+      })
+      process.env.PARITY_CANVAS_TOKEN = "synthetic-token"
+      const before = await readFile(configPath)
+      const calls: string[] = []
+      setCanvasFetchForTests(async (input, init) => {
+        expect(init?.method).toBe("GET")
+        const path = new URL(String(input)).pathname
+        calls.push(path)
+        if (path === "/api/v1/users/self/courses")
+          return mode === "active-denied"
+            ? new Response("PRIVATE_ACTIVE_RESPONSE", { status: 403 })
+            : new Response(
+                JSON.stringify([
+                  { id: 101, course_code: "CS101", name: "First", workflow_state: "available" },
+                  { id: 202, course_code: "CS202", name: "Second", workflow_state: "available" },
+                ]),
+              )
+        if (path === "/api/v1/courses")
+          return mode === "malformed"
+            ? new Response("{ PRIVATE_DISCOVERY_RESPONSE")
+            : new Response("PRIVATE_DISCOVERY_RESPONSE", {
+                status: typeof mode === "number" ? mode : 403,
+              })
+        if (path === "/api/v1/users/self")
+          return mode === "invalid-profile"
+            ? new Response("<html>PRIVATE_PROFILE_RESPONSE</html>")
+            : new Response(JSON.stringify({ id: 99, name: "Synthetic student" }))
+        throw new Error("Unexpected off-scope request")
+      })
+      if (mode === 403 || mode === 404) {
+        const selected = await selectOnboardingCourses(configPath, config, { ids: ["101"] })
+        expect(selected.selected).toEqual(["101"])
+        expect(selected.warning).toContain("active-enrollment list")
+        expect(selected.warning).toContain("coverage gap")
+        expect(JSON.stringify(selected)).not.toContain("PRIVATE_")
+        expect((await loadConfig(configPath)).courses.allowlist).toEqual(["101"])
+        const selectedBytes = await readFile(configPath)
+        await expect(
+          selectOnboardingCourses(configPath, await loadConfig(configPath), { ids: ["303"] }),
+        ).rejects.toThrow(/active/)
+        expect(await readFile(configPath)).toEqual(selectedBytes)
+        expect(
+          (
+            await selectOnboardingCourses(configPath, await loadConfig(configPath), {
+              allActive: true,
+            })
+          ).selected,
+        ).toEqual(["101", "202"])
+        expect(calls).toContain("/api/v1/users/self")
+      } else {
+        await expect(
+          selectOnboardingCourses(configPath, config, { ids: ["101"] }),
+        ).rejects.toThrow()
+        expect(await readFile(configPath)).toEqual(before)
+      }
+      expect(calls.some((path) => /^\/api\/v1\/courses\/\d/.test(path))).toBe(false)
+    },
+  )
 
   it("uses due metadata and legacy Due lines, keeps overdue separate, deduplicates, and ignores creation dates", () => {
     const context = {

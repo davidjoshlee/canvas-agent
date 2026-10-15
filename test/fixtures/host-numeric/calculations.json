@@ -1,0 +1,29 @@
+{
+  "operations": [
+    {
+      "operation": "multiply",
+      "values": [600, 50],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "multiply",
+      "values": [600, 30],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "subtract",
+      "values": [50, 30],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "sum",
+      "values": [30000, -18000, -8000],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    },
+    {
+      "operation": "divide",
+      "values": [8000, 20],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    }
+  ]
+}

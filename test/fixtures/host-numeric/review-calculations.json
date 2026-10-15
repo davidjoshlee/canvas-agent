@@ -1,0 +1,14 @@
+{
+  "operations": [
+    {
+      "operation": "sum",
+      "values": [30000, -18000, -8000, -3000],
+      "source": "ECON901/Assignments/Drafts/student-review-fixture.md"
+    },
+    {
+      "operation": "sum",
+      "values": [30000, -18000, -8000],
+      "source": "ECON901/Week 02 - Oct 12/launch-case.md"
+    }
+  ]
+}

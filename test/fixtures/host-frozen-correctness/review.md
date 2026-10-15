@@ -1,0 +1,14 @@
+Review: {{REVIEW_ID}}
+
+## Verified
+
+- The source inputs for the two volume-based totals are present: price 4, variable cost 2, and observed volume 3. Frozen recorded calculations bind to the captured pilot source and yield revenue 12 from 4 × 3 and variable cost 6 from 2 × 3. This supports those two totals only; it does not include fixed launch costs. [`ECON903/Materials/pilot.md`](ECON903/Materials/pilot.md)
+- The prompt asks for a local launch recommendation using pilot unit economics, comparison limitations, and missing evidence. The draft attempts a recommendation, but does not substantively address the latter two elements. `ECON903/Assignments/launch.md`; `_meta/simulations/tasks/{{TASK_ID}}/output.md`
+
+## Needs verification
+
+- The draft says contribution is 8, but its own stated revenue and variable cost imply 12 − 6 = 6. The captured calculation record separately logs subtraction of 12 − 6 = 6; the contribution claim is therefore arithmetically inconsistent. The source also says observed amounts exclude fixed launch costs, so neither figure establishes profit or net launch economics. `ECON903/Materials/pilot.md`; `_meta/simulations/tasks/{{TASK_ID}}/output.md`
+- The quoted sentence “This pilot proves scalability.” is not the source's quoted conclusion. The only quotation supplied is “This pilot is descriptive, not causal.” The source expressly says the pilot does not establish scalability or a causal effect. Treat the draft quotation and its attribution as unsupported and correct/remove them. `ECON903/Materials/pilot.md`; `_meta/simulations/tasks/{{TASK_ID}}/output.md`
+- “There are no missing inputs or design limitations” conflicts with the captured evidence: there is no control group, fixed launch costs were not supplied, and results outside the pilot were not supplied. The claim of immediate full rollout is not supported by this limited descriptive pilot. A defensible recommendation needs to state those limits and identify the fixed-cost and out-of-pilot evidence needed before making a broader launch decision. `ECON903/Materials/pilot.md`; `_meta/simulations/tasks/{{TASK_ID}}/output.md`
+- Only revenue (4 × 3), variable cost (2 × 3), and their difference (12 − 6) have matching frozen calculation records. The records are locally recomputed and source-bound, but do not authenticate execution or independently prove the operand grounding. No other draft arithmetic is evidenced. The contribution value 8 has no supporting calculation record and disagrees with the recorded difference of 6. `ECON903/Materials/pilot.md`; `_meta/simulations/tasks/{{TASK_ID}}/output.md`
+- No spreadsheet requirement or workbook is present in the frozen handoff. The supplied prompt and materials do not establish any additional rubric requirements; this review is limited to those captured materials. `ECON903/Assignments/launch.md`; `ECON903/Materials/pilot.md`

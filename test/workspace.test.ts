@@ -4,7 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { afterEach, describe, expect, it } from "vitest"
-
+import { selectPrepInputs } from "../src/tasks.js"
+import { collectUpcoming } from "../src/upcoming.js"
 import { inspectWorkspace, selectCourse } from "../src/workspace.js"
 
 const roots: string[] = []
@@ -23,6 +24,103 @@ afterEach(async () => {
 })
 
 describe("workspace inventory", () => {
+  it("follows legacy module references and same-course HTML links only through approved sources", async () => {
+    const root = await fixture()
+    await put(
+      root,
+      "ACCT340/00 Home.md",
+      "---\ncanvas_url: https://canvas.example.edu/courses/99\n---\n# Accounting",
+    )
+    await put(
+      root,
+      "ACCT340/module.md",
+      "---\ncanvas_id: '10'\ntype: modules\nmodule_canvas_id: '10'\ndates:\n  session_at: '2026-10-19'\n---\n- Page: Session (page_url: session)\n- Assignment: Case (canvas_id: 22)",
+    )
+    await put(
+      root,
+      "ACCT340/page.md",
+      "---\ncanvas_id: '11'\ntype: modules\nmodule_canvas_id: '10'\ndates:\n  session_at: '2026-10-19'\ncanvas_url: https://canvas.example.edu/courses/99/pages/session\n---\n<p>Read <a href='/courses/99/files/33/download'>case</a>. Ignore <a href='https://other.example/courses/99/files/44'>external</a> and <a href='/courses/100/files/44'>other course</a>.</p>",
+    )
+    await put(
+      root,
+      "ACCT340/prompt.md",
+      "---\ncanvas_id: '22'\ntype: assignments\n---\nAnalyze the case.",
+    )
+    await put(
+      root,
+      "ACCT340/reading.pdf.md",
+      "---\ncanvas_id: '33'\ntype: files\n---\nReadable case.",
+    )
+    await put(root, "ACCT340/other.md", "---\ncanvas_id: '44'\ntype: files\n---\nUnrelated.")
+    await put(
+      root,
+      "ACCT340/restricted.md",
+      "---\ncanvas_id: '33'\ntype: files\nai_policy: prohibited\n---\nRestricted.",
+    )
+    const course = selectCourse(await inspectWorkspace(root), "99")
+    expect(
+      course.sources.find((source) => source.path.endsWith("module.md"))?.relatedPaths,
+    ).toEqual(expect.arrayContaining(["ACCT340/page.md", "ACCT340/prompt.md"]))
+    expect(course.sources.find((source) => source.path.endsWith("page.md"))?.relatedPaths).toEqual([
+      "ACCT340/reading.pdf.md",
+    ])
+    expect(JSON.stringify(course.sources)).not.toContain("Restricted.")
+    const selected = selectPrepInputs(course, { kind: "session", value: "2026-10-19" }).sources.map(
+      (source) => source.path,
+    )
+    expect(selected).toEqual(
+      expect.arrayContaining([
+        "ACCT340/module.md",
+        "ACCT340/page.md",
+        "ACCT340/prompt.md",
+        "ACCT340/reading.pdf.md",
+      ]),
+    )
+    expect(selected).not.toContain("ACCT340/other.md")
+  })
+  it("resolves legacy navigation identities, human assignment titles and session dates without a manifest", async () => {
+    const root = await fixture()
+    await put(
+      root,
+      "ACCT340/00 Home.md",
+      "---\ncanvas_id: 'navigation:99:00 Home.md'\ncanvas_url: https://canvas.example.edu/courses/99\n---\n# F26-ACCT-340-01 - Accounting\n\n**Course:** F26-ACCT-340-01",
+    )
+    await put(
+      root,
+      "ACCT340/Assignments/2026-10-20 - Case analysis/00 Prompt.md",
+      "---\ncanvas_id: '22'\ntype: assignments\ndates:\n  due_at: '2026-10-20T00:00:00Z'\n---\n<p>Analyze the case.</p>",
+    )
+    await put(
+      root,
+      "ACCT340/Session.md",
+      "---\ntype: modules\ndates:\n  session_at: '2026-10-19T10:00:00Z'\n---\nSession material",
+    )
+    const context = await inspectWorkspace(root)
+    for (const selector of ["ACCT340", "99", "F26-ACCT-340-01", "Accounting"])
+      expect(selectCourse(context, selector).root).toBe("ACCT340")
+    expect(() => selectCourse(context, "9")).toThrow(/No course/)
+    expect(
+      context.courses[0]?.sources.find((source) => source.path.endsWith("Session.md"))?.dates,
+    ).toEqual(["2026-10-19"])
+    for (const selector of ["99", "F26-ACCT-340-01", "Accounting"])
+      expect(
+        collectUpcoming(context, { course: selector, now: new Date("2026-10-10T00:00:00Z") })
+          .items[0]?.title,
+      ).toBe("Case analysis")
+    expect(() => collectUpcoming(context, { course: "missing" })).toThrow(/No course/)
+  })
+
+  it("rejects ambiguous Canvas IDs rather than selecting either legacy course", async () => {
+    const root = await fixture()
+    for (const code of ["ACCT340", "ACCT341"])
+      await put(
+        root,
+        `${code}/00 Home.md`,
+        "---\ncanvas_url: https://canvas.example.edu/courses/99\n---\n# Accounting",
+      )
+    const context = await inspectWorkspace(root)
+    expect(() => selectCourse(context, "99")).toThrow(/ambiguous/)
+  })
   it("accepts only same-course extraction sidecars whose original hash is current", async () => {
     const root = await fixture()
     const original = Buffer.from("current original")
@@ -262,8 +360,11 @@ describe("workspace inventory", () => {
       root: "F26-ACCT-340",
       title: "Accounting",
       canvasId: "99",
+      canvasCode: "F26-ACCT-340",
       periods: ["F26-ACCT-340/Week 03 - Oct 12"],
     })
+    expect(selectCourse(context, "99").root).toBe("F26-ACCT-340")
+    expect(selectCourse(context, "F26-ACCT-340").canvasId).toBe("99")
     expect(JSON.stringify(context)).not.toContain("DO NOT EXPOSE")
     expect(context.courses[0]?.excluded).toContainEqual({
       path: "F26-ACCT-340/credentials.txt",

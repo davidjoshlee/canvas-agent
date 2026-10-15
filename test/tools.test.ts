@@ -5,7 +5,9 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { createPrepTask, readTask } from "../src/tasks.js"
 import {
+  CALCULATION_OPERATIONS,
   calculateTask,
+  calculateValues,
   compareTasks,
   createWorkbook,
   inspectTask,
@@ -39,6 +41,29 @@ afterEach(async () => {
 })
 
 describe("task tools", () => {
+  it("executes every advertised operation and returns supported names on an unsupported operation", () => {
+    const expected = {
+      sum: 6,
+      mean: 3,
+      median: 3,
+      min: 2,
+      max: 4,
+      stddev: 1,
+      npv: 6,
+      add: 6,
+      subtract: -2,
+      multiply: 8,
+      divide: 0.5,
+      power: 16,
+    }
+    for (const operation of CALCULATION_OPERATIONS)
+      expect(calculateValues(operation, [2, 4], operation === "npv" ? 0 : undefined)).toBe(
+        expected[operation],
+      )
+    expect(() => calculateValues("product", [2, 4])).toThrow(
+      `Supported operations: ${CALCULATION_OPERATIONS.join(", ")}`,
+    )
+  })
   it("calculates only finite supported operations against current task snapshots", async () => {
     const { root, config } = await fixture()
     const task = await createPrepTask(root, "ACCT312", "2026-10-12")
@@ -160,6 +185,14 @@ describe("task tools", () => {
     await writeFile(input, JSON.stringify({ sheets: [{ name: "Data", rows: [["Value"], [2]] }] }))
     const one = await workbookTask(config, task.id, input)
     const two = await workbookTask(config, task.id, input)
+    await writeFile(input, "PRIVATE_INVALID_WORKBOOK_INPUT")
+    await expect(workbookTask(config, task.id, input)).rejects.toThrow(
+      "Workbook input must contain valid UTF-8 JSON",
+    )
+    const credential = join(root, ".env")
+    await writeFile(credential, "PRIVATE_CREDENTIAL_FIXTURE")
+    await expect(workbookTask(config, task.id, credential)).rejects.toThrow(/credential file/)
+    expect(await readFile(credential, "utf8")).toBe("PRIVATE_CREDENTIAL_FIXTURE")
     expect(one.path).toMatch(/^ACCT312\/.+\/01 Workbook\.xlsx$/)
     expect(two.path).toContain("01 Workbook.v2.xlsx")
     expect(

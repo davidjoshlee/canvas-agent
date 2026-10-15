@@ -12,6 +12,23 @@ const source = (path: string, text: string, type = "reading"): SourceRecord => (
 })
 
 describe("prep requirement resolution", () => {
+  it("does not strip plain-text mathematical comparisons as HTML", () => {
+    expect(
+      resolveRequirements(
+        "prep",
+        undefined,
+        [source("GSB-101/session.md", "1. Does a < b imply b > a?")],
+        [],
+      ).questions,
+    ).toEqual(["Does a < b imply b > a?"])
+  })
+  it("extracts HTML Canvas questions and ignores script/style/comment content", () => {
+    const html =
+      "<style><li>Hidden style?</li></style><script><li>Hidden script?</li></script><!-- <li>Hidden comment?</li> --><h2>Preparation questions</h2><ol><li><strong>What drives growth &amp; margin?</strong></li><li><p>Which evidence is strongest&#63;</p></li></ol><h2>Background</h2><p>A rhetorical question?</p>"
+    expect(
+      resolveRequirements("prep", undefined, [source("GSB-101/session.md", html)], []).questions,
+    ).toEqual(["What drives growth & margin?", "Which evidence is strongest?"])
+  })
   it("uses the course's enumerated brief structure and stops at the next H2", () => {
     const guidance = source(
       "GSB-101/guidance.md",

@@ -132,7 +132,12 @@ describe("safe task completion", () => {
     const legacy = JSON.parse(await readFile(taskPath, "utf8"))
     delete legacy.period
     delete legacy.workflow
+    delete legacy.answerEvidenceVersion
     delete legacy.questions
+    delete legacy.parserVersion
+    delete legacy.deliverable
+    delete legacy.deliverableParserVersion
+    delete legacy.guidanceSelectionVersion
     legacy.requirements = ["Summary", "Key concepts", "Discussion questions", "Sources"]
     await writeFile(taskPath, JSON.stringify(legacy))
     await writeFile(
@@ -153,7 +158,7 @@ describe("safe task completion", () => {
     await writeFile(join(vault, source.path), sourceText)
     course.sources[0] = { ...source, text: sourceText, hash: digest(sourceText) }
     const task = await createPrepTask(vault, "GSB-101", "2026-10-12")
-    expect(task.workflow?.version).toBe(2)
+    expect(task.workflow?.version).toBe(3)
     expect(task.questions).toEqual(["How does commitment change bargaining outcomes?"])
     const base = (answer: string) =>
       `Task: ${task.id}\n\n${task.requirements
@@ -178,6 +183,29 @@ describe("safe task completion", () => {
       candidatePath,
       base(
         "The reading explains how commitment changes bargaining outcomes by limiting later strategic choices, which makes promises more credible. See `GSB-101/Week 03 - Oct 12/lecture.md`.",
+      ),
+    )
+    await expect(completeTask(vault, task.id, candidatePath)).resolves.toMatchObject({
+      task: { status: "completed" },
+    })
+  })
+  it("accepts an explicit PENDING missing-source answer without requiring a fabricated citation", async () => {
+    await setup()
+    const source = course.sources[0]
+    if (!source) throw new Error("Fixture source is missing")
+    sourceText =
+      "The supplied notes do not contain Exhibit 2.\n\n## Preparation questions\nWhat conversion rate is shown in Exhibit 2?"
+    await writeFile(join(vault, source.path), sourceText)
+    course.sources[0] = { ...source, text: sourceText, hash: digest(sourceText) }
+    const task = await createPrepTask(vault, "GSB-101", "2026-10-12")
+    const content = (answer: string) =>
+      `Task: ${task.id}\n\n${task.requirements.map((heading) => `## ${heading}\n${heading === "Sources" ? `\`${source.path}\`` : heading === "Preparation questions" ? `### What conversion rate is shown in Exhibit 2?\n${answer}` : "Synthetic discussion of the supplied notes."}`).join("\n\n")}`
+    await writeFile(candidatePath, content("PENDING"))
+    await expect(completeTask(vault, task.id, candidatePath)).rejects.toThrow(/substantive answer/)
+    await writeFile(
+      candidatePath,
+      content(
+        "PENDING — requires Exhibit 2, which the student must supply before its conversion rate can be stated. No conversion value is asserted.",
       ),
     )
     await expect(completeTask(vault, task.id, candidatePath)).resolves.toMatchObject({

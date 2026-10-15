@@ -3,7 +3,11 @@ import { constants } from "node:fs"
 import { lstat, mkdir, open, readFile } from "node:fs/promises"
 import { isAbsolute, join, resolve, sep } from "node:path"
 import JSZip from "jszip"
+import { verifyTaskLearningHistory } from "./canvas-feedback.js"
+import { verifyCompletedWorkbook } from "./completion.js"
 import { assertNoSymlinks } from "./fs-safety.js"
+import { readJsonInput } from "./json-input.js"
+import { legacyTaskLink } from "./legacy.js"
 import { readTask } from "./tasks.js"
 import type { SourceRecord, TaskRecord, ToolkitConfig } from "./types.js"
 
@@ -13,6 +17,20 @@ const MAX_LOG = 1024 * 1024
 const MAX_WORKBOOK = 5 * 1024 * 1024
 const MAX_CELLS = 50_000
 const MAX_SHEETS = 20
+export const CALCULATION_OPERATIONS = [
+  "sum",
+  "mean",
+  "median",
+  "min",
+  "max",
+  "stddev",
+  "npv",
+  "add",
+  "subtract",
+  "multiply",
+  "divide",
+  "power",
+] as const
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex")
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -45,6 +63,7 @@ async function fileHash(path: string, maxBytes = MAX_EVIDENCE): Promise<string |
 
 /** Recheck every captured source, guidance file, and extraction original before using a task. */
 export async function auditTaskSnapshots(vault: string, task: TaskRecord): Promise<SnapshotAudit> {
+  await verifyTaskLearningHistory(vault, task)
   const changed: string[] = []
   const missing: string[] = []
   const checks: Array<{ path: string; expected: string; maxBytes?: number }> = [
@@ -80,6 +99,7 @@ function evidenceSummary(sources: SourceRecord[]) {
     hash: source.hash,
     dates: source.dates,
     ...(source.dueAt ? { dueAt: source.dueAt } : {}),
+    ...(source.assignmentDates ? { assignmentDates: source.assignmentDates } : {}),
     ...(source.relatedPaths ? { relatedPaths: source.relatedPaths } : {}),
     ...(source.originalPath
       ? { originalPath: source.originalPath, originalHash: source.originalHash }
@@ -90,23 +110,40 @@ function evidenceSummary(sources: SourceRecord[]) {
 export async function inspectTask(vault: string, id: string) {
   const task = await readTask(vault, id)
   const snapshots = await auditTaskSnapshots(vault, task)
+  const legacy = await legacyTaskLink(vault, id)
   return {
     id: task.id,
     kind: task.kind,
+    parserVersion: task.parserVersion,
     status: task.status,
     createdAt: task.createdAt,
     course: task.course,
     ...(task.week ? { week: task.week } : {}),
     ...(task.period ? { period: task.period } : {}),
     ...(task.assignment ? { assignment: task.assignment } : {}),
+    ...(task.discussion ? { discussion: task.discussion } : {}),
     destination: task.destination,
     requirements: task.requirements,
     sources: evidenceSummary(task.sources),
     guidance: evidenceSummary(task.guidance),
+    learningHistory: task.learningHistory
+      ? {
+          hash: task.learningHistory.hash,
+          records: task.learningHistory.records.length,
+          legacyPlaybooks: task.learningHistory.legacyPlaybooks?.length ?? 0,
+          archiveBindingsVerified: true,
+          currentGradesVerified: false,
+          instructorAuthorshipVerified: false,
+        }
+      : null,
     excluded: task.excluded,
     snapshots,
     output: task.output ? { path: task.output, hash: task.outputHash } : null,
+    ...(task.workbookVersion
+      ? { workbookVersion: task.workbookVersion, workbook: task.workbook ?? null }
+      : {}),
     notices: task.notices,
+    ...(legacy ? { legacy } : {}),
   }
 }
 
@@ -126,9 +163,23 @@ async function readOutput(vault: string, task: TaskRecord): Promise<string | und
       throw new Error("Task output exceeds the 5 MB review limit")
     if (hash(bytes) !== task.outputHash)
       throw new Error("Task output hash does not match its completion record")
+    await verifyCompletedWorkbook(vault, task, bytes)
     return bytes.toString("utf8")
   } finally {
     await handle.close()
+  }
+}
+
+function automaticWorkbookEvidence(task: TaskRecord) {
+  const scope = "automatic-completion-companion-only" as const
+  if (task.kind !== "assignment" || task.assignment?.mode !== "draft")
+    return { scope, state: "not-applicable" as const, workbook: null }
+  if (task.status !== "completed") return { scope, state: "pending" as const, workbook: null }
+  if (!task.workbookVersion) return { scope, state: "uncaptured-legacy" as const, workbook: null }
+  return {
+    scope,
+    state: task.workbook ? ("verified" as const) : ("verified-empty" as const),
+    workbook: task.workbook ?? null,
   }
 }
 
@@ -190,18 +241,44 @@ export async function compareTasks(vault: string, leftId: string, rightId: strin
     readOutput(vault, before),
     readOutput(vault, after),
   ])
+  const beforeWorkbook = automaticWorkbookEvidence(before)
+  const afterWorkbook = automaticWorkbookEvidence(after)
+  const known = (state: string) => state === "verified" || state === "verified-empty"
+  const workbookChange =
+    !known(beforeWorkbook.state) || !known(afterWorkbook.state)
+      ? "unknown"
+      : !beforeWorkbook.workbook && !afterWorkbook.workbook
+        ? "none-extracted"
+        : beforeWorkbook.workbook?.hash === afterWorkbook.workbook?.hash
+          ? "same-bytes"
+          : !beforeWorkbook.workbook
+            ? "added"
+            : !afterWorkbook.workbook
+              ? "removed"
+              : "changed-bytes"
   return {
     before: { id: before.id, status: before.status, snapshots: beforeAudit },
     after: { id: after.id, status: after.status, snapshots: afterAudit },
     sourceChanges: evidenceChanges(before.sources, after.sources),
     guidanceChanges: evidenceChanges(before.guidance, after.guidance),
+    learningHistory: {
+      before: before.learningHistory?.hash ?? null,
+      after: after.learningHistory?.hash ?? null,
+      change:
+        before.learningHistory?.hash === after.learningHistory?.hash
+          ? "same-captured-context"
+          : "changed-captured-context",
+    },
     outputDiff: lineDiff(beforeOutput, afterOutput),
+    automaticWorkbooks: { before: beforeWorkbook, after: afterWorkbook, change: workbookChange },
   }
 }
 
-function safeOperation(operation: string, values: number[], rate?: number): number {
-  if (!values.length || values.some((value) => !Number.isFinite(value)))
-    throw new Error("Values must be finite numbers")
+/** Pure bounded arithmetic shared by ordinary and fixed-evidence tasks. */
+export function calculateValues(operation: string, values: number[], rate?: number): number {
+  if (!values.length || values.length > 1000 || values.some((value) => !Number.isFinite(value)))
+    throw new Error("Values must contain 1 to 1,000 finite numbers")
+  if (operation !== "npv" && rate !== undefined) throw new Error("Rate is supported only for NPV")
   let result: number
   switch (operation) {
     case "sum":
@@ -259,7 +336,9 @@ function safeOperation(operation: string, values: number[], rate?: number): numb
       break
     }
     default:
-      throw new Error("Unsupported operation")
+      throw new Error(
+        `Unsupported operation. Supported operations: ${CALCULATION_OPERATIONS.join(", ")}`,
+      )
   }
   if (!Number.isFinite(result)) throw new Error("Operation result is not finite")
   return result
@@ -312,20 +391,7 @@ async function appendPrivateRecord(
           .join(",")
         if (
           keys !== expected ||
-          ![
-            "sum",
-            "mean",
-            "median",
-            "min",
-            "max",
-            "stddev",
-            "npv",
-            "add",
-            "subtract",
-            "multiply",
-            "divide",
-            "power",
-          ].includes(String(entry.operation)) ||
+          !CALCULATION_OPERATIONS.some((operation) => operation === entry.operation) ||
           !Array.isArray(entry.input) ||
           !entry.input.length ||
           !entry.input.every((value) => typeof value === "number" && Number.isFinite(value)) ||
@@ -416,7 +482,7 @@ export async function calculateTask(
   })
   if (args.operation !== "npv" && args.rate !== undefined)
     throw new Error("Rate is supported only for NPV")
-  const result = safeOperation(args.operation, values, args.rate)
+  const result = calculateValues(args.operation, values, args.rate)
   let selected: SourceRecord | undefined
   if (args.source) {
     selected = task.sources.find((source) => source.path === args.source)
@@ -530,7 +596,7 @@ export async function calculateBatchTask(
       item.values.length !== 2
     )
       throw new Error(`${item.operation} requires exactly two values`)
-    safeOperation(item.operation, item.values, item.rate)
+    calculateValues(item.operation, item.values, item.rate)
   }
   const { task } = await taskVault(config, taskId)
   for (const item of items) {
@@ -601,6 +667,7 @@ export function parseWorkbookInput(raw: unknown): WorkbookInput {
   const names = new Set<string>()
   let cellCount = 0
   let textBytes = 0
+  let rowCount = 0
   const normalized = sheets.map((sheet) => {
     if (
       !sheet ||
@@ -621,8 +688,11 @@ export function parseWorkbookInput(raw: unknown): WorkbookInput {
     if (names.has(name.toLowerCase())) throw new Error("Sheet names must be unique ignoring case")
     names.add(name.toLowerCase())
     if (!Array.isArray(rows)) throw new Error("Sheet rows must be an array")
+    rowCount += rows.length
+    if (rowCount > 50_000) throw new Error("Workbook exceeds the 50,000 row limit")
     const cleanRows = rows.map((row) => {
       if (!Array.isArray(row)) throw new Error("Each workbook row must be an array")
+      if (row.length > 16_384) throw new Error("Workbook exceeds Excel's 16,384 column limit")
       return row.map((cell) => {
         cellCount++
         if (cellCount > MAX_CELLS) throw new Error("Workbook exceeds the 50,000 cell limit")
@@ -651,18 +721,28 @@ export function parseWorkbookInput(raw: unknown): WorkbookInput {
 }
 
 export async function createWorkbook(input: WorkbookInput): Promise<Buffer> {
+  return renderWorkbook(input)
+}
+
+async function renderWorkbook(
+  input: WorkbookInput,
+  legacyDirectoryDates?: Map<string, Date>,
+): Promise<Buffer> {
+  input = parseWorkbookInput(input)
   const zip = new JSZip()
+  const addFile = (name: string, text: string) =>
+    zip.file(name, text, { date: new Date("2000-01-01T00:00:00.000Z") })
   const overrides = input.sheets
     .map(
       (_, index) =>
         `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
     )
     .join("")
-  zip.file(
+  addFile(
     "[Content_Types].xml",
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${overrides}</Types>`,
   )
-  zip.file(
+  addFile(
     "_rels/.rels",
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
   )
@@ -672,7 +752,7 @@ export async function createWorkbook(input: WorkbookInput): Promise<Buffer> {
         `<sheet name="${xml(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`,
     )
     .join("")
-  zip.file(
+  addFile(
     "xl/workbook.xml",
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheetXml}</sheets></workbook>`,
   )
@@ -682,7 +762,7 @@ export async function createWorkbook(input: WorkbookInput): Promise<Buffer> {
         `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`,
     )
     .join("")
-  zip.file(
+  addFile(
     "xl/_rels/workbook.xml.rels",
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>`,
   )
@@ -701,10 +781,16 @@ export async function createWorkbook(input: WorkbookInput): Promise<Buffer> {
         return `<row r="${rowIndex + 1}">${cells}</row>`
       })
       .join("")
-    zip.file(
+    addFile(
       `xl/worksheets/sheet${sheetIndex + 1}.xml`,
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`,
     )
+  })
+  // JSZip implicitly creates parent directory entries. Their dates must also
+  // be fixed, otherwise identical outputs differ across two-second ZIP ticks.
+  zip.forEach((name, entry) => {
+    if (entry.dir)
+      entry.date = legacyDirectoryDates?.get(name) ?? new Date("2000-01-01T00:00:00.000Z")
   })
   const bytes = await zip.generateAsync({
     type: "nodebuffer",
@@ -713,6 +799,23 @@ export async function createWorkbook(input: WorkbookInput): Promise<Buffer> {
   })
   if (bytes.byteLength > MAX_WORKBOOK) throw new Error("Workbook output exceeds the 5 MB limit")
   return bytes
+}
+
+/** Preserve earlier hash-bound bundles whose implicit directories used wall time.
+ * Only those four directory timestamps may vary; the full reproduced ZIP must match.
+ */
+export async function matchesLegacyWorkbook(input: WorkbookInput, bytes: Buffer): Promise<boolean> {
+  if (bytes.length > MAX_WORKBOOK) return false
+  if (bytes.equals(await createWorkbook(input))) return true
+  const zip = await JSZip.loadAsync(bytes)
+  if (Object.keys(zip.files).length > input.sheets.length + 9) return false
+  const dates = new Map<string, Date>()
+  for (const name of ["_rels/", "xl/", "xl/_rels/", "xl/worksheets/"]) {
+    const entry = zip.files[name]
+    if (!entry?.dir || !Number.isFinite(entry.date.valueOf())) return false
+    dates.set(name, entry.date)
+  }
+  return bytes.equals(await renderWorkbook(input, dates))
 }
 
 async function makeDirectories(path: string): Promise<void> {
@@ -754,13 +857,8 @@ async function saveVersioned(
 
 export async function workbookTask(config: ToolkitConfig, taskId: string, inputPath: string) {
   const { vault, task } = await taskVault(config, taskId)
-  const sourcePath = resolve(inputPath)
   if (!isAbsolute(inputPath)) throw new Error("Workbook JSON path must be absolute")
-  await assertNoSymlinks(sourcePath)
-  const info = await lstat(sourcePath)
-  if (!info.isFile() || info.size > MAX_WORKBOOK)
-    throw new Error("Workbook JSON must be a regular file under 5 MB")
-  const parsed = parseWorkbookInput(JSON.parse(await readFile(sourcePath, "utf8")))
+  const parsed = parseWorkbookInput(await readJsonInput(inputPath, "Workbook"))
   const bytes = await createWorkbook(parsed)
   const directory = resolve(vault, task.destination)
   if (!within(resolve(vault, task.course.root), directory))
@@ -792,6 +890,7 @@ export async function reviewGate(config: ToolkitConfig, taskId: string) {
   if (task.status !== "completed") throw new Error("Review gate requires a completed task")
   const output = await readOutput(vault, task)
   if (output === undefined) throw new Error("Completed task output is unavailable")
+  const automaticWorkbook = automaticWorkbookEvidence(task)
   const headings = new Set(
     [...output.matchAll(/^#{1,6}\s+(.+?)\s*#*$/gm)].map((match) => match[1]?.trim() ?? ""),
   )
@@ -804,6 +903,11 @@ export async function reviewGate(config: ToolkitConfig, taskId: string) {
     `Task output: ${task.output}`,
     `Output SHA-256: ${task.outputHash}`,
     `Evidence snapshots current: yes (${task.sources.length} sources; ${task.guidance.length} guidance files)`,
+    ...(task.learningHistory
+      ? [
+          `Private learning context: ${task.learningHistory.hash} (${task.learningHistory.records.length} retained values); archive bindings checked. Current grades and instructor authorship remain unverified.`,
+        ]
+      : []),
     "",
     "## Structural checks",
     ...sections.map((item) => `- ${item.present ? "Present" : "Missing"}: ${item.section}`),
@@ -811,6 +915,21 @@ export async function reviewGate(config: ToolkitConfig, taskId: string) {
     "## Evidence inventory",
     ...task.sources.map((source) => `- Source: ${source.path} (SHA-256 ${source.hash})`),
     ...task.guidance.map((source) => `- Guidance: ${source.path} (SHA-256 ${source.hash})`),
+    "",
+    "## Automatic workbook evidence",
+    `Scope: ${automaticWorkbook.scope}; state: ${automaticWorkbook.state}.`,
+    ...(automaticWorkbook.workbook
+      ? [
+          `Workbook: ${automaticWorkbook.workbook.path} (SHA-256 ${automaticWorkbook.workbook.hash}). Bytes reproduce the completed draft's tables/Computations; open the workbook to review values and deliverable coverage.`,
+        ]
+      : [
+          automaticWorkbook.state === "verified-empty"
+            ? "No tables/Computations were extracted from this new draft. This does not prove that no spreadsheet deliverable was required."
+            : automaticWorkbook.state === "uncaptured-legacy"
+              ? "This older draft has no automatic workbook recipe; companion evidence is unknown, not verified absent."
+              : "Automatic workbook completion does not apply to this task kind/mode.",
+        ]),
+    "Explicit workbook-command artifacts are not inventoried by this bundle. Byte fidelity is not arithmetic verification, source grounding or academic correctness.",
     "",
     "## Review limits",
     "This bundle checks task identity, unchanged source hashes, output identity, and required heading presence only. It does not assess factual accuracy, academic quality, policy compliance, claim support, or citation correctness.",
@@ -838,6 +957,7 @@ export async function reviewGate(config: ToolkitConfig, taskId: string) {
     hash: hash(report),
     sections,
     snapshots: "current",
+    automaticWorkbook,
     note: "Human review checks are structural and provenance-only.",
   }
 }

@@ -50,6 +50,74 @@ afterEach(async () => {
 })
 
 describe("prep task persistence", () => {
+  it("rejects heading-only sessions even when an empty reading is linked", async () => {
+    await setup()
+    const source = course.sources[0]
+    if (!source) throw new Error("Missing fixture source")
+    source.text = "## Session 4: Dispute Resolution\n"
+    source.hash = digest(source.text)
+    source.type = "modules"
+    await writeFile(join(vault, source.path), source.text)
+    await mkdir(join(vault, "GSB-101", "Week 03 - Oct 12", "Materials"))
+    const path = "GSB-101/Week 03 - Oct 12/Materials/empty.pdf.md"
+    await writeFile(join(vault, path), "")
+    course.sources.push({
+      path,
+      title: "Empty reading",
+      hash: digest(""),
+      text: "",
+      type: "files",
+      dates: [],
+    })
+    await expect(createPrepTask(vault, "GSB-101", "2026-10-12")).rejects.toThrow(
+      /No readable course materials/,
+    )
+  })
+  it("warns about empty readings when other substantive notes support the task", async () => {
+    await setup()
+    const path = "GSB-101/Week 03 - Oct 12/empty.md"
+    await writeFile(join(vault, path), "")
+    course.sources.push({
+      path,
+      title: "Empty reading",
+      hash: digest(""),
+      text: "",
+      type: "files",
+      dates: [],
+    })
+    const task = await createPrepTask(vault, "GSB-101", "2026-10-12")
+    expect(task.notices).toContain(
+      `No readable text in selected source: ${path}; supply extracted text before synthesizing this reading.`,
+    )
+  })
+  it.each(["Session 4: Dispute Resolution", "<h2>Session 4: Dispute Resolution</h2>"])(
+    "rejects plain or HTML title-only module content: %s",
+    async (text) => {
+      await setup()
+      const source = course.sources[0]
+      if (!source) throw new Error("Missing fixture source")
+      source.title = "Session 4: Dispute Resolution"
+      source.type = "modules"
+      source.text = text
+      source.hash = digest(text)
+      await writeFile(join(vault, source.path), text)
+      await expect(createPrepTask(vault, "GSB-101", "2026-10-12")).rejects.toThrow(
+        /No readable course materials/,
+      )
+    },
+  )
+  it("does not count an empty reading sidecar as readable preparation material", async () => {
+    await setup()
+    const source = course.sources[0]
+    if (!source) throw new Error("Missing fixture source")
+    source.text = ""
+    source.hash = digest("")
+    source.type = "files"
+    await writeFile(join(vault, source.path), "")
+    await expect(createPrepTask(vault, "GSB-101", "2026-10-12")).rejects.toThrow(
+      /No readable course materials/,
+    )
+  })
   it("snapshots target week sources and persists a readable identity and citation contract", async () => {
     await setup()
     const task = await createPrepTask(vault, "GSB-101", "2026-10-12")

@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto"
-import type { Dirent } from "node:fs"
-import { lstat, readdir, readFile } from "node:fs/promises"
+import { constants, type Dirent } from "node:fs"
+import { lstat, open, readdir, readFile } from "node:fs/promises"
 import { basename, dirname, join, relative, resolve, sep } from "node:path"
-
 import { parse as parseYaml } from "yaml"
+import { AssignmentDatesSchema } from "./assignment-dates.js"
 import { assertNoSymlinks } from "./fs-safety.js"
+import { readIngestProvenance } from "./ingest-compatibility.js"
 
 import type { CourseContext, ExcludedSource, SourceRecord, WorkspaceContext } from "./types.js"
 
@@ -24,7 +25,10 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
   }
 
   const notices: string[] = []
-  const mapped = new Map<string, { id: string; name: string }>()
+  const mapped = new Map<
+    string,
+    { id: string; name: string; code?: string; syncNamespace?: "Canvas Agent" }
+  >()
   const manifestPath = join(root, "_meta", "canvas-courses.json")
   try {
     await assertNoSymlinks(manifestPath)
@@ -44,7 +48,16 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
       )
         continue
       if (mapped.has(entry.root)) throw new Error("Ambiguous mapping")
-      mapped.set(entry.root, { id: entry.id, name: entry.name })
+      if (entry.syncNamespace !== undefined && entry.syncNamespace !== "Canvas Agent")
+        throw new Error("Unsupported product namespace")
+      mapped.set(entry.root, {
+        id: entry.id,
+        name: entry.name,
+        code: stringValue(entry.code) ?? undefined,
+        ...(entry.syncNamespace === "Canvas Agent"
+          ? { syncNamespace: "Canvas Agent" as const }
+          : {}),
+      })
     }
   } catch (error) {
     mapped.clear()
@@ -53,6 +66,9 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
         "Canvas course mappings are unavailable or unsafe; using conventional course folders only.",
       )
   }
+  const ownership = [...mapped.values()].some((course) => course.syncNamespace)
+    ? await readPreservedOwnership(root)
+    : undefined
   const courses: CourseContext[] = []
   const children = await readdir(root, { withFileTypes: true })
   for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
@@ -70,11 +86,18 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
     }
     if (!child.isDirectory() || !(courseCodePattern.test(child.name) || mapped.has(child.name)))
       continue
-    const course = await inspectCourse(root, child.name, notices)
     const mapping = mapped.get(child.name)
+    const course = await inspectCourse(
+      root,
+      child.name,
+      notices,
+      mapping?.syncNamespace ? ownership : undefined,
+    )
     if (mapping) {
       course.canvasId = mapping.id
+      course.canvasCode = mapping.code
       course.title = mapping.name
+      if (mapping.syncNamespace) course.syncNamespace = mapping.syncNamespace
     }
     courses.push(course)
   }
@@ -85,7 +108,10 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
     await assertNoSymlinks(tasksPath)
     const taskStat = await lstat(tasksPath)
     if (taskStat.isDirectory() && !taskStat.isSymbolicLink()) {
-      for (const entry of await readdir(tasksPath, { withFileTypes: true })) {
+      const entries = await readdir(tasksPath, { withFileTypes: true })
+      if (entries.length > 5000) throw new Error("Task inventory exceeds bounds")
+      let taskBytes = 0
+      for (const entry of entries) {
         if (
           !entry.isDirectory() ||
           entry.isSymbolicLink() ||
@@ -97,16 +123,23 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
         try {
           const taskPath = join(tasksPath, entry.name, "task.json")
           const taskStat = await lstat(taskPath)
-          if (!taskStat.isFile() || taskStat.isSymbolicLink()) continue
+          if (!taskStat.isFile() || taskStat.isSymbolicLink() || taskStat.size > 50_000_000)
+            throw new Error("Unsafe or oversized task record")
+          taskBytes += taskStat.size
+          if (taskBytes > 500_000_000) throw new Error("Task inventory exceeds bounds")
           const task = JSON.parse(await readFile(taskPath, "utf8")) as { status?: unknown }
           if (task.status === "pending") pendingTasks.push(`_meta/tasks/${entry.name}`)
         } catch {
-          // Invalid or incomplete private task records are not exposed.
+          if (!notices.includes("Private task inventory is incomplete; inspect saved records"))
+            notices.push("Private task inventory is incomplete; inspect saved records")
+          if (taskBytes > 500_000_000) break
         }
       }
     }
-  } catch {
+  } catch (error) {
     // An absent task directory is normal in existing School Agent vaults.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+      notices.push("Private task inventory is unavailable or exceeds bounds; inspect saved records")
   }
 
   return { version: 1, vault: root, courses, pendingTasks: pendingTasks.sort(), notices }
@@ -116,16 +149,19 @@ export function selectCourse(context: WorkspaceContext, query: string): CourseCo
   const needle = query.trim().toLocaleLowerCase()
   if (!needle) throw new Error("Course query must not be empty")
   const matches = context.courses.filter((course) =>
-    [course.code, course.title, course.root].some((value) => value.toLocaleLowerCase() === needle),
+    courseAliases(course).some((value) => value.toLocaleLowerCase() === needle),
   )
   const partial =
     matches.length > 0
       ? matches
-      : context.courses.filter((course) =>
-          [course.code, course.title, course.root].some((value) =>
-            value.toLocaleLowerCase().includes(needle),
-          ),
-        )
+      : /^\d+$/.test(needle)
+        ? []
+        : context.courses.filter((course) =>
+            // Numeric Canvas IDs are exact identities, never substring matches.
+            courseAliases(course)
+              .filter((value) => value !== course.canvasId)
+              .some((value) => value.toLocaleLowerCase().includes(needle)),
+          )
   if (partial.length === 0) throw new Error(`No course matches "${query}"`)
   if (partial.length > 1) {
     throw new Error(
@@ -137,10 +173,54 @@ export function selectCourse(context: WorkspaceContext, query: string): CourseCo
   return course
 }
 
+function courseAliases(course: CourseContext): string[] {
+  const title =
+    course.canvasCode && course.title.startsWith(`${course.canvasCode} - `)
+      ? course.title.slice(course.canvasCode.length + 3)
+      : course.title
+  return [course.code, course.root, course.title, title, course.canvasId, course.canvasCode].filter(
+    (value): value is string => Boolean(value),
+  )
+}
+
+/** Ownership evidence is required only for the explicitly preserved product layout. */
+async function readPreservedOwnership(vault: string): Promise<Record<string, string>> {
+  const path = join(vault, "_meta/canvas-sync-state.json")
+  try {
+    await assertNoSymlinks(path)
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    try {
+      const stat = await handle.stat()
+      const limit = 10 * 1024 * 1024
+      if (!stat.isFile() || stat.size > limit) throw new Error("Invalid ownership file")
+      const bytes = Buffer.alloc(limit + 1)
+      const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0)
+      if (bytesRead > limit) throw new Error("Oversized ownership file")
+      const state: unknown = JSON.parse(bytes.subarray(0, bytesRead).toString("utf8"))
+      if (!isRecord(state) || state.version !== 1 || !isRecord(state.files))
+        throw new Error("Invalid ownership metadata")
+      const files: Record<string, string> = Object.create(null)
+      for (const [key, value] of Object.entries(state.files)) {
+        if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value))
+          throw new Error("Invalid ownership hash")
+        files[key] = value
+      }
+      return files
+    } finally {
+      await handle.close()
+    }
+  } catch {
+    throw new Error(
+      "Preserved Canvas source ownership is missing or unsafe; inspect metadata before selecting fresh context",
+    )
+  }
+}
+
 async function inspectCourse(
   vault: string,
   code: string,
   notices: string[],
+  retiredOwnership?: Record<string, string>,
 ): Promise<CourseContext> {
   const absoluteRoot = join(vault, code)
   const root = relative(vault, absoluteRoot).split(sep).join("/")
@@ -161,6 +241,26 @@ async function inspectCourse(
     .map((entry) => `${root}/${entry.name}`)
     .sort()
   await walk(absoluteRoot, root, entries, notices)
+  // Retain retired files on disk and in saved histories, but never let an
+  // unchanged old Canvas snapshot shadow refreshed sources. Edited/untracked
+  // School or student files remain eligible. Filter before deriving relations.
+  if (retiredOwnership) {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i]
+      if (!entry || entry.path.startsWith(`${root}/Canvas Agent/`)) continue
+      const ownedHash = retiredOwnership[entry.path]
+      if (!ownedHash || !textExtensions.has(extension(entry.name))) continue
+      const parsed = await readDocument(entry, [])
+      if (parsed && createHash("sha256").update(parsed.bytes).digest("hex") === ownedHash) {
+        entries.splice(i, 1)
+        excluded.push({
+          path: entry.path,
+          reason:
+            "Retired unchanged Canvas-owned source; original retained outside active namespace",
+        })
+      }
+    }
+  }
   const globalAgents = join(vault, "AGENTS.md")
   try {
     const stat = await lstat(globalAgents)
@@ -189,6 +289,36 @@ async function inspectCourse(
     }
   }
   if (safeIndex) sources.push(toSource(safeIndex.entry, safeIndex.parsed))
+
+  // A restrictive compatible declaration must not be bypassed through its raw
+  // text original or an older extraction variant. Keep historical bytes intact.
+  const compatible = new Map<string, Awaited<ReturnType<typeof readDocument>>>()
+  const restrictedOriginals = new Set<string>()
+  const textOriginals = new Set(
+    entries
+      .filter((entry) => /-[a-f0-9]{12}\.(?:txt|md|markdown)$/.test(entry.name))
+      .map((entry) => entry.path),
+  )
+  for (const entry of entries) {
+    if (!/\.school-[a-f0-9]{12}\.extracted\.md$/.test(entry.name)) continue
+    const parsed = await readDocument(entry, excluded)
+    compatible.set(entry.path, parsed)
+    if (!parsed) {
+      const original =
+        /^(.*-[a-f0-9]{12}\.(?:txt|md|markdown))\.(?:week|as-of|module|school)-/.exec(
+          entry.path,
+        )?.[1]
+      if (original && textOriginals.has(original)) restrictedOriginals.add(original)
+      continue
+    }
+    if (!parsed || !isRestricted(parsed.data)) continue
+    const originalPath = stringValue(parsed.data.original_path)
+    const originalHash = stringValue(parsed.data.original_hash)
+    if (!originalPath || !originalHash || !/^[a-f0-9]{64}$/.test(originalHash)) continue
+    const target = resolve(vault, originalPath)
+    if (target.startsWith(absoluteRoot + sep) && entry.absolute.startsWith(`${target}.`))
+      restrictedOriginals.add(originalPath)
+  }
 
   for (const entry of entries) {
     if (entry.path === `${root}/_index.md`) continue
@@ -222,8 +352,21 @@ async function inspectCourse(
       continue
     }
     const isGuidance = isGuidancePath(entry.path)
-    const parsed = await readDocument(entry, excluded)
+    const parsed = compatible.has(entry.path)
+      ? compatible.get(entry.path)
+      : await readDocument(entry, excluded)
     if (!parsed) continue
+    if (
+      restrictedOriginals.has(entry.path) ||
+      restrictedOriginals.has(stringValue(parsed.data.original_path) ?? "")
+    ) {
+      excluded.push({
+        path: entry.path,
+        reason:
+          "Restricted compatible policy declaration; original and extraction variants omitted",
+      })
+      continue
+    }
     if (entry.name.endsWith(".extracted.md")) {
       const originalPath = stringValue(parsed.data.original_path)
       const originalHash = stringValue(parsed.data.original_hash)
@@ -298,6 +441,19 @@ async function inspectCourse(
       continue
     }
     const record = toSource(entry, parsed)
+    if (parsed.data.assignment_dates !== undefined) {
+      const evidence = AssignmentDatesSchema.safeParse(parsed.data.assignment_dates)
+      if (!evidence.success) {
+        excluded.push({
+          path: entry.path,
+          reason: "Invalid assignment date evidence; inspect source metadata",
+        })
+        continue
+      }
+      record.assignmentDates = evidence.data
+    }
+    if (stringValue(parsed.data.module_canvas_id))
+      record.moduleCanvasId = stringValue(parsed.data.module_canvas_id) ?? undefined
     const relationText =
       typeof parsed.data.related_paths === "string"
         ? [parsed.data.related_paths]
@@ -318,6 +474,12 @@ async function inspectCourse(
     }
   }
   const approvedPaths = new Set(sources.map((source) => source.path))
+  const home = sources.find((source) => source.path === `${root}/00 Home.md`)
+  for (const source of sources) {
+    const relations = legacyRelations(source, sources, home?.canvasUrl)
+    if (relations.length)
+      source.relatedPaths = [...new Set([...(source.relatedPaths ?? []), ...relations])]
+  }
   for (const imported of sources.filter((item) => item.moduleCanvasId)) {
     const module = sources.find(
       (item) =>
@@ -337,16 +499,82 @@ async function inspectCourse(
       }
     }
   }
+  // School Agent does not have canvas-courses.json. Its public navigation file
+  // carries the course identity; don't mistake a page/assignment ID for a course ID.
+  const canvasId = home?.canvasUrl?.match(/\/courses\/(\d+)\/?(?:[?#].*)?$/)?.[1]
+  const canvasCode = home?.text
+    .match(/^\s*(?:\*\*Course:\*\*|Course code:)\s*([^\r\n]+)/m)?.[1]
+    ?.trim()
+  if (title === code && home) title = headingTitle(home.text) ?? title
   return {
     code,
     title,
     root,
+    ...(canvasId ? { canvasId } : {}),
+    ...(canvasCode ? { canvasCode } : {}),
     sources: sources.sort(byPath),
     excluded: uniqueExcluded(excluded).sort(byPath),
     guidance: guidance.sort(),
     existingWork: [...new Set(existingWork)].sort(),
     periods,
   }
+}
+
+/** Resolve only explicit Canvas links against this course's approved inventory. */
+function legacyRelations(
+  source: SourceRecord,
+  sources: SourceRecord[],
+  courseUrl?: string,
+): string[] {
+  const relations = new Set<string>()
+  const add = (kind: string, id: string) => {
+    for (const target of sources) {
+      if (target.path === source.path) continue
+      const typed =
+        kind === "Page"
+          ? target.canvasUrl?.includes("/pages/")
+          : kind === "File"
+            ? /files?|extraction/i.test(target.type)
+            : /assignment/i.test(target.type)
+      if (!typed) continue
+      if (
+        kind === "Page"
+          ? target.canvasUrl?.split(/[?#]/)[0]?.endsWith(`/pages/${id}`)
+          : target.canvasId === id
+      )
+        relations.add(target.path)
+    }
+  }
+  for (const match of source.text.matchAll(
+    /^- (Page|Assignment|File):[^\r\n]*\((?:canvas_id|page_url):\s*([^\s)]+)\)\s*$/gm,
+  ))
+    add(match[1] ?? "", match[2] ?? "")
+  if (courseUrl) {
+    try {
+      const owner = new URL(courseUrl)
+      const courseId = owner.pathname.match(/^\/courses\/(\d+)\/?$/)?.[1]
+      if (courseId)
+        for (const match of source.text.matchAll(/\bhref\s*=\s*["']([^"']+)["']/gi)) {
+          try {
+            const link = new URL((match[1] ?? "").replaceAll("&amp;", "&"), owner)
+            if (link.origin !== owner.origin || link.username || link.password) continue
+            const ref = link.pathname.match(
+              /^\/(?:api\/v1\/)?courses\/(\d+)\/(pages|assignments|files)\/([^/]+)(?:\/download)?\/?$/,
+            )
+            if (!ref || ref[1] !== courseId) continue
+            add(
+              ref[2] === "pages" ? "Page" : ref[2] === "files" ? "File" : "Assignment",
+              ref[3] ?? "",
+            )
+          } catch {
+            /* Malformed links are reference data, never executable input. */
+          }
+        }
+    } catch {
+      /* Invalid course URLs provide no link scope. */
+    }
+  }
+  return [...relations]
 }
 
 async function walk(
@@ -436,9 +664,40 @@ async function readDocument(
     const parsed = parseYaml(match[1] ?? "")
     if (!isRecord(parsed) && parsed !== null && parsed !== undefined)
       throw new Error("Frontmatter must be a mapping")
+    const data = isRecord(parsed) ? parsed : {}
+    if (/\.school-[a-f0-9]{12}\.extracted\.md$/.test(entry.name)) {
+      const evidence = await readIngestProvenance(`${entry.absolute}.ingest.json`)
+      const provenance = evidence.data
+      if (provenance.hash !== createHash("sha256").update(bytes).digest("hex"))
+        throw new Error("Compatible provenance is stale")
+      const dateMetadata = isRecord(data.dates) ? data.dates.created_at : undefined
+      if (provenance.availableAt !== dateMetadata)
+        throw new Error("Compatible availability conflicts with the saved document")
+      // A companion cannot redirect the unchanged document to another original.
+      const originalName = provenance.originalPath.split("/").at(-1)
+      const date =
+        isRecord(data.dates) && typeof data.dates.date === "string" ? data.dates.date : undefined
+      const module = typeof data.module_canvas_id === "string" ? data.module_canvas_id : undefined
+      const ending = entry.name.match(/\.school-[a-f0-9]{12}\.extracted\.md$/)?.[0]
+      const expectedName = `${originalName}${date ? `.week-${date}` : ""}${provenance.availableAt ? `.as-of-${provenance.availableAt}` : ""}${module ? `.module-${module.replace(/[^a-zA-Z0-9_-]/g, "-")}` : ""}${ending}`
+      if (
+        !originalName ||
+        entry.name !== expectedName ||
+        originalName.match(/-([a-f0-9]{12})\.[^./]+$/)?.[1] !==
+          provenance.originalHash.slice(0, 12) ||
+        entry.path.slice(0, entry.path.lastIndexOf("/")) !==
+          provenance.originalPath.slice(0, provenance.originalPath.lastIndexOf("/"))
+      )
+        throw new Error("Compatible original identity conflicts with the saved document")
+      data.original_path = provenance.originalPath
+      data.original_hash = provenance.originalHash
+      data.ingest_provenance_path = `${entry.path}.ingest.json`
+      data.ingest_provenance_hash = evidence.hash
+      if (provenance.availableAt) data.available_at = provenance.availableAt
+    }
     return {
       bytes,
-      data: isRecord(parsed) ? parsed : {},
+      data,
       content: text.slice(match[0].length).trim(),
     }
   } catch {
@@ -452,17 +711,52 @@ function toSource(
   parsed: { bytes: Buffer; data: Record<string, unknown>; content: string },
 ): SourceRecord {
   const dates = collectDates(parsed.data.dates)
-  for (const match of entry.path.matchAll(/\b\d{4}-\d{2}-\d{2}\b/g)) dates.push(match[0])
+  const dateMetadata = isRecord(parsed.data.dates) ? parsed.data.dates : {}
+  const moduleDates =
+    isRecord(parsed.data.dates) &&
+    /module|session|milestone/i.test(stringValue(parsed.data.type) ?? entry.path)
+      ? Object.fromEntries(
+          ["unlock_at", "session_at"].flatMap((key) =>
+            typeof dateMetadata[key] === "string" ? [[key, dateMetadata[key]]] : [],
+          ),
+        )
+      : {}
+  // An ingestion availability suffix is provenance, not a teaching date.
+  // Continue recognizing dates in course/session paths and explicit week suffixes.
+  const teachingPath = entry.path.replace(
+    /\.as-of-\d{4}-\d{2}-\d{2}(?=(?:\.module-[a-zA-Z0-9_-]+)?(?:\.school-[a-f0-9]{12})?\.extracted\.md$)/,
+    "",
+  )
+  for (const match of teachingPath.matchAll(/\b\d{4}-\d{2}-\d{2}\b/g)) dates.push(match[0])
   return {
     path: entry.path,
+    ...(typeof parsed.data.module_position === "number" &&
+    Number.isSafeInteger(parsed.data.module_position) &&
+    parsed.data.module_position > 0
+      ? { modulePosition: parsed.data.module_position }
+      : {}),
     title:
       stringValue(parsed.data.title) ??
+      (/^00 Prompt\.(?:md|markdown)$/i.test(entry.name)
+        ? basename(dirname(entry.path)).replace(/^(?:\d{4}-\d{2}-\d{2}|Undated)\s*-\s*/i, "")
+        : null) ??
       headingTitle(parsed.content) ??
       basename(entry.name, extension(entry.name)),
     hash: createHash("sha256").update(parsed.bytes).digest("hex"),
+    ...(/\.school-[a-f0-9]{12}\.extracted\.md$/.test(entry.name) &&
+    typeof parsed.data.ingest_provenance_path === "string" &&
+    typeof parsed.data.ingest_provenance_hash === "string"
+      ? {
+          ingestProvenance: {
+            path: parsed.data.ingest_provenance_path,
+            hash: parsed.data.ingest_provenance_hash,
+          },
+        }
+      : {}),
     text: parsed.content,
     type: stringValue(parsed.data.type) ?? inferType(entry.path),
     dates: [...new Set(dates)].sort(),
+    ...(Object.keys(moduleDates).length ? { moduleDates } : {}),
     ...(stringValue(parsed.data.canvas_url)
       ? { canvasUrl: stringValue(parsed.data.canvas_url) ?? "" }
       : {}),
@@ -538,6 +832,7 @@ function collectDates(value: unknown): string[] {
     "period",
     "class",
     "session",
+    "session_at",
   ])
   return Object.entries(value).flatMap(([key, date]) => {
     if (!signalKeys.has(key.toLowerCase())) return []

@@ -1,31 +1,70 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs"
 import { lstat, mkdir, readFile } from "node:fs/promises"
-import { homedir } from "node:os"
+import { createRequire } from "node:module"
 import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { Command, Option } from "commander"
-import { listActiveCourses, listCourses, syncCourses, verifyAuth } from "./canvas.js"
+import { authStatus, importSchoolKeychainAuth, loginAuth, renewalInstructions } from "./auth.js"
+import { writeAuthAlert } from "./auth-alerts.js"
+import {
+  CanvasSyncPartialError,
+  isCanvasDiscoveryUnavailable,
+  isCanvasUnauthorized,
+  listActiveCourses,
+  listCourses,
+  syncCourses,
+  verifyAuth,
+} from "./canvas.js"
 import { completeTask } from "./completion.js"
 import { createConfig, loadAdjacentEnv, loadConfig, setupConfig } from "./config.js"
 import { ingestFile } from "./content.js"
+import { registerDogfoodCommand } from "./dogfood-cli.js"
 import { assertNoSymlinks } from "./fs-safety.js"
 import { doctorChecks, inspectVaultHealth } from "./health.js"
+import { withHomeworkDraftStatus } from "./homework-status.js"
+import { reconcileSchoolIndex } from "./index-reconciliation.js"
+import { discoverInstructions } from "./instructions.js"
 import { approveTask, reviseTask } from "./lifecycle.js"
+import { registerMigrationCommand } from "./migration-cli.js"
+import { registerObsidianCommand } from "./obsidian.js"
 import { selectOnboardingCourses } from "./onboarding.js"
+import { registerPreservationCommand } from "./preservation-cli.js"
+import { registerReadingCopyCommands } from "./reading-copy-cli.js"
 import { registerStudentCommands } from "./student-cli.js"
-import { createAssignmentTask, createPrepTask, readTask } from "./tasks.js"
+import { listCourseTasks } from "./task-inventory.js"
+import { taskInspectionCommand, taskLocations } from "./task-locations.js"
+import { readTaskOutput } from "./task-output.js"
+import { createAssignmentTask, createPrepTask, readTask, selectAssignmentPrompt } from "./tasks.js"
+import { readTimeline, renderTimeline } from "./timeline.js"
 import { registerToolCommands } from "./tool-cli.js"
 import type { TaskRecord, ToolkitConfig, WorkspaceContext } from "./types.js"
 import { readUpcoming } from "./upcoming.js"
+import { finishVaultHistory, registerVaultHistory } from "./vault-history-cli.js"
 import { inspectWorkspace, selectCourse } from "./workspace.js"
 
 const DEFAULT_CONFIG = "./canvas-agent.config.json"
+const packageVersion = (createRequire(import.meta.url)("../package.json") as { version: string })
+  .version
 
 function summary(task: TaskRecord) {
   return {
     id: task.id,
     kind: task.kind,
+    parserVersion: task.parserVersion,
+    ...(task.deliverable ? { deliverable: task.deliverable } : {}),
+    ...(task.deliverableScopeVersion
+      ? { deliverableScopeVersion: task.deliverableScopeVersion }
+      : {}),
+    ...(task.deliverableParserVersion
+      ? { deliverableParserVersion: task.deliverableParserVersion }
+      : {}),
+    ...(task.guidanceSelectionVersion
+      ? { guidanceSelectionVersion: task.guidanceSelectionVersion }
+      : {}),
+    ...(task.assignmentStructureVersion
+      ? { assignmentStructureVersion: task.assignmentStructureVersion }
+      : {}),
     status: task.status,
     course: task.course,
     week: task.week,
@@ -33,6 +72,16 @@ function summary(task: TaskRecord) {
     assignment: task.assignment,
     parentTaskId: task.parentTaskId,
     feedback: task.feedback,
+    ...(task.learningHistory
+      ? {
+          learningHistory: {
+            hash: task.learningHistory.hash,
+            records: task.learningHistory.records.length,
+            legacyPlaybooks: task.learningHistory.legacyPlaybooks?.length ?? 0,
+          },
+        }
+      : {}),
+    discussion: task.discussion,
     destination: task.destination,
     requirements: task.requirements,
     workflow: task.workflow,
@@ -41,6 +90,9 @@ function summary(task: TaskRecord) {
     excluded: task.excluded,
     notices: task.notices,
     ...(task.output ? { output: task.output } : {}),
+    ...(task.workbookVersion
+      ? { workbookVersion: task.workbookVersion, workbook: task.workbook ?? null }
+      : {}),
   }
 }
 
@@ -93,9 +145,28 @@ function makeProgram(): Command {
   const program = new Command()
   program
     .name("canvas-agent")
+    .version(packageVersion)
     .description("Model-free Canvas workspace and task handoffs")
     .showHelpAfterError(false)
   program.addOption(new Option("--config <path>", "configuration file").default(DEFAULT_CONFIG))
+
+  program
+    .command("instructions")
+    .description(
+      "locate this installation's agent instructions without config, credentials or vault access",
+    )
+    .option("--topic <text>", "read matching installed CLI paragraphs (literal, case-insensitive)")
+    .option("--json", "emit JSON")
+    .action(async (options) => {
+      const result = await discoverInstructions(undefined, options.topic)
+      render(
+        result,
+        options.json,
+        result.lookup
+          ? `${result.lookup.excerpts.map((part) => `${part.heading} (lines ${part.startLine}–${part.endLine})\n${part.text}`).join("\n\n")}\n\n${result.lookup.note}`
+          : `Canvas Agent ${result.packageVersion} instructions\n${result.files.map((file) => `${file.id}: ${file.path}`).join("\n")}\n${result.note}`,
+      )
+    })
 
   program
     .command("init")
@@ -157,7 +228,7 @@ function makeProgram(): Command {
     .description("create a new config, blank token template, and vault")
     .option("--json", "emit JSON")
     .requiredOption("--canvas-url <url>", "Canvas base URL")
-    .option("--vault <path>", "vault directory", join(homedir(), "school-vault"))
+    .option("--vault <path>", "vault directory (default: ~/canvas-vault)")
     .option("--token-env <name>", "environment variable containing the Canvas token")
     .action(async (options, command) => {
       const configPath = command.parent?.opts().config as string
@@ -185,20 +256,64 @@ function makeProgram(): Command {
     .command("sync")
     .description("sync allowlisted Canvas courses")
     .option(
+      "--preserve-school",
+      "persist a separate Canvas Agent writable namespace in each selected course; preserve existing School files",
+    )
+    .option(
+      "--full",
+      "refresh current metadata/originals (already the default); never overwrite student edits",
+    )
+    .option(
       "--course <id-or-code>",
       "sync one or more allowlisted courses only (repeatable)",
       (value: string, previous: string[]) => [...previous, value],
       [] as string[],
     )
     .option("--json", "emit JSON")
+    .option(
+      "--notify-due-soon",
+      "explicitly deliver a due-soon macOS notification after saving the private alert",
+    )
+    .option("--lead-days <days>", "due-soon reminder horizon, 1–365 days", "7")
     .action(async (options) => {
       const config = await configWithEnv(program.opts().config)
       let selectedConfig = config
+      if (!/^[1-9]\d*$/.test(String(options.leadDays)) || Number(options.leadDays) > 365)
+        throw new Error("--lead-days must be between 1 and 365")
       if (options.course.length) {
-        const discovered = await listCourses(config)
         const allow = new Set(config.courses.allowlist)
+        let discovered: Awaited<ReturnType<typeof listCourses>> = []
+        if (
+          (options.course as string[]).some(
+            (query) => !allow.has(query) || !/^[1-9]\d*$/.test(query),
+          )
+        ) {
+          try {
+            discovered = await listCourses(config, true)
+          } catch (error) {
+            if (!isCanvasDiscoveryUnavailable(error)) throw error
+            const context = await inspectWorkspace(config.vault.path)
+            if (
+              context.notices.some((notice) =>
+                notice.startsWith("Canvas course mappings are unavailable or unsafe"),
+              )
+            )
+              throw new Error(
+                "Course discovery and local mappings are unavailable; use an exact allowlisted numeric ID after inspecting mappings",
+              )
+            discovered = context.courses.flatMap((course) =>
+              course.canvasId && allow.has(course.canvasId)
+                ? [{ id: course.canvasId, code: course.code, name: course.title }]
+                : [],
+            )
+          }
+        }
         const selected: string[] = []
         for (const query of options.course as string[]) {
+          if (allow.has(query) && /^[1-9]\d*$/.test(query)) {
+            selected.push(query)
+            continue
+          }
           const exact = discovered.filter(
             (course) =>
               course.id.toLocaleLowerCase() === query.toLocaleLowerCase() ||
@@ -222,11 +337,41 @@ function makeProgram(): Command {
         }
         selectedConfig = { ...config, courses: { allowlist: [...new Set(selected)] } }
       }
-      const result = await syncCourses(selectedConfig)
+      let result: Awaited<ReturnType<typeof syncCourses>>
+      try {
+        result = await syncCourses(selectedConfig, {
+          preserveSchool: Boolean(options.preserveSchool),
+          reminderDays: Number(options.leadDays),
+          notifyDueSoon: options.notifyDueSoon,
+        })
+      } catch (error) {
+        if (!(error instanceof CanvasSyncPartialError)) throw error
+        process.exitCode = 1
+        render(
+          {
+            ...error.report,
+            refreshMode: "full",
+            fullRequested: Boolean(options.full),
+            status: "partial-failure",
+          },
+          options.json,
+          `Partial sync: ${error.report.courses} course(s) synced; ${error.report.failedCourses} failed.\n${error.report.courseReports?.map((course) => `${course.courseId}\t${course.code ?? "unknown code"}\t${course.status}${course.httpStatus ? `\tHTTP ${course.httpStatus}` : ""}`).join("\n")}\nRetry the failed course explicitly; due-soon alerts/auth resolution and reading-copy refresh were not performed.`,
+        )
+        return
+      }
+      if (result.courses) {
+        try {
+          await writeAuthAlert(program.opts().config, config, "selected-sync-succeeded")
+        } catch {
+          result.notices.push(
+            "Sync succeeded but its private auth alert could not be resolved; inspect the alert/state without overwriting it.",
+          )
+        }
+      }
       render(
-        result,
+        { ...result, refreshMode: "full", fullRequested: Boolean(options.full) },
         options.json,
-        `Synced ${result.courses} course(s); wrote ${result.written.length} file(s).${result.notices.length ? `\n${result.notices.join("\n")}` : ""}`,
+        `Synced ${result.courses} course(s); wrote ${result.written.length} file(s).${result.dueSoon?.status === "saved" ? `\nDue-soon alert: ${result.dueSoon.receipt.alertFile}; assignments=${result.dueSoon.receipt.assignments}; desktop=${result.dueSoon.notification}.` : ""}${result.notices.length ? `\n${result.notices.join("\n")}` : ""}`,
       )
     })
 
@@ -282,10 +427,11 @@ function makeProgram(): Command {
 
   program
     .command("assignment")
-    .description("create an assignment outline, draft, or review task")
+    .description("create an assignment discussion, outline, draft, or review task")
     .argument("<course>", "course code or title")
     .requiredOption("--source <path>", "approved vault-relative assignment prompt")
-    .requiredOption("--mode <mode>", "outline, draft, or review")
+    .requiredOption("--mode <mode>", "outline, draft, review, or discuss")
+    .option("--message <text>", "required student inquiry for discuss mode only")
     .option("--work <path>", "explicit Markdown/text student work in a Drafts folder")
     .option(
       "--context <path>",
@@ -303,6 +449,8 @@ function makeProgram(): Command {
         options.mode,
         options.work,
         options.context,
+        undefined,
+        options.message,
       )
       const taskFile = taskMarkdownPath(config, task.id)
       render(
@@ -317,6 +465,10 @@ function makeProgram(): Command {
     .description("create an explicit draft task from a course assignment prompt")
     .argument("<assignment>", "assignment title, Canvas ID, or exact vault path")
     .requiredOption("--course <course>", "explicit course code or title")
+    .option(
+      "--discuss <message>",
+      "create a separate discussion handoff instead of a draft version",
+    )
     .option("--work <path>", "explicit student work in a Drafts folder")
     .option(
       "--context <path>",
@@ -329,40 +481,22 @@ function makeProgram(): Command {
       const config = await configWithEnv(program.opts().config)
       const context = await inspectWorkspace(config.vault.path)
       const course = selectCourse(context, options.course)
-      const query = String(assignmentQuery).trim().toLocaleLowerCase()
-      const assignments = course.sources.filter(
-        (source) => source.type.toLocaleLowerCase() === "assignment",
-      )
-      const matches = assignments.filter((source) =>
-        [source.path, source.title, source.canvasId].some(
-          (value) => value?.toLocaleLowerCase() === query,
-        ),
-      )
-      if (matches.length !== 1) {
-        const optionsText = assignments.map(
-          (source) => `${source.title} (${source.canvasId ?? source.path})`,
-        )
-        throw new Error(
-          matches.length > 1
-            ? `Assignment selector is ambiguous: ${assignmentQuery}`
-            : `No assignment prompt matches ${assignmentQuery}${optionsText.length ? `. Available: ${optionsText.join("; ")}` : ""}`,
-        )
-      }
-      const prompt = matches[0]
-      if (!prompt) throw new Error(`No assignment prompt matches ${assignmentQuery}`)
+      const prompt = selectAssignmentPrompt(course, String(assignmentQuery))
       const taskRecord = await createAssignmentTask(
         config.vault.path,
         course.code,
         prompt.path,
-        "draft",
+        options.discuss !== undefined ? "discuss" : "draft",
         options.work,
         options.context,
+        undefined,
+        options.discuss,
       )
       const taskFile = taskMarkdownPath(config, taskRecord.id)
       render(
         { ...summary(taskRecord), taskFile },
         options.json,
-        `Created draft task ${taskRecord.id} for ${course.code}: ${prompt.title}.\nRead: ${taskFile}`,
+        `Created ${taskRecord.assignment?.mode} task ${taskRecord.id} for ${course.code}: ${prompt.title}.\nRead: ${taskFile}`,
       )
     })
 
@@ -407,13 +541,64 @@ function makeProgram(): Command {
       const config = await configWithEnv(program.opts().config)
       const result = await approveTask(config.vault.path, id)
       render(
-        { task: summary(result.task), output: result.output },
+        {
+          task: summary(result.task),
+          output: result.output,
+          ...(result.workbook ? { workbook: result.workbook } : {}),
+        },
         options.json,
-        `Approved local draft ${id}.\nCopied to: ${result.output}`,
+        `Approved local draft ${id}.\nCopied to: ${result.output}${result.workbook ? `\nWorkbook: ${result.workbook.path}` : ""}`,
       )
     })
 
   const task = program.command("task").description("show or complete persisted academic tasks")
+  task
+    .command("output <id>")
+    .description("read verified existing ordinary output; never regenerate or approve")
+    .option("--json", "emit private saved text and integrity metadata")
+    .action(async (id: string, options) => {
+      const configPath = program.opts().config
+      const config = await configWithEnv(configPath)
+      const result = await readTaskOutput(configPath, config.vault.path, id, "ordinary")
+      if (options.json) render(result, true, "")
+      else process.stdout.write(result.text)
+    })
+  task
+    .command("list")
+    .description("find saved ordinary tasks for one course; metadata only")
+    .requiredOption("--course <course>", "explicit local course identity")
+    .addOption(
+      new Option("--status <status>", "filter saved status").choices(["pending", "completed"]),
+    )
+    .option("--json", "emit metadata-only JSON")
+    .action(async (options) => {
+      const config = await configWithEnv(program.opts().config)
+      const result = await listCourseTasks(config.vault.path, options.course, options.status)
+      render(
+        {
+          ...result,
+          scope: "ordinary",
+          tasks: result.tasks.map((row) => ({
+            ...row,
+            inspectionCommand: taskInspectionCommand("ordinary", row.id, program.opts().config),
+          })),
+        },
+        options.json,
+        [
+          `Saved tasks for ${result.course}: ${result.tasks.length}`,
+          ...result.tasks.map(
+            (row) =>
+              `${row.id}\t${row.status}\t${row.kind}${row.mode ? `/${row.mode}` : ""}\t${row.promptPath ?? row.period?.value ?? row.week ?? ""}`,
+          ),
+          ...(result.unreadableRecords
+            ? [
+                `Inventory incomplete: ${result.unreadableRecords} unreadable record(s), course scope unknown.`,
+              ]
+            : []),
+          result.limitation,
+        ].join("\n"),
+      )
+    })
   task
     .command("show")
     .description("show a task brief")
@@ -423,10 +608,38 @@ function makeProgram(): Command {
       const config = await configWithEnv(program.opts().config)
       const record = await readTask(config.vault.path, id)
       const file = taskMarkdownPath(config, id)
-      const stat = await lstat(file)
-      if (!stat.isFile() || stat.isSymbolicLink())
-        throw new Error("Task brief is not a regular file")
-      if (options.json) render({ ...record, taskFile: file }, true, "")
+      await assertNoSymlinks(file, true)
+      let briefStatus: "present" | "missing" = "present"
+      try {
+        const stat = await lstat(file)
+        if (!stat.isFile() || stat.isSymbolicLink())
+          throw new Error("Task brief is not a regular file")
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+        briefStatus = "missing"
+      }
+      if (options.json)
+        render(
+          {
+            ...record,
+            ...taskLocations(
+              program.opts().config,
+              config.vault.path,
+              record.id,
+              "ordinary",
+              record.output,
+              record.workbook?.path,
+            ),
+            briefStatus,
+            ...(briefStatus === "present" ? { taskFile: file } : {}),
+          },
+          true,
+          "",
+        )
+      else if (briefStatus === "missing")
+        throw new Error(
+          "Task brief is missing; use task show UUID --json to read the validated saved recipe. No history was rewritten.",
+        )
       else process.stdout.write(await readFile(file, "utf8"))
     })
   task
@@ -441,7 +654,7 @@ function makeProgram(): Command {
       render(
         { task: summary(result.task), output: result.output },
         options.json,
-        `Completed task ${id}.\nSaved: ${result.output}`,
+        `Completed task ${id}.\nSaved: ${result.output}${result.task.workbook ? `\nWorkbook: ${result.task.workbook.path}` : ""}`,
       )
     })
 
@@ -454,7 +667,7 @@ function makeProgram(): Command {
     .option("--json", "emit JSON")
     .action(async (options) => {
       const config = await configWithEnv(program.opts().config)
-      const rows = options.all ? await listCourses(config) : await listActiveCourses(config)
+      const rows = options.all ? await listCourses(config, true) : await listActiveCourses(config)
       render(
         rows,
         options.json || courses.opts().json,
@@ -493,7 +706,64 @@ function makeProgram(): Command {
       if (!result.ok) process.exitCode = 1
     })
 
-  const auth = program.command("auth").description("check Canvas credentials")
+  const auth = program.command("auth").description("provision, check, and renew Canvas credentials")
+  auth
+    .command("login")
+    .description(
+      "save a locally provisioned token in private adjacent .env and record confirmed expiry",
+    )
+    .requiredOption("--expires-at <iso>", "confirmed token expiry from Canvas")
+    .option("--account <name>", "local account label (not a credential)", "local")
+    .option("--replace", "explicitly replace a previously saved token")
+    .option("--json", "emit credential-free JSON")
+    .action(async (options) => {
+      const path = program.opts().config
+      const config = await configWithEnv(path)
+      const result = await loginAuth(path, config, {
+        expiresAt: options.expiresAt,
+        account: options.account,
+        replace: options.replace,
+      })
+      render(
+        result,
+        options.json,
+        `Canvas token stored in private adjacent .env; confirmed expiry recorded: ${result.expiresAt}. Run auth verify to check API authorization.`,
+      )
+    })
+  auth
+    .command("import-school-keychain")
+    .description(
+      "opt in to import one named School macOS Keychain token into private dotenv storage",
+    )
+    .requiredOption("--account <name>", "exact account used by School auth login")
+    .requiredOption("--expires-at <iso>", "confirmed future token expiry from Canvas")
+    .option("--replace", "explicitly replace a previously saved dotenv token")
+    .option("--json", "emit credential-free import metadata")
+    .action(async (options) => {
+      const path = program.opts().config
+      const config = await loadConfig(path)
+      const result = await importSchoolKeychainAuth(path, config, options)
+      render(
+        result,
+        options.json,
+        `Selected School token imported into private adjacent .env; Keychain unchanged.\n${result.nextSteps}`,
+      )
+    })
+  auth
+    .command("renew")
+    .description("show manual Canvas token renewal steps; no network or automatic token minting")
+    .option("--json", "emit JSON")
+    .action(async (options) => {
+      const config = await loadConfig(program.opts().config)
+      const result = renewalInstructions(config)
+      render(
+        result,
+        options.json,
+        [result.settingsUrl, ...result.steps.map((step, index) => `${index + 1}. ${step}`)].join(
+          "\n",
+        ),
+      )
+    })
   auth
     .command("verify")
     .description("verify configured credentials with a read-only request")
@@ -501,46 +771,79 @@ function makeProgram(): Command {
     .action(async (options) => {
       const config = await configWithEnv(program.opts().config)
       const result = await verifyAuth(config)
-      render(result, options.json, "Canvas authentication succeeded.")
+      let alert: Awaited<ReturnType<typeof writeAuthAlert>> | { status: "not-updated" }
+      try {
+        alert = await writeAuthAlert(program.opts().config, config, "api-verified")
+      } catch {
+        alert = { status: "not-updated" }
+      }
+      render(
+        { ...result, alert },
+        options.json,
+        `Canvas authentication succeeded.${alert.status === "not-updated" ? " Private auth alert was preserved but could not be resolved; inspect it separately." : ""}`,
+      )
     })
 
   auth
     .command("status")
-    .description("report local configured token variable presence")
+    .description("report local token presence and recorded expiry; not API authorization")
     .option("--json", "emit JSON")
     .action(async (options) => {
       const config = await configWithEnv(program.opts().config)
-      const available = Boolean(process.env[config.canvas.tokenEnv])
-      const result = { configured: true, tokenEnv: config.canvas.tokenEnv, available }
+      const result = await authStatus(program.opts().config, config)
       render(
         result,
         options.json,
-        available
-          ? `Configured Canvas token environment variable ${config.canvas.tokenEnv} is available locally.`
-          : `Configured Canvas token environment variable ${config.canvas.tokenEnv} is not set.`,
+        `Configured Canvas token environment variable ${config.canvas.tokenEnv} is ${result.available ? "available locally" : "not set"}.\nRecorded renewal state: ${result.renewal}.${"expiresAt" in result ? ` Expiry: ${result.expiresAt}.` : ""} This does not verify API authorization.`,
       )
     })
 
   program
     .command("onboard")
-    .description("choose active courses for the sync allowlist")
+    .description("select active courses, or select and sync one concluded pilot")
+    .argument("[id]", "exact concluded Canvas course ID with --pilot")
+    .option("--pilot", "select and sync one explicitly chosen concluded course, preserving files")
+    .option(
+      "--preserve-school",
+      "with --pilot, use a separate persistent Canvas Agent writable course namespace",
+    )
     .option(
       "--course <id>",
-      "active course ID (repeatable)",
+      "active course ID (repeatable), or one concluded ID with --pilot",
       (value: string, previous: string[]) => [...previous, value],
       [] as string[],
     )
     .option("--all-active", "explicitly select every active discovered course")
     .option("--json", "emit JSON")
-    .action(async (options) => {
+    .action(async (id, options) => {
+      if (options.preserveSchool && !options.pilot)
+        throw new Error(
+          "Onboarding --preserve-school requires --pilot; for active courses select them, then sync --preserve-school",
+        )
+      if (id && (!options.pilot || options.course.length))
+        throw new Error(
+          "Positional onboarding needs --pilot and no --course; otherwise use --course IDs",
+        )
       const configPath = program.opts().config as string
       const config = await configWithEnv(configPath)
       const result = await selectOnboardingCourses(configPath, config, {
-        ids: options.course,
+        ids: id ? [id] : options.course,
         allActive: options.allActive,
+        pilot: options.pilot,
       })
+      const pilotSync = options.pilot
+        ? await syncCourses(
+            { ...config, courses: { allowlist: result.selected } },
+            {
+              ...(result.pilotEligibility?.basis === "assignment-date-span-and-own-feedback"
+                ? { unresolvedPilot: result.courses[0] }
+                : {}),
+              preserveSchool: Boolean(options.preserveSchool),
+            },
+          )
+        : undefined
       render(
-        result,
+        { ...result, ...(pilotSync ? { sync: pilotSync } : {}) },
         options.json,
         `Selected ${result.selected.length} course(s):\n${result.courses.map((c) => `${c.id}\t${c.code}\t${c.name}`).join("\n")}${result.warning ? `\n${result.warning}` : ""}`,
       )
@@ -551,7 +854,7 @@ function makeProgram(): Command {
     periodOption: "days" | "weeks",
     fallback: number,
   ) => {
-    program
+    const schedule = program
       .command(name)
       .description(
         name === "homework"
@@ -564,38 +867,101 @@ function makeProgram(): Command {
       .action(async (options) => {
         const config = await configWithEnv(program.opts().config)
         const context = await inspectWorkspace(config.vault.path)
+        if (options.draft) {
+          if (name !== "homework") throw new Error("--draft is supported only by homework")
+          if (!/^\d+$/.test(options.draft))
+            throw new Error("homework --draft requires an exact Canvas assignment ID")
+          const candidates = options.course
+            ? [selectCourse(context, options.course)]
+            : context.courses
+          const matches = candidates.flatMap((course) =>
+            course.sources
+              .filter(
+                (source) =>
+                  /^assignments?(?:\.md)?$/i.test(source.type) && source.canvasId === options.draft,
+              )
+              .map((prompt) => ({ course, prompt })),
+          )
+          if (matches.length !== 1)
+            throw new Error(
+              matches.length
+                ? "Assignment ID is ambiguous; provide --course and an exact prompt"
+                : "No eligible assignment matches that Canvas ID in the selected vault/course",
+            )
+          const selected = matches[0]
+          if (!selected) throw new Error("Assignment ID selection failed")
+          const task = await createAssignmentTask(
+            config.vault.path,
+            selected.course.code,
+            selected.prompt.path,
+            "draft",
+          )
+          render(
+            { ...summary(task), taskFile: taskMarkdownPath(config, task.id) },
+            options.json,
+            `Created pending draft task ${task.id} for ${task.course.code}. Read task show and generate with your chosen agent; nothing was submitted.`,
+          )
+          return
+        }
         const rawCount = String(options[periodOption])
         if (!/^\d+$/.test(rawCount))
           throw new Error(`--${periodOption} must be an integer between 0 and 365`)
         const count = Number(rawCount)
         if (!Number.isSafeInteger(count) || count > 365)
           throw new Error(`--${periodOption} must be between 0 and 365`)
-        if (
-          options.course &&
-          !context.courses.some(
-            (course) => course.code.toLocaleLowerCase() === options.course.toLocaleLowerCase(),
-          )
-        )
-          throw new Error(`Unknown course selector: ${options.course}`)
-        const result = await readUpcoming(config.vault.path, context, {
+        if (options.course) selectCourse(context, options.course)
+        if (name === "timeline") {
+          const result = await readTimeline(config.vault.path, context, {
+            weeks: count,
+            course: options.course,
+          })
+          render(result, options.json, renderTimeline(result))
+          return
+        }
+        const upcoming = await readUpcoming(config.vault.path, context, {
           days: periodOption === "weeks" ? count * 7 : count,
           course: options.course,
-          includeAnnouncements: name === "timeline",
+          includeAnnouncements: false,
         })
+        const result = await withHomeworkDraftStatus(config.vault.path, context, upcoming)
+        const draftLabel = (
+          item: (typeof result.items)[number] | (typeof result.undated)[number],
+        ) =>
+          name === "homework" && "draftVersion" in item
+            ? `\tdraft: ${"draftBinding" in item && item.draftBinding === "ambiguous-legacy-filename" ? "ambiguous legacy filenames" : item.draftVersion === null ? "none found" : `v${item.draftVersion}`} (presence only)${item.relatedDrafts.length ? `; related: ${item.relatedDrafts.length} saved draft(s), different prompt snapshot` : ""}`
+            : ""
         const lines = [
           `Upcoming (${result.items.length})`,
           ...result.items.map(
-            (item) => `${item.dueAt}\t${item.course}\t${item.title}\t${item.path}`,
+            (item) =>
+              `${item.dueAt}\t${item.course}\t${item.title}\t${item.path}${draftLabel(item)}`,
           ),
           `Overdue (${result.overdue.length})`,
           ...result.overdue.map(
-            (item) => `${item.dueAt}\t${item.course}\t${item.title}\t${item.path}`,
+            (item) =>
+              `${item.dueAt}\t${item.course}\t${item.title}\t${item.path}${draftLabel(item)}`,
           ),
           `Undated (${result.undated.length})`,
-          ...result.undated.map((item) => `${item.course}\t${item.title}\t${item.path}`),
+          ...result.undated.map(
+            (item) => `${item.course}\t${item.title}\t${item.path}${draftLabel(item)}`,
+          ),
         ]
+        if ("unreadableTaskRecords" in result && result.unreadableTaskRecords)
+          lines.push(
+            `Draft inventory incomplete: ${result.unreadableTaskRecords} unreadable task record(s); inspect before relying on missing-draft status.`,
+          )
+        if (
+          [...result.items, ...result.overdue, ...result.undated].some(
+            (item) => item.relatedDrafts.length,
+          )
+        )
+          lines.push(
+            "Related drafts are not current-prompt completion: use --json for their task IDs and original prompt paths, then inspect those tasks.",
+          )
         render(result, options.json, lines.join("\n"))
       })
+    if (name === "homework")
+      schedule.option("--draft <id>", "create a pending draft by exact Canvas assignment ID")
   }
   addSchedule("homework", "days", 14)
   addSchedule("timeline", "weeks", 4)
@@ -607,13 +973,51 @@ function makeProgram(): Command {
     .requiredOption("--course <course>", "explicit course code or title")
     .option("--title <title>", "optional extraction title")
     .option("--week <date>", "associate extracted text with an explicit Monday")
+    .option("--as-of <date>", "student-confirmed availability date, YYYY-MM-DD")
     .option("--module <id>", "associate extracted text with an existing course module")
+    .option(
+      "--school-compatible",
+      "create a separate School-readable sidecar with explicit policy metadata",
+    )
+    .addOption(
+      new Option(
+        "--ai-policy <policy>",
+        "declared metadata, not a grant of AI-use permission",
+      ).choices(["allowed", "prohibited"]),
+    )
+    .addOption(
+      new Option(
+        "--redistribution <policy>",
+        "declared file handling metadata, not a license grant",
+      ).choices(["allowed", "restricted"]),
+    )
     .option("--json", "emit JSON")
     .action(async (file, options) => {
+      const configPath = resolve(program.opts().config)
+      if ([configPath, `${configPath}.auth.json`].includes(resolve(String(file))))
+        throw new Error("Selected CLI config/auth files cannot be ingested into an academic vault")
       const config = await configWithEnv(program.opts().config)
+      if (
+        options.schoolCompatible
+          ? !options.aiPolicy || !options.redistribution
+          : options.aiPolicy || options.redistribution
+      )
+        throw new Error(
+          "Use --school-compatible with both explicit --ai-policy and --redistribution declarations",
+        )
       const result = await ingestFile(config.vault.path, options.course, file, options.title, {
         week: options.week,
+        asOf: options.asOf,
         module: options.module,
+        ...(options.schoolCompatible
+          ? {
+              compatibility: {
+                canvasOrigin: config.canvas.baseUrl,
+                aiPolicy: options.aiPolicy,
+                redistribution: options.redistribution,
+              },
+            }
+          : {}),
       })
       render(
         result,
@@ -622,9 +1026,28 @@ function makeProgram(): Command {
       )
     })
 
-  program
-    .command("vault")
-    .description("inspect local vault")
+  const vault = program.command("vault").description("inspect local vault")
+  vault
+    .command("reconcile-index")
+    .description("diagnose explicitly selected School index paths read-only")
+    .requiredOption("--school-index <path>", "absolute School SQLite index outside the vault")
+    .requiredOption("--course <ids...>", "explicit numeric Canvas course IDs")
+    .option("--json", "emit JSON")
+    .action(async (options) => {
+      const config = await configWithEnv(program.opts().config)
+      const result = await reconcileSchoolIndex({
+        vault: config.vault.path,
+        index: options.schoolIndex,
+        courseIds: options.course,
+        canvasOrigin: config.canvas.baseUrl,
+      })
+      render(
+        result,
+        options.json,
+        `${result.findings.length} indexed path issue(s); ${result.proposedRelinks} unique relocation candidate(s). Read-only: review JSON; no relinks applied.`,
+      )
+    })
+  vault
     .command("health")
     .description("check vault structure read-only")
     .option("--json", "emit JSON")
@@ -683,7 +1106,13 @@ function makeProgram(): Command {
     })
 
   registerToolCommands(program)
+  registerDogfoodCommand(program)
   registerStudentCommands(program)
+  registerMigrationCommand(program)
+  registerPreservationCommand(program)
+  registerReadingCopyCommands(program)
+  registerVaultHistory(program)
+  registerObsidianCommand(program)
   return program
 }
 
@@ -713,10 +1142,23 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<vo
     const configIndex = args.indexOf("--config")
     const configPath = configIndex >= 0 ? (args[configIndex + 1] ?? DEFAULT_CONFIG) : DEFAULT_CONFIG
     const message = safeError(error, configPath)
+    let authAlert:
+      | Awaited<ReturnType<typeof writeAuthAlert>>
+      | { status: "not-updated" }
+      | undefined
+    if (isCanvasUnauthorized(error)) {
+      try {
+        const selectedPath = program.opts().config as string
+        authAlert = await writeAuthAlert(selectedPath, await loadConfig(selectedPath), "http-401")
+      } catch {
+        authAlert = { status: "not-updated" }
+      }
+    }
     process.stderr.write(
-      `${jsonRequested ? `${JSON.stringify({ error: message })}\n` : `Error: ${message}\n`}`,
+      `${jsonRequested ? `${JSON.stringify({ error: message, ...(authAlert ? { authAlert } : {}) })}\n` : `Error: ${message}${authAlert && "alertFile" in authAlert ? `\nPrivate auth alert: ${authAlert.alertFile}` : ""}\n`}`,
     )
     process.exitCode = 1
+    await finishVaultHistory(program, false)
   }
 }
 

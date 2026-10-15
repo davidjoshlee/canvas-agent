@@ -14,6 +14,8 @@ export type CalendarNotice = {
   canvasDueAt?: string
   calendarDueAt?: string
   detail?: string
+  assignmentDates?: import("./assignment-dates.js").AssignmentDates
+  alternativeDateMatch?: boolean
 }
 const overridePath = (vault: string) => join(vault, "_meta", "calendar-overrides.json")
 const within = (root: string, path: string) => {
@@ -238,11 +240,27 @@ function readEvents(ics: string): Event[] {
   return result
 }
 export function compareCalendar(context: WorkspaceContext, ics: string): CalendarNotice[] {
-  const assignments = context.courses.flatMap((course) =>
-    course.sources
-      .filter((source) => /assignment/i.test(`${source.type} ${source.path}`))
-      .map((source) => ({ course, source })),
-  )
+  const assignments = context.courses.flatMap((course) => {
+    const sources = course.sources.filter((source) =>
+      /assignment/i.test(`${source.type} ${source.path}`),
+    )
+    const activeIds = new Set(
+      course.syncNamespace
+        ? sources
+            .filter((source) => source.path.startsWith(`${course.root}/Canvas Agent/`))
+            .map((source) => source.canvasId)
+            .filter((id): id is string => Boolean(id))
+        : [],
+    )
+    return sources
+      .filter(
+        (source) =>
+          !source.canvasId ||
+          !activeIds.has(source.canvasId) ||
+          source.path.startsWith(`${course.root}/Canvas Agent/`),
+      )
+      .map((source) => ({ course, source }))
+  })
   const events = readEvents(ics)
   const notices: CalendarNotice[] = []
   const used = new Set<number>()
@@ -307,6 +325,12 @@ export function compareCalendar(context: WorkspaceContext, ics: string): Calenda
     used.add(matched.index)
     const canvasDueAt = source.dueAt
     const calendarDueAt = matched.event.dueAt
+    const alternativeDateMatch = Boolean(
+      calendarDueAt &&
+        source.assignmentDates?.alternatives.some(
+          (date) => date.dueAt && Date.parse(date.dueAt) === Date.parse(calendarDueAt),
+        ),
+    )
     const same =
       canvasDueAt && calendarDueAt && Date.parse(canvasDueAt) === Date.parse(calendarDueAt)
     notices.push({
@@ -316,6 +340,15 @@ export function compareCalendar(context: WorkspaceContext, ics: string): Calenda
       ...(source.canvasId ? { canvasId: source.canvasId } : {}),
       ...(canvasDueAt ? { canvasDueAt } : {}),
       ...(calendarDueAt ? { calendarDueAt } : {}),
+      ...(source.assignmentDates
+        ? { assignmentDates: source.assignmentDates, alternativeDateMatch }
+        : {}),
+      ...(!same && alternativeDateMatch
+        ? {
+            detail:
+              "Calendar matches a visible alternative, not the requester-effective due date; confirm applicability in Canvas. No date changed.",
+          }
+        : {}),
       ...(!calendarDueAt
         ? { detail: matched.event.unsupportedDate ?? "Calendar event has no supported date" }
         : {}),

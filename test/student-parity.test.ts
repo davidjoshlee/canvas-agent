@@ -91,6 +91,29 @@ describe("student date and guidance parity", () => {
     })
     const candidate = join(vault, "candidate.md")
     await writeFile(candidate, "# Proposed guidance\n\n## Brief structure\nOverview\n")
+    await expect(saveGuidanceProposal(vault, proposal.id, candidate)).rejects.toThrow(
+      /Sources section/,
+    )
+    await writeFile(candidate, "# Proposed guidance\n\n## Sources\n`OTHER/Syllabus.md`\n")
+    await expect(saveGuidanceProposal(vault, proposal.id, candidate)).rejects.toThrow(
+      /Sources section/,
+    )
+    await writeFile(
+      candidate,
+      "# Proposed guidance\n\n## Sources\n`FIN-101/Syllabus.md`\n\n`OTHER/Syllabus.md`\n",
+    )
+    await expect(saveGuidanceProposal(vault, proposal.id, candidate)).rejects.toThrow(
+      /not an exact/,
+    )
+    await writeFile(
+      candidate,
+      "# Proposed guidance\n\n## Sources\n`FIN-101/Syllabus.md`\n\ncanvas_token=synthetic-test-secret\n",
+    )
+    await expect(saveGuidanceProposal(vault, proposal.id, candidate)).rejects.toThrow(/credentials/)
+    await writeFile(
+      candidate,
+      "# Proposed guidance\n\n## Brief structure\nOverview\n\n## Sources\n`FIN-101/Syllabus.md`\n",
+    )
     const first = await saveGuidanceProposal(vault, proposal.id, candidate)
     const second = await saveGuidanceProposal(vault, proposal.id, candidate)
     expect(first).toMatch(/prep-guidance\.proposed\.v1\.md$/)

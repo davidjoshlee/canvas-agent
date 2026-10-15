@@ -2,8 +2,18 @@ import { createHash } from "node:crypto"
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises"
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import JSZip from "jszip"
+import mammoth from "mammoth"
+import TurndownService from "turndown"
 import { parse as parseYaml } from "yaml"
 import { assertNoSymlinks } from "./fs-safety.js"
+import {
+  assertCompatibleOriginalPolicy,
+  type IngestCompatibility,
+  ingestCompatibility,
+  readIngestProvenance,
+  renderCompatibleIngestion,
+} from "./ingest-compatibility.js"
+import { worksheetContext } from "./xlsx-sheet-context.js"
 
 const MAX_ORIGINAL = 50 * 1024 * 1024
 const MAX_TEXT = 5 * 1024 * 1024
@@ -58,12 +68,12 @@ async function zip(bytes: Uint8Array): Promise<JSZip> {
   }
   return archive
 }
-async function zipEntryText(
+async function zipEntryBytes(
   file: JSZip.JSZipObject | null,
   maxBytes = MAX_ZIP_ENTRY,
-): Promise<string> {
-  if (!file) return ""
-  return await new Promise<string>((resolveText, reject) => {
+): Promise<Buffer> {
+  if (!file) return Buffer.alloc(0)
+  return await new Promise<Buffer>((resolveText, reject) => {
     const stream = file.nodeStream()
     const abortable = stream as NodeJS.ReadableStream & { destroy(error?: Error): void }
     const chunks: Buffer[] = []
@@ -78,8 +88,14 @@ async function zipEntryText(
       chunks.push(value)
     })
     stream.on("error", reject)
-    stream.on("end", () => resolveText(Buffer.concat(chunks, length).toString("utf8")))
+    stream.on("end", () => resolveText(Buffer.concat(chunks, length)))
   })
+}
+async function zipEntryText(
+  file: JSZip.JSZipObject | null,
+  maxBytes = MAX_ZIP_ENTRY,
+): Promise<string> {
+  return (await zipEntryBytes(file, maxBytes)).toString("utf8")
 }
 async function extractPdf(bytes: Uint8Array): Promise<string> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs")
@@ -126,13 +142,28 @@ async function extractPptx(bytes: Uint8Array): Promise<string> {
 }
 async function extractDocx(bytes: Uint8Array): Promise<string> {
   const archive = await zip(bytes)
-  const xml = await zipEntryText(archive.file("word/document.xml"))
-  const paragraphs = Array.from(xml.matchAll(/<w:p\b[^>]*>([\s\S]*?)<\/w:p>/g), (paragraph) =>
-    Array.from((paragraph[1] ?? "").matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g), (run) =>
-      xmlText(run[1] ?? ""),
-    ).join(""),
-  )
-  return paragraphs.filter(Boolean).join("\n")
+  const bounded = new JSZip()
+  let total = 0
+  for (const file of Object.values(archive.files).filter((file) => !file.dir)) {
+    const content = await zipEntryBytes(file)
+    total += content.byteLength
+    if (total > MAX_ZIP_TOTAL) throw new Error("Archive exceeds extraction size limit")
+    if (/\.(?:xml|rels)$/i.test(file.name)) {
+      const xml = new TextDecoder("utf-8", { fatal: true }).decode(content)
+      if (/<!DOCTYPE|<!ENTITY/i.test(xml) || (xml.match(/</g)?.length ?? 0) > 100_000)
+        throw new Error(
+          "Word XML exceeds bounded extraction limits or contains unsupported declarations",
+        )
+    }
+    bounded.file(file.name, content)
+  }
+  // Parse only validated, bounded member bytes; no filesystem path is supplied.
+  const input = await bounded.generateAsync({ type: "nodebuffer", compression: "STORE" })
+  try {
+    return (await mammoth.extractRawText({ buffer: input })).value.trim()
+  } catch {
+    throw new Error("Word document could not be parsed; supply a valid DOCX or extracted text")
+  }
 }
 async function extractXlsx(bytes: Uint8Array): Promise<string> {
   const archive = await zip(bytes)
@@ -145,9 +176,21 @@ async function extractXlsx(bytes: Uint8Array): Promise<string> {
   const sheets = Object.values(archive.files)
     .filter((f) => /^xl\/worksheets\/sheet\d+\.xml$/.test(f.name))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-  const out: string[] = []
-  for (let i = 0; i < sheets.length; i++) {
-    const sheet = sheets[i]
+  const context = worksheetContext(
+    await zipEntryText(archive.file("xl/workbook.xml")),
+    await zipEntryText(archive.file("xl/_rels/workbook.xml.rels")),
+    sheets.map((sheet) => sheet.name),
+  )
+  const out: string[] = context.unboundNames.length
+    ? [
+        "## Workbook tabs without worksheet mapping\n" +
+          context.unboundNames.map((name) => `- ${name}`).join("\n"),
+      ]
+    : []
+  let readableSheets = 0
+  for (let i = 0; i < context.sheets.length; i++) {
+    const metadata = context.sheets[i]
+    const sheet = metadata ? archive.file(metadata.path) : null
     if (!sheet) continue
     const xml = await zipEntryText(sheet)
     const rows: string[] = []
@@ -166,23 +209,39 @@ async function extractXlsx(bytes: Uint8Array): Promise<string> {
       }
       if (values.length) rows.push(values.join(" | "))
     }
-    if (rows.length) out.push(`## Sheet ${i + 1}\n${rows.join("\n")}`)
+    if (rows.length) {
+      readableSheets++
+      out.push(`## ${metadata?.name ?? `Sheet ${i + 1}`}\n${rows.join("\n")}`)
+    }
   }
+  if (!readableSheets) throw new Error("XLSX has no readable cell data")
   return out.join("\n\n")
 }
 function htmlText(html: string): string {
-  return clean(
-    html
-      .replace(/<(script|style|iframe|object|embed|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
-      .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr)\b[^>]*>/gi, "\n")
-      .replace(/<[^>]*>/g, " ")
-      .replace(/&nbsp;/gi, " ")
-      .replace(/&amp;/gi, "&")
-      .replace(/&lt;/gi, "<")
-      .replace(/&gt;/gi, ">")
-      .replace(/&quot;/gi, '"')
-      .replace(/&#39;|&apos;/gi, "'"),
-  )
+  if (Buffer.byteLength(html) > MAX_TEXT || (html.match(/</g)?.length ?? 0) > 100_000)
+    throw new Error("HTML source exceeds bounded extraction limits")
+  const converter = new TurndownService()
+  converter.remove(["script", "style", "iframe", "object", "embed", "noscript"])
+  converter.addRule("unsafe-targets", {
+    filter: (node) => {
+      if (!["A", "IMG"].includes(node.nodeName)) return false
+      const target = node.getAttribute(node.nodeName === "A" ? "href" : "src")
+      if (!target) return false
+      try {
+        const url = new URL(target, "https://canvas.invalid")
+        return (
+          !!url.username ||
+          !!url.password ||
+          !["http:", "https:", "mailto:", "tel:"].includes(url.protocol)
+        )
+      } catch {
+        return true
+      }
+    },
+    replacement: (content, node) =>
+      node.nodeName === "A" ? content : (node.getAttribute("alt") ?? ""),
+  })
+  return converter.turndown(html).trim()
 }
 
 /** Extract selectable text from common Canvas document formats. Unsupported/bad files return a notice. */
@@ -195,13 +254,25 @@ export async function extractText(input: {
     return { text: null, notice: "Original exceeds the 50 MB limit" }
   const extension = ext(input.filename)
   const contentType = input.contentType?.split(";", 1)[0]?.toLowerCase() ?? ""
+  const legacyXls = extension === ".xls" || contentType === "application/vnd.ms-excel"
+  const legacyOffice = [0xd0, 0xcf, 0x11, 0xe0].every((byte, index) => input.bytes[index] === byte)
+  if (legacyXls || legacyOffice)
+    return {
+      text: null,
+      notice: legacyXls
+        ? "Legacy .xls binary files are not supported; convert to .xlsx or supply extracted text. No text was extracted."
+        : "Legacy or encrypted binary Office files are not supported; supply an accessible modern Office file or extracted text. No text was extracted.",
+    }
   try {
     let text: string
     if (extension === ".pdf" || contentType === "application/pdf")
       text = await extractPdf(input.bytes)
-    else if (extension === ".docx") text = await extractDocx(input.bytes)
-    else if (extension === ".pptx") text = await extractPptx(input.bytes)
-    else if (extension === ".xlsx") text = await extractXlsx(input.bytes)
+    else if (extension === ".docx" || contentType === types[".docx"])
+      text = await extractDocx(input.bytes)
+    else if (extension === ".pptx" || contentType === types[".pptx"])
+      text = await extractPptx(input.bytes)
+    else if (extension === ".xlsx" || contentType === types[".xlsx"])
+      text = await extractXlsx(input.bytes)
     else if ([".html", ".htm"].includes(extension) || contentType === "text/html")
       text = htmlText(new TextDecoder("utf-8", { fatal: true }).decode(input.bytes))
     else if (
@@ -210,7 +281,13 @@ export async function extractText(input: {
     )
       text = new TextDecoder("utf-8", { fatal: true }).decode(input.bytes)
     else return { text: null }
-    text = clean(text)
+    // Markdown indentation carries nested-list/code structure in HTML conversion.
+    text =
+      [".html", ".htm", ".docx"].includes(extension) ||
+      contentType === "text/html" ||
+      contentType === types[".docx"]
+        ? text.replaceAll(String.fromCharCode(0), "").trim()
+        : clean(text)
     if (!text)
       return {
         text: null,
@@ -230,15 +307,30 @@ export async function extractText(input: {
   }
 }
 
-/** Explicitly copy and extract a user-selected file into one course's Canvas/Files folder. */
+/** Explicitly copy/extract a selected file inside one course's writable product namespace. */
 export async function ingestFile(
   vault: string,
   courseQuery: string,
   file: string,
   title?: string,
-  options: { week?: string; module?: string } = {},
+  options: {
+    week?: string
+    module?: string
+    asOf?: string
+    compatibility?: IngestCompatibility
+  } = {},
 ): Promise<{ original: string; text?: string; notices: string[] }> {
   const week = options.week
+  const asOf = options.asOf
+  if (asOf !== undefined) {
+    const date = new Date(`${asOf}T00:00:00.000Z`)
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(asOf) ||
+      !Number.isFinite(date.valueOf()) ||
+      date.toISOString().slice(0, 10) !== asOf
+    )
+      throw new Error("Ingest as-of must be a real availability date in YYYY-MM-DD format")
+  }
   if (week !== undefined) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(week))
       throw new Error("Ingest week must be an explicit Monday in YYYY-MM-DD format")
@@ -253,11 +345,17 @@ export async function ingestFile(
   const root = resolve(vault)
   await assertNoSymlinks(root)
   const { selectCourse } = await import("./workspace.js")
-  const { courses } = await import("./workspace.js").then((m) => m.inspectWorkspace(root))
-  const course = selectCourse(
-    { version: 1, vault: root, courses, pendingTasks: [], notices: [] },
-    courseQuery,
+  const context = await import("./workspace.js").then((m) => m.inspectWorkspace(root))
+  if (
+    context.notices.some((notice) =>
+      notice.startsWith("Canvas course mappings are unavailable or unsafe"),
+    )
   )
+    throw new Error("Course mappings are unsafe; inspect them before ingesting files")
+  const course = selectCourse(context, courseQuery)
+  const compatibility = options.compatibility
+    ? ingestCompatibility(options.compatibility, course.canvasId)
+    : undefined
   if (
     options.module &&
     !course.sources.some(
@@ -269,12 +367,21 @@ export async function ingestFile(
     throw new Error("Ingest module must identify an existing module in this course")
   const source = resolve(file)
   if (!isAbsolute(file)) throw new Error("Input file path must be absolute")
+  if (
+    /^(?:\.env(?:[.-].*)?|(?:credentials?|secrets?|passwords?|tokens?)(?:\.(?:json|ya?ml|txt))?|(?:school|canvas-agent)\.(?:config|auth)\.json)$/i.test(
+      basename(source),
+    )
+  )
+    throw new Error("Credential/config files cannot be ingested into an academic vault")
   await assertNoSymlinks(source)
   const info = await lstat(source)
   if (!info.isFile() || info.size > MAX_ORIGINAL)
     throw new Error("Input must be a regular file under 50 MB")
   const bytes = await readFile(source)
-  const destinationDir = join(root, course.root, "Canvas", "Files")
+  if (compatibility) assertCompatibleOriginalPolicy(bytes, ext(source), compatibility)
+  const destinationDir = course.syncNamespace
+    ? join(root, course.root, course.syncNamespace, "Canvas", "Files")
+    : join(root, course.root, "Canvas", "Files")
   const extname = ext(source)
   const name = `${basename(source, extname).replace(/[^\w.-]+/g, "-") || "document"}-${sha(bytes).slice(0, 12)}${extname}`
   const original = join(destinationDir, name)
@@ -303,9 +410,44 @@ export async function ingestFile(
   const notices = extracted.notice ? [extracted.notice] : []
   let text: string | undefined
   if (extracted.text) {
-    const sidecar = `${original}${week ? `.week-${week}` : ""}${options.module ? `.module-${options.module.replace(/[^a-zA-Z0-9_-]/g, "-")}` : ""}.extracted.md`
+    const sidecar = `${original}${week ? `.week-${week}` : ""}${asOf ? `.as-of-${asOf}` : ""}${options.module ? `.module-${options.module.replace(/[^a-zA-Z0-9_-]/g, "-")}` : ""}${compatibility?.suffix ?? ""}.extracted.md`
     const rel = relative(root, original).split(sep).join("/")
-    const content = `---\noriginal_path: ${JSON.stringify(rel)}\noriginal_hash: ${sha(bytes)}\n${options.module ? `module_canvas_id: ${JSON.stringify(options.module)}\n` : ""}${week ? `dates:\n  date: ${JSON.stringify(week)}\n` : ""}---\n\n${title ? `# ${title}\n\n` : ""}${extracted.text}\n`
+    const body = `${title ? `# ${title}\n\n` : ""}${extracted.text}\n`
+    const portable = compatibility
+      ? renderCompatibleIngestion({
+          compatibility,
+          originalPath: rel,
+          originalHash: sha(bytes),
+          body,
+          title: title ?? basename(source),
+          asOf,
+          week,
+          module: options.module,
+        })
+      : undefined
+    const content =
+      portable?.markdown ??
+      `---\noriginal_path: ${JSON.stringify(rel)}\noriginal_hash: ${sha(bytes)}\n${asOf ? `available_at: ${JSON.stringify(asOf)}\n` : ""}${options.module ? `module_canvas_id: ${JSON.stringify(options.module)}\n` : ""}${week ? `dates:\n  date: ${JSON.stringify(week)}\n` : ""}---\n\n${body}`
+    if (portable) {
+      const companion = `${sidecar}.ingest.json`
+      const present = await lstat(sidecar).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error
+        return null
+      })
+      if (!present) {
+        try {
+          await writeFile(companion, JSON.stringify(portable.provenance), {
+            flag: "wx",
+            mode: 0o600,
+          })
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+        }
+      }
+      const { data: saved } = await readIngestProvenance(companion)
+      if (JSON.stringify(saved) !== JSON.stringify(portable.provenance))
+        throw new Error("Existing compatible provenance conflicts; artifacts were preserved")
+    }
     try {
       await writeFile(sidecar, content, { flag: "wx" })
       text = sidecar
@@ -329,14 +471,47 @@ export async function ingestFile(
           ? (record.dates as Record<string, unknown>).date
           : undefined
       if (
-        record?.original_path !== rel ||
-        record.original_hash !== sha(bytes) ||
+        (!portable &&
+          (record?.original_path !== rel ||
+            record.original_hash !== sha(bytes) ||
+            record.available_at !== asOf)) ||
         existingDate !== week ||
         record?.module_canvas_id !== options.module
       )
         throw new Error(
           "Existing extraction sidecar has conflicting provenance or period metadata; it was preserved",
         )
+      if (compatibility) {
+        const expected = parseYaml(content.match(/^---\n([\s\S]*?)\n---\n/)?.[1] ?? "") as Record<
+          string,
+          unknown
+        >
+        for (const field of [
+          "canvas_id",
+          "canvas_url",
+          "type",
+          "source",
+          "status",
+          "ai_policy",
+          "redistribution",
+          "content_hash",
+        ])
+          if (record?.[field] !== expected[field])
+            throw new Error(
+              "Existing compatible sidecar has conflicting identity or policy metadata; it was preserved",
+            )
+        if (JSON.stringify(record?.dates) !== JSON.stringify(expected.dates))
+          throw new Error("Existing compatible sidecar has conflicting dates; it was preserved")
+        if (
+          JSON.stringify(Object.keys(record ?? {}).sort()) !==
+          JSON.stringify(Object.keys(expected).sort())
+        )
+          throw new Error("Existing compatible sidecar has unexpected metadata; it was preserved")
+        if (sha(existingText) !== portable?.provenance.hash)
+          notices.push(
+            "Edited compatible sidecar preserved; provenance hash is stale and context requires review",
+          )
+      }
       text = sidecar
       notices.push("Preserved existing extraction sidecar")
     }

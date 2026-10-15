@@ -183,6 +183,33 @@ describe("compiled CLI fresh-student workflow", () => {
     expect(await readFile(join(vault, completed.task.output), "utf8")).toBe(
       await readFile(candidate, "utf8"),
     )
+    const originalRecord = join(vault, "_meta/tasks", taskId, "task.json")
+    const originalRecordBytes = await readFile(originalRecord)
+    const editedPrep = `${await readFile(join(vault, completed.task.output), "utf8")}\nSYNTHETIC_PREP_STUDENT_EDIT\n`
+    await writeFile(join(vault, completed.task.output), editedPrep)
+    const rejectedRetry = cli([
+      "task",
+      "complete",
+      taskId,
+      "--file",
+      candidate,
+      "--config",
+      config,
+      "--json",
+    ])
+    expect(rejectedRetry.status).toBe(1)
+    expect(await readFile(join(vault, completed.task.output), "utf8")).toBe(editedPrep)
+    const next = json<{ id: string }>(["prep", course, "--session", "Session 3"], config)
+    expect(next.id).not.toBe(taskId)
+    const nextCandidate = join(root, "next-prep.md")
+    await writeFile(nextCandidate, (await readFile(candidate, "utf8")).replace(taskId, next.id))
+    const nextCompleted = json<{ task: { output: string } }>(
+      ["task", "complete", next.id, "--file", nextCandidate],
+      config,
+    )
+    expect(nextCompleted.task.output).not.toBe(completed.task.output)
+    expect(await readFile(join(vault, completed.task.output), "utf8")).toBe(editedPrep)
+    expect(await readFile(originalRecord)).toEqual(originalRecordBytes)
   })
 
   it("creates, completes, revises, and idempotently approves a synthetic draft without overwriting an existing Final", async () => {
@@ -255,6 +282,15 @@ describe("compiled CLI fresh-student workflow", () => {
     }
 
     const firstOutput = await finish(created.id, "first-draft.md")
+    const finals = join(vault, course, "Assignments", "Finals")
+    await mkdir(finals, { recursive: true })
+    const existingFinal = join(finals, "01 Assignment Final.md")
+    await writeFile(existingFinal, "preserve pre-existing student Final\n")
+    const firstApproval = json<{ output: string }>(["approve", created.id], config)
+    const firstFinalBytes = await readFile(join(vault, firstApproval.output))
+    const firstDraftBytes = await readFile(join(vault, firstOutput))
+    const firstTaskRecord = join(vault, "_meta/tasks", created.id, "task.json")
+    const firstTaskBytes = await readFile(firstTaskRecord)
     const revised = json<{ id: string; parentTaskId: string; feedback: string }>(
       ["revise", created.id, "--feedback", "Make the capacity tradeoff more explicit."],
       config,
@@ -264,16 +300,16 @@ describe("compiled CLI fresh-student workflow", () => {
     const revisedOutput = await finish(revised.id, "revised-draft.md")
     expect(revisedOutput).not.toBe(firstOutput)
 
-    const finals = join(vault, course, "Assignments", "Finals")
-    await mkdir(finals, { recursive: true })
-    const existingFinal = join(finals, "01 Assignment Final.md")
-    await writeFile(existingFinal, "preserve pre-existing student Final\n")
     const approvalArgs = ["approve", revised.id]
     const approved = json<{ output: string }>(approvalArgs, config)
     const approvedAgain = json<{ output: string }>(approvalArgs, config)
-    expect(approved.output).toBe(`${course}/Assignments/Finals/01 Assignment Final.v2.md`)
+    expect(firstApproval.output).toBe(`${course}/Assignments/Finals/01 Assignment Final.v2.md`)
+    expect(approved.output).toBe(`${course}/Assignments/Finals/01 Assignment Final.v3.md`)
     expect(approvedAgain.output).toBe(approved.output)
     expect(await readFile(existingFinal, "utf8")).toBe("preserve pre-existing student Final\n")
+    expect(await readFile(join(vault, firstApproval.output))).toEqual(firstFinalBytes)
+    expect(await readFile(join(vault, firstOutput))).toEqual(firstDraftBytes)
+    expect(await readFile(firstTaskRecord)).toEqual(firstTaskBytes)
     expect(await readFile(join(vault, approved.output), "utf8")).toBe(
       await readFile(join(vault, revisedOutput), "utf8"),
     )

@@ -1,6 +1,7 @@
 import { parse as parseYaml } from "yaml"
 import { applyCalendarOverrides } from "./calendar.js"
 import type { SourceRecord, WorkspaceContext } from "./types.js"
+import { selectCourse } from "./workspace.js"
 
 export interface UpcomingItem {
   kind: "assignment" | "announcement"
@@ -9,6 +10,7 @@ export interface UpcomingItem {
   path: string
   dueAt: string
   canvasId?: string
+  assignmentDates?: SourceRecord["assignmentDates"]
   overdue: boolean
 }
 
@@ -18,10 +20,12 @@ export interface UndatedItem {
   title: string
   path: string
   canvasId?: string
+  assignmentDates?: SourceRecord["assignmentDates"]
 }
 
 function sourceDueAt(source: SourceRecord): string | undefined {
   if (source.dueAt) return source.dueAt
+  if (source.assignmentDates) return source.assignmentDates.effectiveDueAt ?? undefined
   const frontmatter = source.text.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/)
   if (frontmatter) {
     try {
@@ -48,10 +52,17 @@ export function collectUpcoming(
   const horizon = now.getTime() + (options.days ?? 14) * 86_400_000
   const rows = new Map<string, UpcomingItem>()
   const undated = new Map<string, UndatedItem>()
-  for (const course of context.courses) {
-    if (options.course && course.code.toLocaleLowerCase() !== options.course.toLocaleLowerCase())
-      continue
-    for (const source of course.sources) {
+  const courses = options.course ? [selectCourse(context, options.course)] : context.courses
+  for (const course of courses) {
+    const seen = new Set<string>()
+    const sources = course.syncNamespace
+      ? [...course.sources].sort(
+          (a, b) =>
+            Number(b.path.startsWith(`${course.root}/Canvas Agent/`)) -
+            Number(a.path.startsWith(`${course.root}/Canvas Agent/`)),
+        )
+      : course.sources
+    for (const source of sources) {
       const label = `${source.type} ${source.path}`
       const kind = /announcement/i.test(label)
         ? "announcement"
@@ -60,12 +71,20 @@ export function collectUpcoming(
           : undefined
       if (!kind || (kind === "announcement" && !options.includeAnnouncements)) continue
       const key = `${course.code}\0${kind}\0${source.canvasId ?? source.path}`
+      // An edited old copy remains available as explicit student context, but
+      // must not override a refreshed product source's deadline (even when the
+      // latter is undated or outside this view's horizon).
+      if (course.syncNamespace) {
+        if (seen.has(key)) continue
+        seen.add(key)
+      }
       const base: UndatedItem = {
         kind,
         course: course.code,
         title: source.title,
         path: source.path,
         ...(source.canvasId ? { canvasId: source.canvasId } : {}),
+        ...(source.assignmentDates ? { assignmentDates: source.assignmentDates } : {}),
       }
       const dueAt = kind === "announcement" ? source.postedAt : sourceDueAt(source)
       if (!dueAt || !Number.isFinite(Date.parse(dueAt))) {
@@ -75,12 +94,8 @@ export function collectUpcoming(
       const timestamp = Date.parse(dueAt)
       if (!Number.isFinite(timestamp) || timestamp > horizon) continue
       const row: UpcomingItem = {
-        kind,
-        course: course.code,
-        title: source.title,
-        path: source.path,
+        ...base,
         dueAt,
-        ...(source.canvasId ? { canvasId: source.canvasId } : {}),
         overdue: kind === "assignment" && timestamp < now.getTime(),
       }
       const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())

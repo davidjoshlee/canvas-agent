@@ -117,7 +117,7 @@ export async function setupConfig(
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
     }
   }
-  const vault = expandHome(input.vault ?? "~/school-vault")
+  const vault = expandHome(input.vault ?? "~/canvas-vault")
   await mkdir(dirname(path), { recursive: true })
   // Check/create the vault before persisting setup files. If a later exclusive
   // write fails, preserve the files for diagnosis rather than unlinking a config

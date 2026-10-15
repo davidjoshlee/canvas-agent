@@ -1,7 +1,45 @@
 import { describe, expect, it } from "vitest"
-import { workflowFor } from "../src/workflows.js"
+import { workflowFor, workflowForRequirements } from "../src/workflows.js"
 
 describe("academic workflow contracts", () => {
+  it("makes new drafts finished deliverables with executed quantitative checks and source-based self-review", () => {
+    const sections = workflowFor("assignment", "draft").requiredSections
+    const current = workflowForRequirements("assignment", "draft", sections, [])
+    const prior = workflowForRequirements("assignment", "draft", sections, [], [], 2)
+    expect(current.version).toBe(3)
+    expect(current.requiredSections).toEqual(prior.requiredSections)
+    expect(current.instructions.join(" ")).toContain("actual finished deliverable")
+    expect(current.instructions.join(" ")).toContain("PENDING")
+    expect(current.instructions.join(" ")).toContain("bounded calculate command")
+    expect(current.instructions.join(" ")).toContain("self-review, not independent grading")
+    expect(prior.instructions.join(" ")).not.toContain("actual finished deliverable")
+    for (const mode of ["outline", "discuss"] as const)
+      expect(
+        workflowForRequirements(
+          "assignment",
+          mode,
+          workflowFor("assignment", mode).requiredSections,
+          [],
+        ).instructions.join(" "),
+      ).not.toContain("actual finished deliverable")
+    expect(() =>
+      workflowForRequirements("assignment", "draft", sections, [], [], 99 as never),
+    ).toThrow(/version/)
+  })
+  it("keeps discussion separate from graded drafting and requires explicit permission", () => {
+    const discussion = workflowFor("assignment", "discuss")
+    expect(discussion.requiredSections).toEqual([
+      "Student question",
+      "Discussion",
+      "Open questions",
+      "Sources",
+    ])
+    expect(discussion.instructions.join(" ")).toContain("Do not write or replace a graded draft")
+    expect(discussion.instructions.join(" ")).toContain("explicitly permits")
+    expect(discussion.instructions.join(" ")).toContain(
+      "Do not submit or upload anything to Canvas",
+    )
+  })
   it("defines a complete, finished prep brief with stable required headings", () => {
     const workflow = workflowFor("prep")
     expect(workflow.version).toBe(1)
