@@ -3,19 +3,19 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it } from "vitest"
+import { proposeGuidance, saveGuidanceProposal } from "../../src/guidance/proposals.js"
+import { restrictedGuidancePaths, selectTaskGuidance } from "../../src/guidance/selection.js"
+import type { TaskRecord } from "../../src/shared/types.js"
 import {
   captureSimulation,
   deriveSimulationCapture,
   replaySimulation,
-} from "../../src/evaluation/captures.js"
+} from "../../src/simulation/captures.js"
 import {
   completeSimulationTask,
   createSimulationTask,
   readSimulationTask,
-} from "../../src/evaluation/tasks.js"
-import { proposeGuidance, saveGuidanceProposal } from "../../src/guidance/proposals.js"
-import { restrictedGuidancePaths, selectTaskGuidance } from "../../src/guidance/selection.js"
-import type { TaskRecord } from "../../src/shared/types.js"
+} from "../../src/simulation/tasks.js"
 import { completeTask } from "../../src/tasks/completion.js"
 import {
   createAssignmentTask,

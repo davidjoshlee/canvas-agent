@@ -15,7 +15,6 @@ import {
 } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { pathToFileURL } from "node:url"
 import JSZip from "jszip"
 import { INSTRUCTION_FILE_MAX_BYTES } from "../dist/cli/instruction-policy.js"
 
@@ -103,6 +102,10 @@ try {
       checkout,
     ),
   )[0]
+  assert(
+    packed.files.every(({ path }) => !/^(?:tools\/|dist\/evaluation\/)/.test(path)),
+    "Development evaluation tooling leaked into the package",
+  )
   const bundledRoots = new Set(packed.bundled.map((name) => `node_modules/${name}/`))
   const packagedDocs = new Set(["docs/ARCHITECTURE.md", "docs/PLUGIN.md", "docs/DEVELOPMENT.md"])
   assert(
@@ -167,6 +170,15 @@ try {
     process.platform === "win32" ? "canvas-agent.cmd" : "canvas-agent",
   )
   assert(run(bin, ["--help"], workspace).includes("Usage: canvas-agent"))
+  for (const args of [
+    ["dogfood"],
+    ["simulate", "window"],
+    ["simulate", "compare"],
+    ["gate", "m1"],
+  ]) {
+    commands.push(`${args.join(" ")} unavailable in installed CLI`)
+    run(bin, args, workspace, 1)
+  }
   const canonical = await readFile(
     join(installed, "plugins/canvas-agent/references/cli.md"),
     "utf8",
@@ -584,57 +596,11 @@ try {
   )
   cli(["inspect", prep.id])
   cli(["gate", "review", prep.id])
-  const savedDogfood = JSON.parse(
-    run(
-      process.execPath,
-      [
-        "--input-type=module",
-        "-e",
-        `const {createDogfood}=await import(${JSON.stringify(pathToFileURL(join(installed, "dist/evaluation/dogfood.js")).href)}); console.log(JSON.stringify(await createDogfood(${JSON.stringify(vault)}, {course:"CS101",period:{kind:"week",value:"2026-10-05"},assignment:null})));`,
-      ],
-      workspace,
-    ),
-  )
-  const dogfoodInventory = cli(["dogfood", "list", "--course", "CS101"])
-  assert.equal(dogfoodInventory.inventoryComplete, true)
-  assert(dogfoodInventory.runs.some((run) => run.id === savedDogfood.id && run.recordedFlows === 0))
-  assert(
-    dogfoodInventory.runs.every(
-      (run) => !Object.hasOwn(run, "evidence") && !Object.hasOwn(run, "data"),
-    ),
-  )
   await mkdir(join(vault, "SWEEP101/Modules"), { recursive: true })
   await writeFile(
     join(vault, "SWEEP101/Modules/session.md"),
     "---\ntype: module\ncanvas_id: '900'\ntitle: Session 1 - Synthetic sweep\n---\nPRIVATE_SWEEP_SOURCE substantive marginal-analysis reading.\n",
   )
-  const savedSweep = JSON.parse(
-    run(
-      process.execPath,
-      [
-        "--input-type=module",
-        "-e",
-        `const {createDogfoodSweep}=await import(${JSON.stringify(pathToFileURL(join(installed, "dist/evaluation/sweep.js")).href)}); console.log(JSON.stringify(await createDogfoodSweep(${JSON.stringify(vault)}, "SWEEP101", 1)));`,
-      ],
-      workspace,
-    ),
-  )
-  const sweepManifest = join(vault, "_meta/dogfood-sweeps", savedSweep.id, "manifest.json")
-  const manifestBefore = await readFile(sweepManifest)
-  const sweepInventory = cli(["dogfood", "sweep", "list", "--course", "SWEEP101"])
-  assert.equal(sweepInventory.inventoryComplete, true)
-  assert.deepEqual(sweepInventory.sweeps, [
-    {
-      id: savedSweep.id,
-      createdAt: savedSweep.createdAt,
-      sessionCount: 1,
-      runIds: savedSweep.sessions.map((session) => session.runId),
-    },
-  ])
-  assert.equal(cli(["dogfood", "sweep", "list", "--course", "CS101"]).sweeps.length, 0)
-  assert(!JSON.stringify(sweepInventory).includes("PRIVATE_SWEEP_SOURCE"))
-  assert(!JSON.stringify(sweepInventory).includes("nextSteps"))
-  assert.deepEqual(await readFile(sweepManifest), manifestBefore)
   const draft = cli([
     "assignment",
     "CS101",
@@ -816,99 +782,6 @@ try {
   const workbooks = cli(["simulate", "task", "workbooks", frozenDraft.id])
   assert.equal(workbooks.records.length, 1)
   assert.equal(workbooks.records[0].automatic.candidateHash, completedFrozen.outputHash)
-  const comparison = cli([
-    "simulate",
-    "compare",
-    "--course",
-    "CS101",
-    "--task",
-    evaluation.id,
-    "--task",
-    frozenDraft.id,
-    "--feedback-assignment",
-    "50",
-  ])
-  assert.equal(comparison.feedbackReferences, 1)
-  const gate = cli(["gate", "m1", "--course", "CS101", "--comparison", comparison.id])
-  assert.equal(gate.verdict, "pending-human")
-  assert.equal(gate.historicalVerified, false)
-  assert.equal(gate.workbookCompanions, 1)
-  const window = cli([
-    "simulate",
-    "window",
-    "create",
-    snapshot.id,
-    "--course",
-    "CS101",
-    "--weeks",
-    "2026-10-05..2026-10-05",
-  ])
-  assert.equal(window.counts.pending, 2)
-  const windowJournal = join(vault, "_meta/simulation-windows", window.id, "plan.json")
-  const windowBefore = await readFile(windowJournal)
-  const windowInventory = cli(["simulate", "window", "list", "--course", "CS101"])
-  assert.equal(windowInventory.inventoryComplete, true)
-  assert.deepEqual(
-    windowInventory.windows.map((plan) => plan.id),
-    [window.id],
-  )
-  assert.equal(windowInventory.windows[0].recordedHandoffs, 2)
-  assert.equal(cli(["simulate", "window", "list", "--course", "SWEEP101"]).windows.length, 0)
-  assert(!JSON.stringify(windowInventory).includes("recipeHash"))
-  assert(!JSON.stringify(windowInventory).includes("pending-host"))
-  assert.deepEqual(await readFile(windowJournal), windowBefore)
-  for (const row of window.weeks) for (const task of row.tasks) await complete(task, true)
-  const windowState = cli(["simulate", "window", "show", window.id, "--course", "CS101"])
-  assert.equal(windowState.state, "completed-pending-human")
-  const windowComparison = cli(["simulate", "window", "compare", window.id, "--course", "CS101"])
-  assert.equal(
-    cli(["gate", "m1", "--course", "CS101", "--comparison", windowComparison.id]).verdict,
-    "pending-human",
-  )
-  const interruptedWindow = JSON.parse(
-    run(
-      process.execPath,
-      [
-        "--input-type=module",
-        "-e",
-        `const {createSimulationWindow}=await import(${JSON.stringify(pathToFileURL(join(installed, "dist/evaluation/window.js")).href)}); let checkpoints=0; try { await createSimulationWindow(${JSON.stringify(vault)}, ${JSON.stringify(snapshot.id)}, "CS101", "2026-10-05..2026-10-05", undefined, {afterCheckpoint:async()=>{if(++checkpoints===3)throw new Error("synthetic interruption")}}); throw new Error("Expected interruption"); } catch(error) {if(!error.windowId)throw error; console.log(JSON.stringify({id:error.windowId}));}`,
-      ],
-      workspace,
-    ),
-  )
-  const partialWindowPath = join(vault, "_meta/simulation-windows", interruptedWindow.id)
-  const partialWindowBytes = await readFile(join(partialWindowPath, "plan.json"))
-  const partialRecord = JSON.parse(partialWindowBytes.toString())
-  const prefixTaskId = partialRecord.weeks[0].tasks[0].id
-  const prefixFiles = ["record.json", "TASK.md"].map((file) =>
-    join(vault, "_meta/simulations/tasks", prefixTaskId, file),
-  )
-  const prefixBefore = await Promise.all(prefixFiles.map((path) => readFile(path)))
-  const resumedWindow = cli([
-    "simulate",
-    "window",
-    "resume",
-    interruptedWindow.id,
-    "--course",
-    "CS101",
-  ])
-  assert.equal(resumedWindow.phase, "planned")
-  assert.equal(resumedWindow.counts.pending, 2)
-  assert.equal(resumedWindow.weeks[0].tasks[0].id, prefixTaskId)
-  assert.deepEqual(await Promise.all(prefixFiles.map((path) => readFile(path))), prefixBefore)
-  assert.deepEqual(
-    await readFile(
-      join(
-        partialWindowPath,
-        "history",
-        `${createHash("sha256").update(partialWindowBytes).digest("hex")}.json`,
-      ),
-    ),
-    partialWindowBytes,
-  )
-  const resumedWindowBytes = await readFile(join(partialWindowPath, "plan.json"))
-  cli(["simulate", "window", "resume", interruptedWindow.id, "--course", "CS101"])
-  assert.deepEqual(await readFile(join(partialWindowPath, "plan.json")), resumedWindowBytes)
   // Isolated fixture ownership only: exercise the installed binary with a
   // persistent namespace while retaining all earlier root-level task outputs.
   const oldDraftBytes = await readFile(join(vault, completedDraft.output))
@@ -1195,18 +1068,14 @@ try {
         guidanceStructureInstalledTested: true,
         prepAnswerEvidenceInstalledTested: true,
         missingBriefRecoveryTested: true,
-        savedDogfoodDiscoveryTested: true,
-        savedSweepDiscoveryTested: true,
+        developmentEvaluationExcluded: true,
         savedCaptureDiscoveryTested: true,
-        savedWindowDiscoveryTested: true,
         savedFrozenTaskDiscoveryTested: true,
-        partialWindowResumeTested: true,
         numericPresenceReviewTested: true,
         originalsUnchanged: true,
         hostUsageExportTested: true,
         automaticDraftAndFrozenWorkbooksTested: true,
         derivedFixedCutoffTested: true,
-        frozenWindowOrchestrationTested: true,
         preservedNamespaceHomeworkTested: true,
         relatedDraftContinuityTested: true,
         numericMultipartInstalledTested: true,

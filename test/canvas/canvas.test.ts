@@ -8,9 +8,9 @@ import {
   syncCourses as syncCanvasCourses,
   verifyAuth as verifyCanvasAuth,
 } from "../../src/canvas/sync.js"
-import { captureSimulation, replaySimulation } from "../../src/evaluation/captures.js"
-import { createSimulationTask, readSimulationTask } from "../../src/evaluation/tasks.js"
 import type { ToolkitConfig } from "../../src/shared/types.js"
+import { captureSimulation, replaySimulation } from "../../src/simulation/captures.js"
+import { createSimulationTask, readSimulationTask } from "../../src/simulation/tasks.js"
 import { createAssignmentTask, createPrepTask } from "../../src/tasks/store.js"
 import { inspectWorkspace, selectCourse } from "../../src/vault/workspace.js"
 import {

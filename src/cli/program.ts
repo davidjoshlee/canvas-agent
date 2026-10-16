@@ -4,7 +4,6 @@ import { writeAuthAlert } from "../auth/alerts.js"
 import type { CanvasClientFactory } from "../canvas/client.js"
 import { isCanvasUnauthorized } from "../canvas/sync.js"
 import { loadConfig } from "../config/index.js"
-import { registerDogfoodCommand } from "../evaluation/cli.js"
 import { finishVaultHistory, registerVaultHistory } from "../vault/history-cli.js"
 import { registerObsidianCommand } from "../vault/obsidian.js"
 import { registerReadingCopyCommands } from "../vault/reading-copy-cli.js"
@@ -12,6 +11,7 @@ import { registerAcademicCommands } from "./academic.js"
 import { registerAccessCommands } from "./access.js"
 import { registerCapabilityCommands } from "./capabilities.js"
 import { registerSetupCommands } from "./setup.js"
+import { registerSimulationCommands } from "./simulation.js"
 import { registerStudentCommands } from "./student.js"
 import { registerSyncCommands } from "./sync.js"
 import { registerToolCommands } from "./tools.js"
@@ -54,6 +54,8 @@ function safeError(error: unknown, configPath: string): string {
 
 export interface CliRuntime {
   canvasClient?: CanvasClientFactory
+  /** Checkout tooling can extend registration without becoming a runtime dependency. */
+  registerCommands?: (program: Command) => void
 }
 
 function makeProgram(runtime: CliRuntime): Command {
@@ -72,11 +74,12 @@ function makeProgram(runtime: CliRuntime): Command {
   registerWorkspaceCommands(program)
   registerCapabilityCommands(program)
   registerToolCommands(program)
-  registerDogfoodCommand(program)
+  registerSimulationCommands(program)
   registerStudentCommands(program)
   registerReadingCopyCommands(program)
   registerVaultHistory(program)
   registerObsidianCommand(program)
+  runtime.registerCommands?.(program)
   return program
 }
 

@@ -32,7 +32,7 @@ it("keeps runtime code grouped and scripts limited to maintained verification", 
   ).toEqual(["build.mjs", "package-smoke.mjs", "sync-context.mjs"])
   expect(
     (await files("dist")).filter((path) =>
-      /(?:migration|index-reconciliation|school-index|\/legacy\.js)/.test(path),
+      /(?:migration|index-reconciliation|school-index|\/legacy\.js|\/evaluation\/)/.test(path),
     ),
   ).toEqual([])
   const manifest = JSON.parse(await readFile("package.json", "utf8"))
@@ -42,6 +42,10 @@ it("keeps runtime code grouped and scripts limited to maintained verification", 
 
 it.each([
   ["legacy"],
+  ["dogfood"],
+  ["simulate", "window"],
+  ["simulate", "compare"],
+  ["gate", "m1"],
   ["vault", "migrate"],
   ["vault", "preserve-school"],
   ["vault", "reconcile-index"],
@@ -126,7 +130,7 @@ it("keeps deterministic modules independent of orchestration and persistence", a
     if (["src/tasks/workbook.ts", "src/tasks/calculation-core.ts"].includes(file))
       expect(
         dependencies.filter((path) =>
-          /src\/(?:cli|evaluation|vault)\/|src\/tasks\/(?:store|records|creation|completion|tools)\.ts/.test(
+          /src\/(?:cli|simulation|vault)\/|src\/tasks\/(?:store|records|creation|completion|tools)\.ts/.test(
             path,
           ),
         ),
@@ -135,9 +139,23 @@ it("keeps deterministic modules independent of orchestration and persistence", a
     if (file === "src/canvas/client.ts")
       expect(
         dependencies.filter((path) =>
-          /src\/(?:tasks|evaluation|student|vault)\/|src\/canvas\/sync/.test(path),
+          /src\/(?:tasks|simulation|student|vault)\/|src\/canvas\/sync/.test(path),
         ),
         file,
       ).toEqual([])
+  }
+})
+
+it("keeps development tooling out of all runtime imports", async () => {
+  for (const file of (await files("src")).filter((file) => file.endsWith(".ts"))) {
+    const source = ts.createSourceFile(file, await readFile(file, "utf8"), ts.ScriptTarget.Latest)
+    function visit(node: ts.Node) {
+      if (ts.isStringLiteral(node) && node.text.startsWith(".")) {
+        const target = relative(process.cwd(), resolve(dirname(file), node.text))
+        expect(target.startsWith("tools/"), `${file}: ${node.text}`).toBe(false)
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
   }
 })

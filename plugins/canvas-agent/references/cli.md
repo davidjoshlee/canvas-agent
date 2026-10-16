@@ -43,7 +43,7 @@ Revision preserves edits and produces a new full artifact. Approve only at expli
 
 ### Conditional detail
 
-Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, dogfood/sweep/window resume, vault history, playbooks/feedback, guidance, correctness, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
+Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, vault history, playbooks/feedback, guidance, correctness, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
 <!-- canvas-agent-cli:end -->
 
 ### Installed instruction lookup
@@ -221,13 +221,13 @@ Keep the working vault local; there is no reverse sync or hosted mobile CLI.
 The cloud client controls upload timing; no account, sharing or subscription
 is configured by the CLI. Exported files are not another working vault.
 
-## Experimental evaluation commands
+## Frozen simulation and usage
 
 Evaluation is isolated from ordinary student tasks. simulate --help exposes
-capture, derived views, frozen tasks, calculations, workbooks and window planning.
+capture, derived views, frozen tasks, calculations and workbooks.
 A capture saves current eligible source versions with explicit cutoff evidence;
 it does not reconstruct past access or silently borrow newer live content.
-Use simulate list, simulate task list and simulate window list to discover
+Use simulate list and simulate task list to discover
 saved IDs before creating replacements. Consult each subcommand's --help for scope.
 
 Frozen task output is read with simulate task output UUID. Frozen authoring uses
@@ -235,8 +235,8 @@ only the saved capture and embedded task, never live course files. Numeric logs
 use simulate task calculate; workbooks/completion are separate frozen commands.
 Human verdicts are explicit; never fabricate scores, approvals or historical facts.
 
-dogfood and dogfood sweep provide saved evaluation checkpoints and discovery.
-Resume the same saved ID after inspection; metadata does not prove a live run.
-gate m1 packages human-reviewed evidence, not an automatic academic verdict.
+Dogfood/sweeps, simulation windows/comparisons and gate m1 belong to the
+checkout-only development harness, not the installed CLI. Existing journals
+remain unchanged; use the checkout development instructions to inspect them.
 cost --file ABS_HOST_EXPORT reports supplied host usage; missing prices stay
 unknown and the CLI does not verify provider billing or impose provider budgets.

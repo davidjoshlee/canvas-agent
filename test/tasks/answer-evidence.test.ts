@@ -3,14 +3,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { captureSimulation } from "../../src/evaluation/captures.js"
-import { createSimulationTask, readSimulationTask } from "../../src/evaluation/tasks.js"
 import type {
   CourseContext,
   SourceRecord,
   TaskRecord,
   WorkspaceContext,
 } from "../../src/shared/types.js"
+import { captureSimulation } from "../../src/simulation/captures.js"
+import { createSimulationTask, readSimulationTask } from "../../src/simulation/tasks.js"
 import { prepareAnswerEvidence, validateAnswerEvidence } from "../../src/tasks/answer-evidence.js"
 import { checkCandidate, completeTask } from "../../src/tasks/completion.js"
 import { TaskRecordSchema } from "../../src/tasks/store.js"

@@ -13,14 +13,14 @@ import {
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
-import { captureSimulation } from "../../src/evaluation/captures.js"
+import { captureSimulation } from "../../src/simulation/captures.js"
 import {
   completeSimulationTask,
   createSimulationTask,
   inspectSimulationTask,
   listSimulationTasks,
   readSimulationTask,
-} from "../../src/evaluation/tasks.js"
+} from "../../src/simulation/tasks.js"
 import { createPrepTask } from "../../src/tasks/store.js"
 
 const roots: string[] = []

@@ -3,13 +3,13 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
-import { calculateSimulationBatch } from "../../src/evaluation/calculations.js"
-import { captureSimulation } from "../../src/evaluation/captures.js"
+import { calculateSimulationBatch } from "../../src/simulation/calculations.js"
+import { captureSimulation } from "../../src/simulation/captures.js"
 import {
   completeSimulationTask,
   createSimulationTask,
   readSimulationTask,
-} from "../../src/evaluation/tasks.js"
+} from "../../src/simulation/tasks.js"
 import {
   listCorrectnessReviews,
   prepareCorrectnessReview,

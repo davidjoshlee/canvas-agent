@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tools/tsconfig.json",
     "lint": "biome check .",
     "context:sync": "tsx scripts/sync-context.mjs --write",
     "context:check": "tsx scripts/sync-context.mjs --check",
@@ -30,7 +30,8 @@
     "pretest": "npm run context:check && npm run build",
     "test": "vitest run",
     "test:ci": "npm test -- --maxWorkers=2 --testTimeout=20000 --hookTimeout=20000",
-    "dev": "tsx src/cli.ts"
+    "dev": "tsx src/cli.ts",
+    "eval": "tsx tools/evaluation/run.ts"
   },
   "engines": {
     "node": ">=22"

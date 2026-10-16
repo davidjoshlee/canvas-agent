@@ -3,13 +3,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
-import { captureSimulation } from "../../src/evaluation/captures.js"
+import type { TaskRecord } from "../../src/shared/types.js"
+import { captureSimulation } from "../../src/simulation/captures.js"
 import {
   completeSimulationTask,
   createSimulationTask,
   readSimulationTask,
-} from "../../src/evaluation/tasks.js"
-import type { TaskRecord } from "../../src/shared/types.js"
+} from "../../src/simulation/tasks.js"
 import { completeTask } from "../../src/tasks/completion.js"
 import { detectDeliverable } from "../../src/tasks/deliverable.js"
 import { captureTaskDeliverable } from "../../src/tasks/deliverable-evidence.js"

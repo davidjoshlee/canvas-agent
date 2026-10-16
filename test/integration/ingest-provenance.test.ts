@@ -4,9 +4,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it } from "vitest"
 import { ingestFile } from "../../src/documents/content.js"
-import { captureSimulation, replaySimulation } from "../../src/evaluation/captures.js"
-import { createSimulationTask, readSimulationTask } from "../../src/evaluation/tasks.js"
 import type { TaskRecord } from "../../src/shared/types.js"
+import { captureSimulation, replaySimulation } from "../../src/simulation/captures.js"
+import { createSimulationTask, readSimulationTask } from "../../src/simulation/tasks.js"
 import { completeTask } from "../../src/tasks/completion.js"
 import {
   createAssignmentTask,

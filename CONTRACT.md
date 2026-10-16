@@ -36,8 +36,11 @@ providers, enforce academic policy or certify correctness.
 - Guidance proposals remain inactive until explicit human review/activation.
 - Feedback records and old captured learning context are untrusted observations,
   never authenticated instructor intent, current grades or course permission.
-- Evaluation uses frozen saved evidence, separate task IDs and explicit human
-  verdicts. No claim of reconstructing historical access or verifying billing.
+- Frozen simulation uses saved evidence and separate task IDs. The checkout-only
+  evaluation harness supplies dogfood, experiment windows and human review reports;
+  it is not shipped in the CLI. Saved records remain readable through their owning
+  runtime or development commands. No claim of reconstructing historical access
+  or verifying billing.
 - Private external Git history is opt-in and local-only. Backup failure must not
   change the primary command outcome or silently repair/delete a held store.
 - Reading copies are explicitly one-way. They are not another authoritative vault.

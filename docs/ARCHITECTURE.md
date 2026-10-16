@@ -29,7 +29,9 @@ Canvas GET → synced vault → local course inventory
 | src/guidance | Course/assignment guidance and inactive proposals |
 | src/feedback | Private own-feedback history and read-only older snapshot formats |
 | src/student | Upcoming work, timeline, calendar and reminders |
-| src/evaluation | Experimental frozen simulation, comparisons, human gates and dogfood |
+| src/simulation | Frozen source captures, saved tasks, calculations and workbook evidence |
+| src/usage | Explicit host-export usage and cost reporting |
+| tools/evaluation | Checkout-only dogfood, sweeps, experiment windows and human comparison reports |
 | src/shared | Filesystem safety, bounded JSON and shared persisted types |
 
 src/cli.ts is the stable executable entry and delegates to cli/program.ts.
@@ -41,6 +43,8 @@ cli/task-output.ts selects ordinary or frozen output retrieval for the CLI.
 Tests mirror these directories; test/integration covers cross-feature flows.
 test/helpers and test/fixtures are synthetic verification inputs, not runtime code.
 scripts contains only maintained build/context/package checks.
+tools/evaluation runs through npm run eval -- ARGS and is excluded from the package.
+Runtime modules never import development tooling.
 
 ## Important seams
 
@@ -78,8 +82,10 @@ scripts contains only maintained build/context/package checks.
 - tasks/artifact-layout owns output names, versions and Drafts/Finals conventions.
   Prep period resolution returns a location kind; callers do not infer it from
   a substring of the destination. Saved paths retain their historical parser.
-- Empty evaluation journals use a typed recovery condition; display wording does
-  not decide whether a run is initialized.
+- Frozen simulations retain saved record formats and private vault locations.
+  Development evaluation extends CLI registration through an injected registrar;
+  the installed CLI has no dependency on the harness. Empty dogfood journals use
+  a typed recovery condition rather than display wording.
 - Mutating commands declare their effects at registration through vault/command-effects,
   including conditional writes. Local history consumes those declarations on success
   or failure; snapshot warnings do not overwrite primary results or alter JSON stdout.

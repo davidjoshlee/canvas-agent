@@ -14,8 +14,6 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { syncCourses as syncCanvasCourses } from "../../src/canvas/sync.js"
-import { captureSimulation } from "../../src/evaluation/captures.js"
-import { createSimulationTask, readSimulationTask } from "../../src/evaluation/tasks.js"
 import {
   feedbackDirectory,
   feedbackHash,
@@ -26,6 +24,8 @@ import {
   readCoursePlaybook,
   readOwnFeedback,
 } from "../../src/feedback/history.js"
+import { captureSimulation } from "../../src/simulation/captures.js"
+import { createSimulationTask, readSimulationTask } from "../../src/simulation/tasks.js"
 import { completeTask, readVerifiedCompletedOutput } from "../../src/tasks/completion.js"
 import { createAssignmentTask, createPrepTask, readTask } from "../../src/tasks/store.js"
 import { inspectTask, reviewGate } from "../../src/tasks/tools.js"

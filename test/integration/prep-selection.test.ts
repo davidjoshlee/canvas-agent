@@ -4,9 +4,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { captureSimulation, replaySimulation } from "../../src/evaluation/captures.js"
-import { createSimulationTask, readSimulationTask } from "../../src/evaluation/tasks.js"
 import type { TaskRecord } from "../../src/shared/types.js"
+import { captureSimulation, replaySimulation } from "../../src/simulation/captures.js"
+import { createSimulationTask, readSimulationTask } from "../../src/simulation/tasks.js"
 import { completeTask } from "../../src/tasks/completion.js"
 import {
   createAssignmentTask,
@@ -67,7 +67,15 @@ describe("versioned School-style prep selection", () => {
     const cli = (args: string[]) => {
       const result = spawnSync(
         process.execPath,
-        [resolve("dist/cli.js"), ...args, "--config", config, "--json"],
+        [
+          "--import",
+          import.meta.resolve("tsx"),
+          resolve("tools/evaluation/run.ts"),
+          ...args,
+          "--config",
+          config,
+          "--json",
+        ],
         { encoding: "utf8" },
       )
       expect(result.status, result.stderr).toBe(0)

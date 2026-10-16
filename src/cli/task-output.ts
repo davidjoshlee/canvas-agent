@@ -1,4 +1,4 @@
-import { readSavedSimulationOutput } from "../evaluation/tasks.js"
+import { readSavedSimulationOutput } from "../simulation/tasks.js"
 import { checkArtifactPrivacy, readSavedCompletedOutput } from "../tasks/completion.js"
 import { type TaskScope, taskLocations } from "../tasks/locations.js"
 

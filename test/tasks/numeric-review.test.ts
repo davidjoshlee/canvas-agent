@@ -3,9 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, symlink, truncate, writeFile } from "node
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
-import { calculateSimulationBatch } from "../../src/evaluation/calculations.js"
-import { captureSimulation } from "../../src/evaluation/captures.js"
-import { createSimulationTask } from "../../src/evaluation/tasks.js"
+import { calculateSimulationBatch } from "../../src/simulation/calculations.js"
+import { captureSimulation } from "../../src/simulation/captures.js"
+import { createSimulationTask } from "../../src/simulation/tasks.js"
 import {
   checkFrozenTaskNumbers,
   checkTaskNumbers,
