@@ -6,8 +6,12 @@ import { z } from "zod"
 import { verifyLearningHistory } from "../feedback/history.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { CourseContext, SourceRecord, WorkspaceContext } from "../shared/types.js"
+import {
+  readGuidanceSnapshot,
+  readSelectedGuidance,
+  verifySourceSnapshot,
+} from "../tasks/recipes.js"
 import { declaredPrepSections } from "../tasks/requirements.js"
-import { readGuidanceSnapshot, readSelectedGuidance, verifySourceSnapshot } from "../tasks/store.js"
 import { inspectWorkspace } from "../vault/workspace.js"
 import {
   captureProposalFeedback,

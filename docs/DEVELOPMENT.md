@@ -9,6 +9,12 @@ Start at src/cli/program.ts for command routing, then follow the feature directo
 listed in ARCHITECTURE.md. Prefer changes inside one module rather than new
 pass-through wrappers. Shared persisted types are in src/shared/types.ts.
 Tests mirror source domains; integration tests exercise compiled CLI processes.
+Architecture checks reject static runtime import cycles and forbidden dependencies
+from deterministic modules. Type-only imports do not count as runtime cycles.
+Declare vault mutations beside command registration, including option-dependent
+writes, so local history captures partial writes after failed commands too.
+Canvas tests inject a client instance (or the CLI client factory); never mutate
+process-global network/DNS hooks.
 
 ## Verify
 

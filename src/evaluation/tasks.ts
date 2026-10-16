@@ -15,16 +15,12 @@ import {
   verifyWorkbookFile,
   workbookFromDraft,
 } from "../tasks/draft-workbook.js"
+import { hasPrepMaterial, selectPrepInputs, validateDiscussionMessage } from "../tasks/recipes.js"
+import { TaskRecordSchema } from "../tasks/records.js"
 import { resolveRequirements } from "../tasks/requirements.js"
-import {
-  hasPrepMaterial,
-  selectPrepInputs,
-  TaskRecordSchema,
-  validateDiscussionMessage,
-} from "../tasks/store.js"
 import { groupAssignmentInstruction, workflowForRequirements } from "../tasks/workflows.js"
 import { replaySimulation } from "./captures.js"
-import { readSimulationWorkbooks } from "./workbooks.js"
+import { readSimulationWorkbooksForRecord } from "./workbook-inventory.js"
 
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex")
 const optionsSchema = z
@@ -603,14 +599,14 @@ export async function completeSimulationTask(vault: string, id: string, file: st
         throw new Error("A different simulation output already exists; create a new task")
       if (JSON.stringify(current.completion) !== JSON.stringify(marker))
         throw new Error("Simulation completion metadata differs; inspect before retrying")
-      if (record.workbookVersion) await readSimulationWorkbooks(vault, id)
+      if (record.workbookVersion) await readSimulationWorkbooksForRecord(vault, id, record, current)
       return current.completion
     }
     const workbookPath = join(directory(vault, id), "output.xlsx")
     if (record.workbookVersion && !workbookBytes) await requireMissingWorkbook(workbookPath)
     if (workbookBytes) await assertNoSymlinks(workbookPath, true)
     if (record.workbookVersion) {
-      const inventory = await readSimulationWorkbooks(vault, id)
+      const inventory = await readSimulationWorkbooksForRecord(vault, id, record, current)
       if (inventory.recipeHash !== sha(JSON.stringify(record)))
         throw new Error("Frozen workbook recipe changed during completion")
       if (

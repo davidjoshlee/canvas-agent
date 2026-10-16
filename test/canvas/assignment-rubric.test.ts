@@ -3,15 +3,26 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { assignmentRubricHtml, renderAssignmentRubric } from "../../src/canvas/assignment-rubric.js"
-import { setCanvasFetchForTests, syncCourses } from "../../src/canvas/sync.js"
+import { syncCourses as syncCanvasCourses } from "../../src/canvas/sync.js"
 import { captureSimulation } from "../../src/evaluation/captures.js"
 import { createSimulationTask, readSimulationTask } from "../../src/evaluation/tasks.js"
 import { createAssignmentTask } from "../../src/tasks/store.js"
 import { inspectWorkspace, selectCourse } from "../../src/vault/workspace.js"
+import {
+  type CanvasFetch,
+  type CanvasSleep,
+  createCanvasTestTransport,
+} from "../helpers/canvas-client.js"
 
 const roots: string[] = []
+const canvasTransport = createCanvasTestTransport()
+function useCanvasFetch(fetch?: CanvasFetch, sleep?: CanvasSleep): void {
+  canvasTransport.use({ ...(fetch ? { fetch } : {}), ...(sleep ? { sleep } : {}) })
+}
+const syncCourses = (...args: Parameters<typeof syncCanvasCourses>) =>
+  syncCanvasCourses(args[0], args[1], canvasTransport.client(args[0]))
 afterEach(async () => {
-  setCanvasFetchForTests()
+  canvasTransport.reset()
   delete process.env.CANVAS_RUBRIC_FIXTURE_TOKEN
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -79,7 +90,7 @@ describe("complete rubric definition context", () => {
     process.env.CANVAS_RUBRIC_FIXTURE_TOKEN = "synthetic-token"
     const json = (value: unknown) =>
       new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } })
-    setCanvasFetchForTests(async (input, init) => {
+    useCanvasFetch(async (input, init) => {
       expect(init?.method).toBe("GET")
       const path = new URL(String(input)).pathname
       if (path === "/api/v1/users/self") return json({ id: 99, name: "Synthetic student" })

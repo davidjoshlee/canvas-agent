@@ -25,6 +25,7 @@ import {
 } from "../evaluation/window.js"
 import { createSimulationWorkbook, readSimulationWorkbooks } from "../evaluation/workbooks.js"
 import type { ToolkitConfig } from "../shared/types.js"
+import { CALCULATION_OPERATIONS } from "../tasks/calculation-core.js"
 import { readCalculationBatchFile } from "../tasks/calculation-input.js"
 import {
   listCorrectnessReviews,
@@ -32,18 +33,12 @@ import {
   saveCorrectnessReview,
   showCorrectnessReview,
 } from "../tasks/correctness-review.js"
+import { compareTasks, inspectTask } from "../tasks/inspection.js"
 import { taskInspectionCommand, taskLocations } from "../tasks/locations.js"
 import { checkFrozenTaskNumbers, checkTaskNumbers } from "../tasks/numeric-review.js"
-import { readTaskOutput } from "../tasks/output.js"
-import {
-  CALCULATION_OPERATIONS,
-  calculateBatchTask,
-  calculateTask,
-  compareTasks,
-  inspectTask,
-  reviewGate,
-  workbookTask,
-} from "../tasks/tools.js"
+import { calculateBatchTask, calculateTask, reviewGate, workbookTask } from "../tasks/tools.js"
+import { vaultMutation } from "../vault/command-effects.js"
+import { readTaskOutput } from "./task-output.js"
 
 const defaultConfig = "./canvas-agent.config.json"
 
@@ -63,6 +58,7 @@ export function registerToolCommands(program: Command): void {
     .description("separate host-authored correctness review; never automatic grading or approval")
   correctness
     .command("prepare <taskId>")
+    .hook("preAction", vaultMutation())
     .option("--frozen", "review a completed frozen evaluation using captured evidence only")
     .option("--json", "emit JSON")
     .action(async (taskId, options, command) => {
@@ -102,6 +98,7 @@ export function registerToolCommands(program: Command): void {
     })
   correctness
     .command("save <id>")
+    .hook("preAction", vaultMutation())
     .requiredOption("--file <file>", "separate host-authored Markdown review note")
     .option("--json", "emit JSON")
     .action(async (id, options, command) => {
@@ -150,6 +147,7 @@ export function registerToolCommands(program: Command): void {
     })
   program
     .command("calculate")
+    .hook("preAction", vaultMutation())
     .description("perform a bounded numeric calculation and log its inputs")
     .requiredOption("--task <id>", "approved task UUID")
     .option("--operation <operation>", `supported operation: ${CALCULATION_OPERATIONS.join(", ")}`)
@@ -205,6 +203,7 @@ export function registerToolCommands(program: Command): void {
     })
   simulate
     .command("capture <course>")
+    .hook("preAction", vaultMutation())
     .description("capture the current source version classified by an explicit as-of cutoff")
     .requiredOption("--as-of <iso>", "ISO date or timestamp cutoff")
     .option(
@@ -229,6 +228,7 @@ export function registerToolCommands(program: Command): void {
     })
   simulate
     .command("derive <id>")
+    .hook("preAction", vaultMutation())
     .description(
       "derive an earlier cutoff view from one original capture, without live source reads",
     )
@@ -278,6 +278,7 @@ export function registerToolCommands(program: Command): void {
     })
   window
     .command("create <capture>")
+    .hook("preAction", vaultMutation())
     .requiredOption("--course <code>", "explicit course code matching the original capture")
     .requiredOption(
       "--weeks <start>..<end>",
@@ -320,6 +321,7 @@ export function registerToolCommands(program: Command): void {
     })
   window
     .command("resume <id>")
+    .hook("preAction", vaultMutation())
     .description("explicitly continue a versioned partial plan without replacing saved handoffs")
     .requiredOption("--course <code>", "explicit captured course code")
     .option("--json", "emit validated window metadata and handoff states")
@@ -333,6 +335,7 @@ export function registerToolCommands(program: Command): void {
     })
   window
     .command("compare <id>")
+    .hook("preAction", vaultMutation())
     .requiredOption("--course <code>", "explicit captured course code")
     .option(
       "--week <date>",
@@ -417,6 +420,7 @@ export function registerToolCommands(program: Command): void {
     })
   simulationTask
     .command("workbook <id>")
+    .hook("preAction", vaultMutation())
     .description("save a private values-only workbook bound to selected fixed evidence")
     .requiredOption("--file <path>", "absolute bounded sheets/rows JSON file")
     .option("--source <path>", "optional exact selected frozen source as context")
@@ -444,6 +448,7 @@ export function registerToolCommands(program: Command): void {
     })
   simulationTask
     .command("calculate <id>")
+    .hook("preAction", vaultMutation())
     .description("execute bounded arithmetic bound to this evaluation's selected frozen evidence")
     .option("--operation <operation>", `supported operation: ${CALCULATION_OPERATIONS.join(", ")}`)
     .option("--values <values>", "comma-separated finite numeric inputs")
@@ -506,6 +511,7 @@ export function registerToolCommands(program: Command): void {
     })
   simulate
     .command("compare")
+    .hook("preAction", vaultMutation())
     .description(
       "package completed evaluations and explicit review-only references with blank human scorecards",
     )
@@ -545,6 +551,7 @@ export function registerToolCommands(program: Command): void {
     })
   simulationTask
     .command("create <simulationId>")
+    .hook("preAction", vaultMutation())
     .requiredOption("--kind <kind>", "prep or assignment")
     .option("--week <date>", "explicit Monday for prep")
     .option("--session <selector>", "explicit frozen session for prep")
@@ -619,6 +626,7 @@ export function registerToolCommands(program: Command): void {
     })
   simulationTask
     .command("complete <id>")
+    .hook("preAction", vaultMutation())
     .requiredOption("--file <path>", "absolute Markdown candidate path")
     .option("--json", "emit completion metadata")
     .action(async (id: string, options, command: Command) => {
@@ -663,6 +671,7 @@ export function registerToolCommands(program: Command): void {
   const gate = program.command("gate").description("run structural, provenance-only evaluation")
   gate
     .command("m1")
+    .hook("preAction", vaultMutation())
     .description(
       "package an existing School simulation for anchored human review; stop pending verdict",
     )
@@ -688,6 +697,7 @@ export function registerToolCommands(program: Command): void {
     })
   gate
     .command("review <taskId>")
+    .hook("preAction", vaultMutation())
     .description("save a versioned human review bundle for a completed task")
     .option("--json", "emit JSON")
     .action(async (taskId: string, options, command: Command) => {
@@ -697,6 +707,7 @@ export function registerToolCommands(program: Command): void {
 
   program
     .command("workbook <taskId>")
+    .hook("preAction", vaultMutation())
     .description("create a values-only XLSX workbook from bounded JSON input")
     .requiredOption("--file <path>", "JSON file containing sheets and rows")
     .option("--json", "emit JSON")

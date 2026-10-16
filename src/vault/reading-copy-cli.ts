@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path"
 import type { Command } from "commander"
 import { loadConfig } from "../config/index.js"
+import { vaultMutation } from "./command-effects.js"
 import {
   createReadingCopy,
   disableReadingMirror,
@@ -14,6 +15,10 @@ export function registerReadingCopyCommands(program: Command): void {
   if (!vault) throw new Error("Vault commands must be registered before reading-copy commands")
   vault
     .command("reading-copy")
+    .hook(
+      "preAction",
+      vaultMutation((options) => Boolean(options.apply)),
+    )
     .description("preview or write a one-way phone reading copy; Current opts into CLI refreshes")
     .requiredOption(
       "--destination <path>",
@@ -55,6 +60,7 @@ export function registerReadingCopyCommands(program: Command): void {
     })
   vault
     .command("reading-copy-disable")
+    .hook("preAction", vaultMutation())
     .description("disable automatic CLI refreshes; preserve existing copies and ownership")
     .option("--json", "emit JSON")
     .action(async (options) => {

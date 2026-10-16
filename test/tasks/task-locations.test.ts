@@ -4,12 +4,12 @@ import { mkdir, mkdtemp, readFile, rm, symlink, truncate, writeFile } from "node
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
+import { readTaskOutput } from "../../src/cli/task-output.js"
 import { captureSimulation } from "../../src/evaluation/captures.js"
 import { completeSimulationTask, createSimulationTask } from "../../src/evaluation/tasks.js"
 import { completeTask } from "../../src/tasks/completion.js"
 import { approveTask, reviseTask } from "../../src/tasks/lifecycle.js"
 import { taskInspectionCommand, taskLocations } from "../../src/tasks/locations.js"
-import { readTaskOutput } from "../../src/tasks/output.js"
 import { createPrepTask } from "../../src/tasks/store.js"
 
 const roots: string[] = []

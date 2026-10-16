@@ -3,12 +3,23 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { setCanvasFetchForTests, syncCourses } from "../../src/canvas/sync.js"
+import { syncCourses as syncCanvasCourses } from "../../src/canvas/sync.js"
 import type { ToolkitConfig } from "../../src/shared/types.js"
+import {
+  type CanvasFetch,
+  type CanvasSleep,
+  createCanvasTestTransport,
+} from "../helpers/canvas-client.js"
 
 const roots: string[] = []
+const canvasTransport = createCanvasTestTransport()
+function useCanvasFetch(fetch?: CanvasFetch, sleep?: CanvasSleep): void {
+  canvasTransport.use({ ...(fetch ? { fetch } : {}), ...(sleep ? { sleep } : {}) })
+}
+const syncCourses = (...args: Parameters<typeof syncCanvasCourses>) =>
+  syncCanvasCourses(args[0], args[1], canvasTransport.client(args[0]))
 afterEach(async () => {
-  setCanvasFetchForTests()
+  canvasTransport.reset()
   delete process.env.CANVAS_ORIGIN_TEST_TOKEN
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -25,7 +36,7 @@ async function fixture() {
     courses: { allowlist: ["1"] },
   }
   process.env.CANVAS_ORIGIN_TEST_TOKEN = "synthetic-token"
-  setCanvasFetchForTests(async (input) => {
+  useCanvasFetch(async (input) => {
     const path = new URL(String(input)).pathname
     if (path === "/api/v1/users/self") return json({ id: 99, name: "Synthetic student" })
     if (path === "/api/v1/courses")
@@ -65,7 +76,7 @@ describe("Canvas server-bound sync ownership", () => {
     const barrier = new Promise<void>((resolve) => {
       release = resolve
     })
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const url = new URL(String(input)),
         path = url.pathname
       if (path === "/api/v1/users/self") return json({ id: 99, name: "Synthetic student" })
@@ -97,7 +108,7 @@ describe("Canvas server-bound sync ownership", () => {
       feedback = await readFile(feedbackPath)
     expect(JSON.parse(state.toString()).origin).toBe("https://canvas.example.test")
     let calls = 0
-    setCanvasFetchForTests(async () => {
+    useCanvasFetch(async () => {
       calls++
       throw new Error("No request authorized after scope mismatch")
     })
@@ -116,7 +127,7 @@ describe("Canvas server-bound sync ownership", () => {
     const state = JSON.parse(await readFile(statePath, "utf8")),
       feedback = await readFile(feedbackPath)
     let calls = 0
-    setCanvasFetchForTests(async () => {
+    useCanvasFetch(async () => {
       calls++
       throw new Error("No request expected")
     })

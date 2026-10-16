@@ -1,72 +1,37 @@
-import { createHash, randomUUID } from "node:crypto"
-import { constants } from "node:fs"
-import { link, lstat, mkdir, open, readdir, readFile, rename, unlink } from "node:fs/promises"
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { createHash } from "node:crypto"
+import { mkdir, open, readdir, readFile, unlink } from "node:fs/promises"
+import { dirname, join, resolve } from "node:path"
 import { verifyLearningHistory, verifyTaskLearningHistory } from "../feedback/history.js"
 import { restrictedGuidancePaths } from "../guidance/selection.js"
-import { assertNoSymlinks } from "../shared/fs-safety.js"
-import type { CourseContext, TaskRecord } from "../shared/types.js"
+import { diagnosticFromLegacyNotice } from "../shared/diagnostics.js"
+import {
+  assertNoSymlinks,
+  vaultPath as noLinks,
+  publishExclusiveFile,
+  readBoundedFile,
+  replaceFileAtomically,
+  vaultRelativePath as safeRel,
+} from "../shared/fs-safety.js"
+import type { TaskRecord } from "../shared/types.js"
 import { productDestination } from "../vault/destinations.js"
 import { inspectWorkspace } from "../vault/workspace.js"
 import { prepareAnswerEvidence } from "./answer-evidence.js"
 import { draftWorkbookBytes, verifyWorkbookFile } from "./draft-workbook.js"
 import {
+  deriveCurrentTaskInputs,
   readGuidanceSnapshot,
   readSelectedGuidance,
-  readTask,
-  resolvePrepDestination,
-  resolveSessionRoot,
-  selectAssignmentInputs,
-  selectLegacyPrepInputs,
-  selectPrepInputs,
-  TaskRecordSchema,
+  resolvePrepPeriod,
   verifySourceSnapshot,
-} from "./store.js"
+} from "./recipes.js"
+import { readTask, TaskRecordSchema } from "./records.js"
 import { assignmentOutputLabel, workflowFor } from "./workflows.js"
 
 const digest = (value: Buffer | string) => createHash("sha256").update(value).digest("hex")
-const within = (parent: string, child: string) => {
-  const rel = relative(parent, child)
-  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`))
-}
-
-function safeRel(value: string): string {
-  if (
-    !value ||
-    value.startsWith("/") ||
-    value.includes("\\") ||
-    value.split("/").some((p) => !p || p === "." || p === "..")
-  )
-    throw new Error(`Unsafe vault-relative path: ${value}`)
-  return value
-}
-
-async function noLinks(root: string, rel: string, allowMissing = false): Promise<string> {
-  const clean = safeRel(rel)
-  const base = resolve(root)
-  const target = resolve(base, ...clean.split("/"))
-  if (!within(base, target)) throw new Error("Path escapes its root")
-  let current = base
-  const rootStat = await lstat(base)
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory())
-    throw new Error(`Symlink or invalid directory: ${base}`)
-  for (const part of clean.split("/")) {
-    current = join(current, part)
-    try {
-      const stat = await lstat(current)
-      if (stat.isSymbolicLink()) throw new Error(`Symlink paths are not allowed: ${clean}`)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT" && allowMissing) break
-      throw error
-    }
-  }
-  return target
-}
-
 async function externalFile(path: string): Promise<Buffer> {
   const abs = resolve(path)
   await assertNoSymlinks(abs)
-  const data = await readFile(abs)
+  const data = await readBoundedFile(abs, 50 * 1024 * 1024)
   if (data.includes(0) || !Buffer.from(data.toString("utf8"), "utf8").equals(data))
     throw new Error("Candidate must be valid UTF-8 text")
   return data
@@ -243,10 +208,6 @@ function validateQuestionAnswers(
   }
 }
 
-function expectedDestination(course: CourseContext, week: string): string {
-  return resolvePrepDestination(course, week)
-}
-
 async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
   await assertNoSymlinks(resolve(vault))
   const context = await inspectWorkspace(resolve(vault))
@@ -258,17 +219,8 @@ async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
   if (task.kind === "assignment") {
     const assignment = task.assignment
     if (!assignment) throw new Error("Assignment task metadata is missing")
-    const current = await selectAssignmentInputs(
-      vault,
-      course,
-      assignment.source,
-      assignment.work,
-      assignment.context,
-      task.parentTaskId
-        ? task.sources.find((source) => source.path === assignment.work)
-        : undefined,
-      task.guidanceSelectionVersion,
-    )
+    const current = await deriveCurrentTaskInputs(vault, course, task)
+    if (!("guidance" in current)) throw new Error("Assignment input recipe omitted guidance")
     const canonical = (_key: string, value: unknown) =>
       value && typeof value === "object" && !Array.isArray(value)
         ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
@@ -317,29 +269,22 @@ async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
   const period =
     task.period ?? (task.week ? { kind: "week" as const, value: task.week } : undefined)
   if (!period) throw new Error("Preparation task is missing its period")
-  const currentSessionRoot =
-    period.kind === "session" ? resolveSessionRoot(course, period.value) : undefined
+  const currentPrepPeriod = resolvePrepPeriod(course, period)
+  const currentSessionRoot = period.kind === "session" ? currentPrepPeriod.root : undefined
   if (period.kind === "session" && task.period?.root !== currentSessionRoot)
     throw new Error("Task session root no longer matches the selected module")
-  const expected =
-    period.kind === "week"
-      ? expectedDestination(course, period.value)
-      : currentSessionRoot &&
-          (/(?:^|\/)Week\s+\d+\b/i.test(currentSessionRoot) ||
-            /(?:^|\/)Milestone\s+\d+\b/i.test(currentSessionRoot))
-        ? `${currentSessionRoot}/Prep`
-        : course.root +
-          "/Other/Prep/session-" +
-          (period.value
-            .toLocaleLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "") || "session")
+  const expected = productDestination(
+    course.root,
+    currentPrepPeriod.destination,
+    task.productNamespaceVersion,
+  )
   if (task.destination !== expected)
     throw new Error("Task destination does not match the current authoritative course and period")
-  const { sources: currentRelevant, excluded: currentExcluded } =
-    (!task.workflow || task.workflow.version === 1) && period.kind === "week"
-      ? selectLegacyPrepInputs(course, period.value)
-      : selectPrepInputs(course, period, task.prepSelectionVersion ?? 1)
+  const { sources: currentRelevant, excluded: currentExcluded } = await deriveCurrentTaskInputs(
+    vault,
+    course,
+    task,
+  )
   const snap = new Map(task.sources.map((s) => [s.path, s]))
   if (
     currentRelevant.length !== snap.size ||
@@ -392,16 +337,23 @@ async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
     JSON.stringify(priorExcluded.map((e) => [e.path, e.reason]).sort())
   )
     throw new Error("Relevant source restrictions or exclusions changed since task creation")
-  const currentNotices = [
-    ...context.notices,
-    ...currentExcluded.map((e) => `Excluded ${e.path}: ${e.reason}`),
-  ]
-  const relevantNotices = (notices: string[]) =>
-    notices.filter((n) => /restrict|prohibit|policy|symlink/i.test(n)).sort()
-  if (
-    JSON.stringify(relevantNotices(currentNotices)) !==
-    JSON.stringify(relevantNotices(task.notices))
-  )
+  const relevantCurrentCodes = (context.diagnostics ?? [])
+    .filter(
+      (item) =>
+        item.code === "workspace.restriction_present" || item.code === "workspace.symlink_skipped",
+    )
+    .map((item) => `${item.code}:${item.path ?? ""}`)
+    .sort()
+  const relevantPriorCodes = task.notices
+    .filter((notice) => !/^Excluded /i.test(notice))
+    .map((notice) => diagnosticFromLegacyNotice(notice))
+    .filter(
+      (item) =>
+        item.code === "workspace.restriction_present" || item.code === "workspace.symlink_skipped",
+    )
+    .map((item) => `${item.code}:${item.path ?? ""}`)
+    .sort()
+  if (JSON.stringify(relevantCurrentCodes) !== JSON.stringify(relevantPriorCodes))
     throw new Error("Workspace restriction notices changed since task creation")
 }
 
@@ -420,49 +372,31 @@ function validateOutputReference(task: TaskRecord, output: string): void {
 }
 
 async function verifyTaskDestination(vault: string, task: TaskRecord): Promise<void> {
-  const period = task.period
+  const period =
+    task.period ?? (task.week ? { kind: "week" as const, value: task.week } : undefined)
   const context = await inspectWorkspace(resolve(vault))
   const course = context.courses.find(
     (c) => c.code === task.course.code && c.root === task.course.root,
   )
-  if (
-    !course ||
-    (task.kind === "prep"
-      ? period?.kind === "session"
-        ? (() => {
-            const currentRoot = resolveSessionRoot(course, period.value)
-            return (
-              task.period?.root !== currentRoot ||
-              task.destination !==
-                productDestination(
-                  course.root,
-                  /(?:^|\/)Week\s+\d+\b/i.test(currentRoot) ||
-                    /(?:^|\/)Milestone\s+\d+\b/i.test(currentRoot)
-                    ? `${currentRoot}/Prep`
-                    : course.root +
-                        "/Other/Prep/session-" +
-                        (period.value
-                          .toLocaleLowerCase()
-                          .replace(/[^a-z0-9]+/g, "-")
-                          .replace(/^-|-$/g, "") || "session"),
-                  task.productNamespaceVersion,
-                )
-            )
-          })()
-        : !task.week ||
-          productDestination(
-            course.root,
-            resolvePrepDestination(course, task.week),
-            task.productNamespaceVersion,
-          ) !== task.destination
-      : !task.assignment ||
-        task.destination !==
-          productDestination(
-            course.root,
-            `${task.assignment.source.slice(0, task.assignment.source.lastIndexOf("/"))}/Drafts`,
-            task.productNamespaceVersion,
-          ))
-  )
+  let mismatched = !course
+  if (course && task.kind === "prep") {
+    const current = period ? resolvePrepPeriod(course, period) : undefined
+    mismatched =
+      !current ||
+      (task.period?.root !== undefined && task.period.root !== current.root) ||
+      productDestination(course.root, current.destination, task.productNamespaceVersion) !==
+        task.destination
+  } else if (course) {
+    mismatched =
+      !task.assignment ||
+      task.destination !==
+        productDestination(
+          course.root,
+          `${task.assignment.source.slice(0, task.assignment.source.lastIndexOf("/"))}/Drafts`,
+          task.productNamespaceVersion,
+        )
+  }
+  if (mismatched)
     throw new Error("Task destination does not match the authoritative course and week")
 }
 
@@ -502,26 +436,7 @@ async function verifiedCompletedOutput(
   else {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 50 * 1024 * 1024)
       throw new Error("Invalid completed-output byte limit")
-    const handle = await open(
-      saved,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    )
-    try {
-      const stat = await handle.stat()
-      if (!stat.isFile() || stat.size > maxBytes)
-        throw new Error("Completed output exceeds bounded regular-file limits")
-      const buffer = Buffer.alloc(maxBytes + 1)
-      let length = 0
-      while (length < buffer.length) {
-        const result = await handle.read(buffer, length, buffer.length - length, length)
-        if (!result.bytesRead) break
-        length += result.bytesRead
-      }
-      if (length > maxBytes) throw new Error("Completed output exceeds byte limits")
-      bytes = buffer.subarray(0, length)
-    } finally {
-      await handle.close()
-    }
+    bytes = await readBoundedFile(saved, maxBytes)
   }
   if (digest(bytes) !== task.outputHash)
     throw new Error("Completed output is missing or has been modified")
@@ -565,19 +480,6 @@ async function completedResult(
     throw new Error("Completed output is missing or has been modified")
   await verifyCompletedWorkbook(vault, task, actual)
   return { task, output }
-}
-
-async function atomicReplace(path: string, data: string): Promise<void> {
-  await assertNoSymlinks(path)
-  const temp = `${path}.tmp-${randomUUID()}`
-  const handle = await open(temp, "wx", 0o600)
-  try {
-    await handle.writeFile(data, "utf8")
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-  await rename(temp, path)
 }
 
 export async function completeTask(
@@ -667,19 +569,9 @@ export async function completeTask(
   await verifyCurrent(vault, task)
   const finalPath = await noLinks(vault, outputRel, true)
   await assertNoSymlinks(finalPath, true)
-  const tempOutput = `${finalPath}.tmp-${randomUUID()}`
   try {
-    const handle = await open(tempOutput, "wx", 0o600)
-    try {
-      await handle.writeFile(candidateBytes)
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
-    await link(tempOutput, finalPath)
-    await unlink(tempOutput)
+    await publishExclusiveFile(finalPath, candidateBytes)
   } catch (error) {
-    await unlink(tempOutput).catch(() => undefined)
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
     const existing = await readFile(finalPath)
     if (!existing.equals(candidateBytes))
@@ -689,21 +581,11 @@ export async function completeTask(
   if (workbookBytes) {
     const path = outputRel.replace(/\.md$/, ".xlsx")
     const absolute = await noLinks(vault, path, true)
-    const temporary = `${absolute}.tmp-${randomUUID()}`
     try {
-      const handle = await open(temporary, "wx", 0o600)
-      try {
-        await handle.writeFile(workbookBytes)
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
-      await link(temporary, absolute)
+      await publishExclusiveFile(absolute, workbookBytes)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
       await verifyWorkbookFile(await noLinks(vault, path), workbookBytes)
-    } finally {
-      await unlink(temporary).catch(() => undefined)
     }
     workbook = { path, hash: digest(workbookBytes) }
   }
@@ -715,7 +597,7 @@ export async function completeTask(
     outputHash: candidateHash,
     ...(workbook ? { workbook } : {}),
   }) as TaskRecord
-  await atomicReplace(taskJson, `${JSON.stringify(updated, null, 2)}\n`)
+  await replaceFileAtomically(taskJson, `${JSON.stringify(updated, null, 2)}\n`)
   await unlink(markerPath).catch(() => undefined)
   return { task: updated, output: outputRel }
 }

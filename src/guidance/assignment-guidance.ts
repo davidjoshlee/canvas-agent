@@ -2,7 +2,7 @@ import { constants } from "node:fs"
 import { type FileHandle, mkdir, open } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
-import { readGuidanceSnapshot, verifySourceSnapshot } from "../tasks/store.js"
+import { readGuidanceSnapshot, verifySourceSnapshot } from "../tasks/recipes.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import { guidanceAssignmentIdentity } from "./selection.js"
 
@@ -14,11 +14,7 @@ export async function initializeAssignmentGuidance(
 ) {
   const root = resolve(vault)
   const context = await inspectWorkspace(root)
-  if (
-    context.notices.some((notice) =>
-      notice.startsWith("Canvas course mappings are unavailable or unsafe"),
-    )
-  )
+  if (context.diagnostics?.some((item) => item.code === "workspace.course_mappings_unavailable"))
     throw new Error("Course mappings are unsafe; inspect them before creating guidance")
   const course = selectCourse(context, query)
   const prompt = course.sources.find(

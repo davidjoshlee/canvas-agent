@@ -8,8 +8,8 @@ import { inspectSimulationTask } from "../evaluation/tasks.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { TaskRecord } from "../shared/types.js"
 import { checkCandidate, readVerifiedCompletedOutput } from "./completion.js"
+import { auditTaskSnapshots } from "./inspection.js"
 import { readTaskCalculationEvidence } from "./numeric-review.js"
-import { auditTaskSnapshots } from "./tools.js"
 import { correctnessReviewInstructions } from "./workflows.js"
 
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex")

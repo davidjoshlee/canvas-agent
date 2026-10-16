@@ -2,14 +2,25 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { setCanvasFetchForTests, syncCourses } from "../../src/canvas/sync.js"
+import { syncCourses as syncCanvasCourses } from "../../src/canvas/sync.js"
 import { captureSimulation } from "../../src/evaluation/captures.js"
 import { createSimulationTask, readSimulationTask } from "../../src/evaluation/tasks.js"
 import type { ToolkitConfig } from "../../src/shared/types.js"
 import { createPrepTask } from "../../src/tasks/store.js"
 import { inspectWorkspace, selectCourse } from "../../src/vault/workspace.js"
+import {
+  type CanvasFetch,
+  type CanvasSleep,
+  createCanvasTestTransport,
+} from "../helpers/canvas-client.js"
 
 const roots: string[] = []
+const canvasTransport = createCanvasTestTransport()
+function useCanvasFetch(fetch?: CanvasFetch, sleep?: CanvasSleep): void {
+  canvasTransport.use({ ...(fetch ? { fetch } : {}), ...(sleep ? { sleep } : {}) })
+}
+const syncCourses = (...args: Parameters<typeof syncCanvasCourses>) =>
+  syncCanvasCourses(args[0], args[1], canvasTransport.client(args[0]))
 const json = (body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
     headers: { "content-type": "application/json", ...headers },
@@ -25,7 +36,7 @@ async function fixture(quizStatus?: number) {
     courses: { allowlist: ["1"] },
   }
   const calls: string[] = []
-  setCanvasFetchForTests(async (input, init) => {
+  useCanvasFetch(async (input, init) => {
     expect(init?.method).toBe("GET")
     const url = new URL(String(input)),
       path = url.pathname
@@ -95,7 +106,7 @@ async function fixture(quizStatus?: number) {
   return { vault, config, calls }
 }
 afterEach(async () => {
-  setCanvasFetchForTests()
+  canvasTransport.reset()
   delete process.env.CANVAS_QUIZ_FIXTURE_TOKEN
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })

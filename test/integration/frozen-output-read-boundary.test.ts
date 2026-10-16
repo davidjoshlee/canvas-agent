@@ -56,9 +56,9 @@ vi.mock("node:fs/promises", async () => {
   }
 })
 
+import { readTaskOutput } from "../../src/cli/task-output.js"
 import { captureSimulation } from "../../src/evaluation/captures.js"
 import { completeSimulationTask, createSimulationTask } from "../../src/evaluation/tasks.js"
-import { readTaskOutput } from "../../src/tasks/output.js"
 
 const roots: string[] = []
 afterEach(async () => {

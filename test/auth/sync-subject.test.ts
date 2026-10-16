@@ -3,12 +3,23 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { canvasSubjectHash, guardSyncSubject } from "../../src/auth/sync-subject.js"
-import { setCanvasFetchForTests, syncCourses } from "../../src/canvas/sync.js"
+import { syncCourses as syncCanvasCourses } from "../../src/canvas/sync.js"
 import type { ToolkitConfig } from "../../src/shared/types.js"
+import {
+  type CanvasFetch,
+  type CanvasSleep,
+  createCanvasTestTransport,
+} from "../helpers/canvas-client.js"
 
 const roots: string[] = []
+const canvasTransport = createCanvasTestTransport()
+function useCanvasFetch(fetch?: CanvasFetch, sleep?: CanvasSleep): void {
+  canvasTransport.use({ ...(fetch ? { fetch } : {}), ...(sleep ? { sleep } : {}) })
+}
+const syncCourses = (...args: Parameters<typeof syncCanvasCourses>) =>
+  syncCanvasCourses(args[0], args[1], canvasTransport.client(args[0]))
 afterEach(async () => {
-  setCanvasFetchForTests()
+  canvasTransport.reset()
   delete process.env.CANVAS_SUBJECT_TEST_TOKEN
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -28,7 +39,7 @@ async function fixture() {
     feedbackSubject: unknown = 99,
     profileStatus = 200
   const calls: string[] = []
-  setCanvasFetchForTests(async (input) => {
+  useCanvasFetch(async (input) => {
     const path = new URL(String(input)).pathname
     calls.push(path)
     if (path === "/api/v1/users/self")

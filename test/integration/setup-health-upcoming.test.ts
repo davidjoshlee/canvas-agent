@@ -2,15 +2,21 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/p
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { setCanvasFetchForTests } from "../../src/canvas/sync.js"
 import { inspectVaultHealth } from "../../src/cli/health.js"
 import { runCli } from "../../src/cli/program.js"
 import { createConfig, loadAdjacentEnv, loadConfig, setupConfig } from "../../src/config/index.js"
-import { selectOnboardingCourses } from "../../src/config/onboarding.js"
+import { selectOnboardingCourses as selectOnboarding } from "../../src/config/onboarding.js"
 import type { WorkspaceContext } from "../../src/shared/types.js"
 import { collectUpcoming } from "../../src/student/upcoming.js"
+import { type CanvasFetch, createCanvasTestTransport } from "../helpers/canvas-client.js"
 
 const roots: string[] = []
+const canvasTransport = createCanvasTestTransport()
+function useCanvasFetch(fetch?: CanvasFetch): void {
+  canvasTransport.use(fetch ? { fetch } : {})
+}
+const selectOnboardingCourses = (...args: Parameters<typeof selectOnboarding>) =>
+  selectOnboarding(args[0], args[1], args[2], canvasTransport.client(args[1]))
 async function temp() {
   const root = await mkdtemp(join(tmpdir(), "canvas-agent-parity-"))
   roots.push(root)
@@ -34,7 +40,7 @@ async function invoke(args: string[]) {
   const priorCode = process.exitCode
   process.exitCode = undefined
   try {
-    await runCli(args)
+    await runCli(args, { canvasClient: (config) => canvasTransport.client(config) })
     return { stdout, stderr, code: process.exitCode ?? 0 }
   } finally {
     process.exitCode = priorCode
@@ -45,7 +51,7 @@ async function invoke(args: string[]) {
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   delete process.env.PARITY_CANVAS_TOKEN
-  setCanvasFetchForTests()
+  canvasTransport.reset()
 })
 
 describe("setup and local upcoming inventory", () => {
@@ -177,7 +183,7 @@ describe("setup and local upcoming inventory", () => {
       tokenEnv: "PARITY_CANVAS_TOKEN",
     })
     process.env.PARITY_CANVAS_TOKEN = "test-token"
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const url = String(input)
       const courses = url.includes("users/self/courses")
         ? [{ id: 101, name: "Active", course_code: "MGTE220", workflow_state: "available" }]
@@ -209,7 +215,7 @@ describe("setup and local upcoming inventory", () => {
       process.env.PARITY_CANVAS_TOKEN = "synthetic-token"
       const before = await readFile(configPath)
       const calls: string[] = []
-      setCanvasFetchForTests(async (input, init) => {
+      useCanvasFetch(async (input, init) => {
         expect(init?.method).toBe("GET")
         const path = new URL(String(input)).pathname
         calls.push(path)

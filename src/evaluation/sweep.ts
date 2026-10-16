@@ -5,7 +5,7 @@ import { z } from "zod"
 import { relatedSources } from "../canvas/module-context.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { CourseContext, SourceRecord } from "../shared/types.js"
-import { hasPrepMaterial, selectPrepInputs } from "../tasks/store.js"
+import { hasPrepMaterial, selectPrepInputs } from "../tasks/recipes.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import { createDogfood, readDogfood } from "./dogfood.js"
 

@@ -14,7 +14,6 @@ import {
   readCalendarFile,
   setCalendarOverride,
 } from "../student/calendar.js"
-
 import {
   notifyDesktopAlert,
   notifyDueSoon,
@@ -23,6 +22,7 @@ import {
   saveDueSoon,
 } from "../student/reminders.js"
 import { readUpcoming } from "../student/upcoming.js"
+import { vaultMutation } from "../vault/command-effects.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 
 type RootOptions = { config: string }
@@ -39,6 +39,10 @@ export function registerStudentCommands(program: Command): void {
   if (!auth) throw new Error("Auth command must be registered before student commands")
   auth
     .command("alerts")
+    .hook(
+      "preAction",
+      vaultMutation((options) => Boolean(options.apply)),
+    )
     .description("inspect private observed auth alerts; optionally record a local expiry hint")
     .option("--apply", "record an expired local metadata hint, not API denial")
     .option("--notify", "explicitly display an existing warning via macOS notification")
@@ -74,6 +78,10 @@ export function registerStudentCommands(program: Command): void {
     })
   program
     .command("reminders")
+    .hook(
+      "preAction",
+      vaultMutation((options) => Boolean(options.apply)),
+    )
     .description("preview due-soon local deadlines, or save a private durable alert")
     .option("--days <days>", "lead days, 1–365", "7")
     .option("--course <course>", "explicit local course")
@@ -170,6 +178,7 @@ export function registerStudentCommands(program: Command): void {
     })
   guidance
     .command("init-assignment <course>")
+    .hook("preAction", vaultMutation())
     .description(
       "create a missing assignment-bound student-preference starter without overwriting guides",
     )
@@ -186,6 +195,7 @@ export function registerStudentCommands(program: Command): void {
     })
   guidance
     .command("propose <course>")
+    .hook("preAction", vaultMutation())
     .description("create a source-bound, model-free guidance task handoff")
     .option(
       "--feedback-assignment <id>",
@@ -214,6 +224,7 @@ export function registerStudentCommands(program: Command): void {
     })
   guidance
     .command("save <id>")
+    .hook("preAction", vaultMutation())
     .description("save a candidate as a new versioned proposed guidance file")
     .requiredOption("--file <path>", "absolute candidate Markdown file")
     .option("--json", "emit JSON")
@@ -233,6 +244,7 @@ export function registerStudentCommands(program: Command): void {
     program.command("calendar").description("compare, override, and export local assignment dates")
   calendar
     .command("override <path>")
+    .hook("preAction", vaultMutation())
     .description("set a private due-date override for a synced assignment path")
     .requiredOption("--due <iso>", "due date in ISO format")
     .option("--json", "emit JSON")
@@ -267,6 +279,7 @@ export function registerStudentCommands(program: Command): void {
     })
   calendar
     .command("export")
+    .hook("preAction", vaultMutation())
     .description("export dated assignments to a new ICS file")
     .requiredOption("--file <path>", "absolute destination ICS file; must not exist")
     .option("--days <count>", "days to include", "365")

@@ -1,6 +1,7 @@
 import { createRequire } from "node:module"
 import { Command, Option } from "commander"
 import { writeAuthAlert } from "../auth/alerts.js"
+import type { CanvasClientFactory } from "../canvas/client.js"
 import { isCanvasUnauthorized } from "../canvas/sync.js"
 import { loadConfig } from "../config/index.js"
 import { registerDogfoodCommand } from "../evaluation/cli.js"
@@ -50,7 +51,11 @@ function safeError(error: unknown, configPath: string): string {
   return message.replace(/\r?\n/g, " ")
 }
 
-function makeProgram(): Command {
+export interface CliRuntime {
+  canvasClient?: CanvasClientFactory
+}
+
+function makeProgram(runtime: CliRuntime): Command {
   const program = new Command()
   program
     .name("canvas-agent")
@@ -59,10 +64,10 @@ function makeProgram(): Command {
     .showHelpAfterError(false)
   program.addOption(new Option("--config <path>", "configuration file").default(DEFAULT_CONFIG))
 
-  registerSetupCommands(program)
-  registerSyncCommands(program)
+  registerSetupCommands(program, runtime.canvasClient)
+  registerSyncCommands(program, runtime.canvasClient)
   registerAcademicCommands(program)
-  registerAccessCommands(program)
+  registerAccessCommands(program, runtime.canvasClient)
   registerWorkspaceCommands(program)
   registerToolCommands(program)
   registerDogfoodCommand(program)
@@ -73,9 +78,12 @@ function makeProgram(): Command {
   return program
 }
 
-export async function runCli(args: string[] = process.argv.slice(2)): Promise<void> {
+export async function runCli(
+  args: string[] = process.argv.slice(2),
+  runtime: CliRuntime = {},
+): Promise<void> {
   const jsonRequested = args.includes("--json")
-  const program = makeProgram()
+  const program = makeProgram(runtime)
   const configure = (command: Command): void => {
     command.exitOverride()
     command.configureOutput({

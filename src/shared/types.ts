@@ -1,4 +1,5 @@
 import type { LearningHistory } from "../feedback/history.js"
+import type { Diagnostic } from "./diagnostics.js"
 export interface ToolkitConfig {
   version: 1
   canvas: { baseUrl: string; tokenEnv: string }
@@ -49,6 +50,7 @@ export interface WorkspaceContext {
   courses: CourseContext[]
   pendingTasks: string[]
   notices: string[]
+  diagnostics: Diagnostic[]
 }
 export interface TaskRecord {
   version: 1

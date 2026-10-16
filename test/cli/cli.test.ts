@@ -2,15 +2,19 @@ import { mkdir, mkdtemp, readFile, rm, rmdir, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { setCanvasFetchForTests } from "../../src/canvas/sync.js"
 import { runCli } from "../../src/cli/program.js"
 import {
   CALCULATION_OPERATIONS,
   calculateValues,
   parseCalculationBatch,
 } from "../../src/tasks/tools.js"
+import { type CanvasFetch, createCanvasTestTransport } from "../helpers/canvas-client.js"
 
 const roots: string[] = []
+const canvasTransport = createCanvasTestTransport()
+function useCanvasFetch(fetch?: CanvasFetch): void {
+  canvasTransport.use(fetch ? { fetch } : {})
+}
 async function temp() {
   const root = await mkdtemp(join(tmpdir(), "canvas-agent-cli-"))
   roots.push(root)
@@ -34,7 +38,7 @@ async function invoke(args: string[]) {
   const oldExit = process.exitCode
   process.exitCode = undefined
   try {
-    await runCli(args)
+    await runCli(args, { canvasClient: (config) => canvasTransport.client(config) })
     return { stdout, stderr, exitCode: process.exitCode ?? 0 }
   } finally {
     process.exitCode = oldExit
@@ -43,7 +47,7 @@ async function invoke(args: string[]) {
   }
 }
 afterEach(async () => {
-  setCanvasFetchForTests()
+  canvasTransport.reset()
   delete process.env.CANVAS_CLI_TEST_TOKEN
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -53,7 +57,7 @@ it("reports the package version without loading a missing configuration or conta
   const version = JSON.parse(
     await readFile(new URL("../../package.json", import.meta.url), "utf8"),
   ).version
-  setCanvasFetchForTests(async () => {
+  useCanvasFetch(async () => {
     throw new Error("Version must not access Canvas")
   })
   for (const flag of ["--version", "-V"]) {
@@ -97,7 +101,7 @@ describe("CLI", () => {
     const before = await readFile(config)
     const calls: string[] = []
     const json = (value: unknown) => new Response(JSON.stringify(value))
-    setCanvasFetchForTests(async (input, init) => {
+    useCanvasFetch(async (input, init) => {
       expect(init?.method).toBe("GET")
       const path = new URL(String(input)).pathname
       calls.push(path)
@@ -148,7 +152,7 @@ describe("CLI", () => {
     const calls: string[] = []
     const json = (value: unknown) => new Response(JSON.stringify(value))
     let inaccessible = false
-    setCanvasFetchForTests(async (input, init) => {
+    useCanvasFetch(async (input, init) => {
       expect(init?.method).toBe("GET")
       const url = new URL(String(input)),
         path = url.pathname
@@ -227,7 +231,7 @@ describe("CLI", () => {
     process.env.CANVAS_CLI_TEST_TOKEN = "synthetic-token"
     let download = "Synthetic original reading."
     const calls: string[] = []
-    setCanvasFetchForTests(async (input, init) => {
+    useCanvasFetch(async (input, init) => {
       expect(init?.method).toBe("GET")
       const path = new URL(String(input)).pathname
       if (path === "/api/v1/users/self")
@@ -598,7 +602,7 @@ describe("CLI", () => {
     expect(status.exitCode).toBe(0)
     expect(JSON.parse(status.stdout)).toMatchObject({ renewal: "expired", verified: false })
     const calls: string[] = []
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       calls.push(String(input))
       return new Response(JSON.stringify({ id: 1, name: "Student" }), {
         headers: { "content-type": "application/json" },
@@ -616,7 +620,7 @@ describe("CLI", () => {
     expect(verify.stdout + verify.stderr + status.stdout + renew.stdout).not.toContain(
       "synthetic-secret",
     )
-    setCanvasFetchForTests(
+    useCanvasFetch(
       async () => new Response("<html>PRIVATE STUDENT SIGN-IN PAGE</html>", { status: 200 }),
     )
     const unexpected = await invoke(["auth", "verify", "--json", "--config", config])
@@ -641,7 +645,7 @@ describe("CLI", () => {
       config,
     ])
     process.env.CANVAS_CLI_TEST_TOKEN = "synthetic-secret"
-    setCanvasFetchForTests(
+    useCanvasFetch(
       async () =>
         new Response(JSON.stringify([{ id: 1, course_code: "MBA101", name: "Test" }]), {
           headers: { "content-type": "application/json" },

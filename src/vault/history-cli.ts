@@ -1,5 +1,6 @@
 import type { Command } from "commander"
 import { loadConfig } from "../config/index.js"
+import { takeVaultMutation } from "./command-effects.js"
 import {
   disableVaultHistory,
   enableVaultHistory,
@@ -11,11 +12,8 @@ import {
   snapshotVaultHistory,
 } from "./history.js"
 
-const pending = new WeakSet<Command>()
-
 export async function finishVaultHistory(program: Command, primarySucceeded: boolean) {
-  if (!pending.has(program)) return
-  pending.delete(program)
+  if (!takeVaultMutation(program)) return
   let config: Awaited<ReturnType<typeof loadConfig>>
   try {
     config = await loadConfig(program.opts().config)
@@ -101,51 +99,6 @@ export function registerVaultHistory(program: Command) {
     .description("stop automatic snapshots; preserve history for recovery")
     .option("--json", "emit JSON")
     .action(async () => print(await disableVaultHistory(await configured())))
-  program.hook("preAction", (_root, action) => {
-    const name = action.name(),
-      parent = action.parent?.name(),
-      options = action.opts()
-    const applied =
-      ["reading-copy", "obsidian", "alerts", "reminders"].includes(name) && Boolean(options.apply)
-    const conditional =
-      (name === "compare" && parent !== "canvas-agent") ||
-      (name === "export" && parent === "calendar") ||
-      (["homework", "timeline"].includes(name) && Boolean(options.draft))
-    if (
-      !applied &&
-      !conditional &&
-      ![
-        "sync",
-        "ingest",
-        "approve",
-        "workbook",
-        "prep",
-        "assignment",
-        "draft",
-        "revise",
-        "save",
-        "complete",
-        "capture",
-        "derive",
-        "create",
-        "resume",
-        "init-assignment",
-        "propose",
-        "override",
-        "calculate",
-        "prepare",
-        "review",
-        "m1",
-        "import",
-        "playbook-import",
-        "dogfood",
-        "sweep",
-        "reading-copy-disable",
-      ].includes(name)
-    )
-      return
-    pending.add(program)
-  })
   program.hook("postAction", async () =>
     finishVaultHistory(program, Number(process.exitCode ?? 0) === 0),
   )

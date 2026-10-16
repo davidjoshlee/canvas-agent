@@ -6,6 +6,7 @@ import { promisify } from "node:util"
 import type { Command } from "commander"
 import { loadConfig } from "../config/index.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
+import { vaultMutation } from "./command-effects.js"
 
 const GUIDE = "00 Canvas Agent Getting Started.md"
 const within = (root: string, path: string) => {
@@ -185,6 +186,10 @@ export function registerObsidianCommand(program: Command) {
   if (!vault) throw new Error("Register vault commands before Obsidian support")
   vault
     .command("obsidian")
+    .hook(
+      "preAction",
+      vaultMutation((options) => Boolean(options.apply)),
+    )
     .description(
       "preview local readiness or create a preserved getting-started note; no sync/upload",
     )

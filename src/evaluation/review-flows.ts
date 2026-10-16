@@ -4,8 +4,9 @@ import { join } from "node:path"
 import { z } from "zod"
 import { expiryStatus, renewalInstructions } from "../auth/credentials.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
+import { createAssignmentTask } from "../tasks/creation.js"
 import { approveTask, reviseTask } from "../tasks/lifecycle.js"
-import { createAssignmentTask, readTask } from "../tasks/store.js"
+import { readTask } from "../tasks/records.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import {
   type CoreDogfoodInput,

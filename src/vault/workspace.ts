@@ -5,6 +5,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import { parse as parseYaml } from "yaml"
 import { AssignmentDatesSchema } from "../canvas/assignment-dates.js"
 import { readIngestProvenance } from "../documents/ingest-compatibility.js"
+import { type Diagnostic, diagnostic } from "../shared/diagnostics.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 
 import type {
@@ -19,6 +20,21 @@ const textExtensions = new Set([".md", ".markdown", ".txt"])
 const workDirectoryNames = new Set(["prep", "drafts", "draft", "final", "finals"])
 
 type ScanEntry = { path: string; absolute: string; name: string; parent: string }
+type NoticeCollector = { messages: string[]; diagnostics: Diagnostic[] }
+
+function addNotice(
+  notices: NoticeCollector,
+  code: string,
+  message: string,
+  scope: "workspace" | "course" = "workspace",
+  severity: "info" | "warning" | "error" = "warning",
+  path?: string,
+): void {
+  notices.messages.push(message)
+  notices.diagnostics.push(
+    diagnostic(code, message, { scope, severity, ...(path ? { path } : {}) }),
+  )
+}
 
 /** Read a School Agent style workspace without changing it or following links. */
 export async function inspectWorkspace(vault: string): Promise<WorkspaceContext> {
@@ -29,7 +45,7 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
     throw new Error(`Workspace is not a readable directory: ${root}`)
   }
 
-  const notices: string[] = []
+  const notices: NoticeCollector = { messages: [], diagnostics: [] }
   const mapped = new Map<
     string,
     { id: string; name: string; code?: string; syncNamespace?: "Canvas Agent" }
@@ -67,8 +83,12 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
   } catch (error) {
     mapped.clear()
     if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-      notices.push(
+      addNotice(
+        notices,
+        "workspace.course_mappings_unavailable",
         "Canvas course mappings are unavailable or unsafe; using conventional course folders only.",
+        "workspace",
+        "error",
       )
   }
   const ownership = [...mapped.values()].some((course) => course.syncNamespace)
@@ -78,15 +98,26 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
   const children = await readdir(root, { withFileTypes: true })
   for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
     if (child.name === "_meta") {
-      notices.push("Skipped private metadata directory: _meta")
+      addNotice(
+        notices,
+        "workspace.private_metadata_skipped",
+        "Skipped private metadata directory: _meta",
+      )
       continue
     }
     if (child.name.startsWith(".")) {
-      notices.push(`Skipped hidden entry: ${child.name}`)
+      addNotice(notices, "workspace.hidden_entry_skipped", `Skipped hidden entry: ${child.name}`)
       continue
     }
     if (child.isSymbolicLink()) {
-      notices.push(`Skipped symbolic link: ${child.name}`)
+      addNotice(
+        notices,
+        "workspace.symlink_skipped",
+        `Skipped symbolic link: ${child.name}`,
+        "workspace",
+        "warning",
+        child.name,
+      )
       continue
     }
     if (!child.isDirectory() || !(courseCodePattern.test(child.name) || mapped.has(child.name)))
@@ -135,8 +166,16 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
           const task = JSON.parse(await readFile(taskPath, "utf8")) as { status?: unknown }
           if (task.status === "pending") pendingTasks.push(`_meta/tasks/${entry.name}`)
         } catch {
-          if (!notices.includes("Private task inventory is incomplete; inspect saved records"))
-            notices.push("Private task inventory is incomplete; inspect saved records")
+          if (
+            !notices.messages.includes(
+              "Private task inventory is incomplete; inspect saved records",
+            )
+          )
+            addNotice(
+              notices,
+              "workspace.task_inventory_incomplete",
+              "Private task inventory is incomplete; inspect saved records",
+            )
           if (taskBytes > 500_000_000) break
         }
       }
@@ -144,10 +183,21 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
   } catch (error) {
     // An absent task directory is normal in existing School Agent vaults.
     if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-      notices.push("Private task inventory is unavailable or exceeds bounds; inspect saved records")
+      addNotice(
+        notices,
+        "workspace.task_inventory_unavailable",
+        "Private task inventory is unavailable or exceeds bounds; inspect saved records",
+      )
   }
 
-  return { version: 1, vault: root, courses, pendingTasks: pendingTasks.sort(), notices }
+  return {
+    version: 1,
+    vault: root,
+    courses,
+    pendingTasks: pendingTasks.sort(),
+    notices: notices.messages,
+    diagnostics: [...notices.diagnostics],
+  }
 }
 
 export function selectCourse(context: WorkspaceContext, query: string): CourseContext {
@@ -224,7 +274,7 @@ async function readPreservedOwnership(vault: string): Promise<Record<string, str
 async function inspectCourse(
   vault: string,
   code: string,
-  notices: string[],
+  notices: NoticeCollector,
   retiredOwnership?: Record<string, string>,
 ): Promise<CourseContext> {
   const absoluteRoot = join(vault, code)
@@ -492,14 +542,27 @@ async function inspectCourse(
         /module|session|milestone/i.test(`${item.type} ${item.path}`),
     )
     if (module) module.relatedPaths = [...new Set([...(module.relatedPaths ?? []), imported.path])]
-    else notices.push(`Imported source ${imported.path} has no matching course module.`)
+    else
+      addNotice(
+        notices,
+        "source.module_unmatched",
+        `Imported source ${imported.path} has no matching course module.`,
+        "course",
+        "warning",
+        imported.path,
+      )
   }
   for (const source of sources) {
     for (const related of source.relatedPaths ?? []) {
       const target = related.startsWith(`${root}/`) ? related : `${root}/${related}`
       if (!approvedPaths.has(target)) {
-        notices.push(
+        addNotice(
+          notices,
+          "source.related_source_unavailable",
           `Skipped unavailable related course source ${target} linked from ${source.path}.`,
+          "course",
+          "warning",
+          target,
         )
       }
     }
@@ -586,36 +649,66 @@ async function walk(
   directory: string,
   relativeDirectory: string,
   entries: ScanEntry[],
-  notices: string[],
+  notices: NoticeCollector,
 ): Promise<void> {
   let children: Dirent[]
   try {
     children = await readdir(directory, { withFileTypes: true })
   } catch {
-    notices.push(`Could not read directory: ${relativeDirectory}`)
+    addNotice(
+      notices,
+      "workspace.directory_unreadable",
+      `Could not read directory: ${relativeDirectory}`,
+      "course",
+    )
     return
   }
   for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
     const absolute = join(directory, child.name)
     const path = `${relativeDirectory}/${child.name}`
     if (child.name.startsWith(".")) {
-      notices.push(`Skipped hidden entry: ${path}`)
+      addNotice(
+        notices,
+        "workspace.hidden_entry_skipped",
+        `Skipped hidden entry: ${path}`,
+        "course",
+      )
       continue
     }
     if (child.isSymbolicLink()) {
-      notices.push(`Skipped symbolic link: ${path}`)
+      addNotice(
+        notices,
+        "workspace.symlink_skipped",
+        `Skipped symbolic link: ${path}`,
+        "course",
+        "warning",
+        path,
+      )
       continue
     }
     if (child.isDirectory()) {
       if (child.name === "_meta") {
-        notices.push(`Skipped private metadata under: ${relativeDirectory}`)
+        addNotice(
+          notices,
+          "workspace.private_metadata_skipped",
+          `Skipped private metadata under: ${relativeDirectory}`,
+          "course",
+          "info",
+        )
         const guidancePath = join(absolute, "guidance")
         try {
           const guidanceStat = await lstat(guidancePath)
           if (guidanceStat.isDirectory() && !guidanceStat.isSymbolicLink()) {
             await walk(guidancePath, `${path}/guidance`, entries, notices)
           } else if (guidanceStat.isSymbolicLink()) {
-            notices.push(`Skipped symbolic link: ${path}/guidance`)
+            addNotice(
+              notices,
+              "workspace.symlink_skipped",
+              `Skipped symbolic link: ${path}/guidance`,
+              "course",
+              "warning",
+              `${path}/guidance`,
+            )
           }
         } catch {
           // Private task and operational metadata are intentionally ignored.

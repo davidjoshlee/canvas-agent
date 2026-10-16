@@ -4,7 +4,7 @@ import { z } from "zod"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { TaskRecord } from "../shared/types.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
-import { readTask } from "./store.js"
+import { readTask } from "./records.js"
 
 /** Validated recipe metadata only: never current-source, output or approval verification. */
 export async function listCourseTasks(

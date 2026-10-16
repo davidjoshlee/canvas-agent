@@ -2,14 +2,27 @@ import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it } from "vitest"
-import { setCanvasFetchForTests, syncCourses } from "../../src/canvas/sync.js"
+import { syncCourses as syncCanvasCourses } from "../../src/canvas/sync.js"
 import { createConfig, loadConfig } from "../../src/config/index.js"
-import { selectOnboardingCourses } from "../../src/config/onboarding.js"
+import { selectOnboardingCourses as selectOnboarding } from "../../src/config/onboarding.js"
 import { inspectWorkspace } from "../../src/vault/workspace.js"
+import {
+  type CanvasFetch,
+  type CanvasSleep,
+  createCanvasTestTransport,
+} from "../helpers/canvas-client.js"
 
 const roots: string[] = []
+const canvasTransport = createCanvasTestTransport()
+function useCanvasFetch(fetch?: CanvasFetch, sleep?: CanvasSleep): void {
+  canvasTransport.use({ ...(fetch ? { fetch } : {}), ...(sleep ? { sleep } : {}) })
+}
+const syncCourses = (...args: Parameters<typeof syncCanvasCourses>) =>
+  syncCanvasCourses(args[0], args[1], canvasTransport.client(args[0]))
+const selectOnboardingCourses = (...args: Parameters<typeof selectOnboarding>) =>
+  selectOnboarding(args[0], args[1], args[2], canvasTransport.client(args[1]))
 afterEach(async () => {
-  setCanvasFetchForTests()
+  canvasTransport.reset()
   delete process.env.CANVAS_PILOT_FIXTURE_TOKEN
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -38,7 +51,7 @@ it.each([
     const originalConfig = await readFile(configPath)
     const calls: string[] = []
     const json = (value: unknown) => new Response(JSON.stringify(value))
-    setCanvasFetchForTests(async (input, init) => {
+    useCanvasFetch(async (input, init) => {
       expect(init?.method).toBe("GET")
       const url = new URL(String(input)),
         path = url.pathname

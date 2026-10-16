@@ -1,7 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { lookup } from "node:dns/promises"
 import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises"
-import { BlockList, isIP } from "node:net"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { canvasSubjectHash, guardSyncSubject } from "../auth/sync-subject.js"
 import { extractText } from "../documents/content.js"
@@ -16,53 +14,15 @@ import {
 } from "../feedback/history.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { ToolkitConfig } from "../shared/types.js"
-import { notifyDueSoon, planDueSoon, saveDueSoon } from "../student/reminders.js"
 import { inspectSchoolLayout } from "../vault/school-layout.js"
-import { inspectWorkspace } from "../vault/workspace.js"
 import { assertNoPreservationMigration } from "../vault/write-guard.js"
 import { captureAssignmentDates } from "./assignment-dates.js"
 import { assignmentGroupCategory } from "./assignment-group.js"
 import { assignmentRubricHtml, renderAssignmentRubric } from "./assignment-rubric.js"
+import { type CanvasClient, CanvasHttpError, createCanvasClient } from "./client.js"
 import { parseSessionTitle, resolveSessionYear } from "./session-dates.js"
 
 type Obj = Record<string, unknown>
-const fetcher = (input: string | URL, init?: RequestInit) => fetch(input, init)
-let request = fetcher
-let sleep = (ms: number) => new Promise<void>((resolveSleep) => setTimeout(resolveSleep, ms))
-type AddressResolver = (hostname: string) => Promise<string[]>
-const systemResolve: AddressResolver = async (hostname) =>
-  (await lookup(hostname, { all: true, verbatim: true })).map((result) => result.address)
-let resolveAddresses = systemResolve
-export function setCanvasDnsForTests(resolver?: AddressResolver): void {
-  resolveAddresses = resolver ?? systemResolve
-}
-export function setCanvasFetchForTests(
-  fn?: typeof fetcher,
-  sleepForTests?: (ms: number) => Promise<void>,
-): void {
-  request = fn ?? fetcher
-  sleep =
-    sleepForTests ?? ((ms) => new Promise<void>((resolveSleep) => setTimeout(resolveSleep, ms)))
-}
-async function requestWithRetry(url: URL, init: RequestInit): Promise<Response> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const response = await request(url, { ...init, signal: AbortSignal.timeout(15_000) })
-      if (response.status !== 429 && response.status < 500) return response
-      if (attempt === 2) return response
-      const retryAfter = Number(response.headers.get("retry-after"))
-      await sleep(
-        Number.isFinite(retryAfter) && retryAfter > 0
-          ? Math.min(retryAfter * 1000, 2000)
-          : 100 * 2 ** attempt,
-      )
-    } catch {
-      if (attempt === 2) throw new Error("request failed")
-      await sleep(100 * 2 ** attempt)
-    }
-  }
-  throw new Error("request failed")
-}
 
 function base(config: ToolkitConfig): URL {
   const url = new URL(config.canvas.baseUrl)
@@ -77,19 +37,8 @@ function base(config: ToolkitConfig): URL {
     throw new Error("Unsafe Canvas base URL")
   return url
 }
-function token(config: ToolkitConfig): string {
-  const value = process.env[config.canvas.tokenEnv]
-  if (!value)
-    throw new Error(`Canvas token environment variable ${config.canvas.tokenEnv} is not set`)
-  return value
-}
 function apiUrl(root: URL, path: string): URL {
   return new URL(`/api/v1/${path.replace(/^\//, "")}`, root)
-}
-class CanvasHttpError extends Error {
-  constructor(readonly status: number) {
-    super(`Canvas GET failed with HTTP ${status}`)
-  }
 }
 export function isCanvasUnauthorized(error: unknown): boolean {
   return error instanceof CanvasHttpError && error.status === 401
@@ -110,13 +59,6 @@ export interface SyncReport {
   notices: string[]
   courseReports?: CourseSyncOutcome[]
   failedCourses?: number
-  dueSoon?:
-    | {
-        status: "saved"
-        receipt: Awaited<ReturnType<typeof saveDueSoon>>
-        notification: Awaited<ReturnType<typeof notifyDueSoon>> | "not-requested"
-      }
-    | { status: "not-refreshed" }
 }
 export class CanvasSyncPartialError extends Error {
   constructor(readonly report: SyncReport) {
@@ -135,42 +77,6 @@ export function isCanvasDiscoveryUnavailable(error: unknown): boolean {
 function requireValidAuth(error: unknown): void {
   if (error instanceof CanvasHttpError && error.status === 401) throw error
 }
-async function get(config: ToolkitConfig, url: URL): Promise<Response> {
-  const root = base(config)
-  if (url.origin !== root.origin || url.protocol !== root.protocol || url.username || url.password)
-    throw new Error("Canvas pagination or download URL is outside the safe configured origin")
-  const authToken = token(config)
-  let response: Response
-  try {
-    response = await requestWithRetry(url, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${authToken}`, Accept: "application/json" },
-      redirect: "error",
-    })
-  } catch {
-    throw new Error("Canvas GET request failed before receiving a response")
-  }
-  if (!response.ok) throw new CanvasHttpError(response.status)
-  return response
-}
-function paginationLink(header: string | null, root: URL): URL | undefined {
-  if (!header) return
-  for (const part of header.split(/,(?=\s*<)/)) {
-    const match = part.match(/<([^>]+)>\s*;\s*rel="?([^";]+)"?/)
-    if (match?.[1] && match[2]?.split(/\s+/).includes("next")) {
-      const next = new URL(match[1], root)
-      if (
-        next.origin !== root.origin ||
-        next.protocol !== root.protocol ||
-        next.username ||
-        next.password ||
-        !next.pathname.startsWith("/api/v1/")
-      )
-        throw new Error("Canvas pagination link is not a safe same-origin API URL")
-      return next
-    }
-  }
-}
 async function jsonObject(response: Response): Promise<Obj> {
   let value: unknown
   try {
@@ -182,35 +88,16 @@ async function jsonObject(response: Response): Promise<Obj> {
     throw new Error("Canvas returned an unexpected resource object; no body was echoed")
   return value as Obj
 }
-async function list(config: ToolkitConfig, url: URL): Promise<Obj[]> {
-  const items: Obj[] = []
-  const seen = new Set<string>()
-  let current: URL | undefined = url
-  while (current) {
-    if (seen.has(current.href)) throw new Error("Canvas pagination loop detected")
-    seen.add(current.href)
-    const response = await get(config, current)
-    let value: unknown
-    try {
-      value = await response.json()
-    } catch {
-      throw new Error("Canvas returned an invalid JSON list; no response body was echoed")
-    }
-    if (!Array.isArray(value)) throw new Error("Canvas returned an unexpected list response")
-    items.push(...(value as Obj[]))
-    const next = paginationLink(response.headers.get("link"), base(config))
-    if (!next) break
-    current = next
-  }
-  return items
-}
+const get = (client: CanvasClient, url: URL) => client.get(url)
+const list = (client: CanvasClient, url: URL) => client.list(url)
 export async function listCourses(
   config: ToolkitConfig,
   includeConcluded = false,
+  client: CanvasClient = createCanvasClient(config),
 ): Promise<Array<{ id: string; code: string; name: string }>> {
   const root = base(config)
-  const rows = await list(config, apiUrl(root, "courses?per_page=100&include[]=term"))
-  if (includeConcluded) rows.push(...(await listConcludedCourses(config)))
+  const rows = await list(client, apiUrl(root, "courses?per_page=100&include[]=term"))
+  if (includeConcluded) rows.push(...(await listConcludedCourses(config, client)))
   return [
     ...new Map(
       rows.map((c) => [
@@ -226,9 +113,12 @@ export async function listCourses(
 }
 
 /** Completed enrollment discovery is explicit; never automatically selects courses. */
-export async function listConcludedCourses(config: ToolkitConfig): Promise<Obj[]> {
+export async function listConcludedCourses(
+  config: ToolkitConfig,
+  client: CanvasClient = createCanvasClient(config),
+): Promise<Obj[]> {
   return list(
-    config,
+    client,
     apiUrl(
       base(config),
       "courses?enrollment_state=completed&state[]=completed&per_page=100&include[]=term",
@@ -237,11 +127,15 @@ export async function listConcludedCourses(config: ToolkitConfig): Promise<Obj[]
 }
 
 /** Explicit unresolved pilot only: retain no submission bodies or probe responses. */
-export async function probeUnresolvedPilotCourse(config: ToolkitConfig, id: string) {
+export async function probeUnresolvedPilotCourse(
+  config: ToolkitConfig,
+  id: string,
+  client: CanvasClient = createCanvasClient(config),
+) {
   if (!/^[1-9]\d*$/.test(id)) throw new Error("Pilot course needs an exact numeric Canvas ID")
   let metadata: Obj = { id }
   try {
-    const response = await get(config, apiUrl(base(config), `courses/${id}`))
+    const response = await get(client, apiUrl(base(config), `courses/${id}`))
     const bytes = await readBounded(response, 1_000_000, 10_000)
     if (!bytes) throw new Error("Pilot course metadata exceeds bounds")
     let value: unknown
@@ -263,7 +157,7 @@ export async function probeUnresolvedPilotCourse(config: ToolkitConfig, id: stri
   }
   let assignments: Obj[]
   try {
-    assignments = await list(config, apiUrl(base(config), `courses/${id}/assignments?per_page=100`))
+    assignments = await list(client, apiUrl(base(config), `courses/${id}/assignments?per_page=100`))
   } catch (error) {
     if (!unavailable(error)) throw error
     throw new Error("Explicit pilot assignment history is unavailable")
@@ -284,7 +178,7 @@ export async function probeUnresolvedPilotCourse(config: ToolkitConfig, id: stri
   )) {
     try {
       const response = await get(
-        config,
+        client,
         apiUrl(
           base(config),
           `courses/${id}/assignments/${assignmentId}/submissions/self?include[]=rubric_assessment`,
@@ -315,8 +209,11 @@ export async function probeUnresolvedPilotCourse(config: ToolkitConfig, id: stri
 }
 
 /** Validate the configured token without returning identity or profile data. */
-async function verifiedSubjectHash(config: ToolkitConfig): Promise<string> {
-  const response = await get(config, apiUrl(base(config), "users/self"))
+async function verifiedSubjectHash(
+  config: ToolkitConfig,
+  client: CanvasClient = createCanvasClient(config),
+): Promise<string> {
+  const response = await get(client, apiUrl(base(config), "users/self"))
   const reader = response.body?.getReader()
   if (!reader) throw new Error("Canvas returned no user profile; authorization was not verified")
   const chunks: Uint8Array[] = []
@@ -366,17 +263,21 @@ async function verifiedSubjectHash(config: ToolkitConfig): Promise<string> {
   return canvasSubjectHash(base(config).origin, subject)
 }
 
-export async function verifyAuth(config: ToolkitConfig): Promise<{ ok: true }> {
-  await verifiedSubjectHash(config)
+export async function verifyAuth(
+  config: ToolkitConfig,
+  client: CanvasClient = createCanvasClient(config),
+): Promise<{ ok: true }> {
+  await verifiedSubjectHash(config, client)
   return { ok: true }
 }
 
 /** Return only active courses for onboarding; listCourses remains the discovery API. */
 export async function listActiveCourses(
   config: ToolkitConfig,
+  client: CanvasClient = createCanvasClient(config),
 ): Promise<Array<{ id: string; code: string; name: string }>> {
   const rows = await list(
-    config,
+    client,
     apiUrl(base(config), "users/self/courses?enrollment_state=active&per_page=100&include[]=term"),
   )
   return [
@@ -722,112 +623,12 @@ function linkedFileIds(html: unknown): string[] {
     if (match[1]) ids.add(match[1])
   return [...ids]
 }
-const blockedAddressRanges = new BlockList()
-for (const subnet of [
-  "0.0.0.0/8",
-  "10.0.0.0/8",
-  "100.64.0.0/10",
-  "127.0.0.0/8",
-  "169.254.0.0/16",
-  "172.16.0.0/12",
-  "192.0.0.0/24",
-  "192.168.0.0/16",
-  "198.18.0.0/15",
-  "224.0.0.0/4",
-  "240.0.0.0/4",
-])
-  blockedAddressRanges.addSubnet(
-    subnet.split("/")[0] ?? "0.0.0.0",
-    Number(subnet.split("/")[1]),
-    "ipv4",
-  )
-for (const [subnet, prefix] of [
-  ["::", 128],
-  ["::", 96],
-  ["::1", 128],
-  ["fc00::", 7],
-  ["fe80::", 10],
-  ["ff00::", 8],
-] as const)
-  blockedAddressRanges.addSubnet(subnet, prefix, "ipv6")
-
-function isPublicAddress(address: string): boolean {
-  const version = isIP(address)
-  if (version === 0) return false
-  if (version === 6 && address.toLowerCase().startsWith("::ffff:")) return false
-  return !blockedAddressRanges.check(address, version === 4 ? "ipv4" : "ipv6")
-}
-
-async function publicHttpsUrl(value: string | URL): Promise<URL | undefined> {
-  try {
-    const url = new URL(value)
-    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "")
-    if (
-      url.protocol !== "https:" ||
-      url.username ||
-      url.password ||
-      (url.port !== "" && url.port !== "443") ||
-      !host ||
-      host === "localhost" ||
-      host.endsWith(".localhost") ||
-      host.endsWith(".local") ||
-      isIP(host) !== 0 ||
-      !host.includes(".") ||
-      !/^[a-z0-9.-]+$/.test(host) ||
-      host.includes("..")
-    )
-      return
-    const addresses = await resolveAddresses(host)
-    if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) return
-    return url
-  } catch {
-    return
-  }
-}
-async function download(config: ToolkitConfig, initial: URL): Promise<Response> {
-  const root = base(config)
-  let current = initial
-  const seen = new Set<string>()
-  for (let hop = 0; hop <= 5; hop++) {
-    if (seen.has(current.href)) throw new Error("download redirect loop")
-    seen.add(current.href)
-    const sameOrigin = current.origin === root.origin
-    const safe = sameOrigin ? current : await publicHttpsUrl(current)
-    if (!safe) throw new Error("unsafe download URL")
-    let response: Response
-    try {
-      response = await requestWithRetry(current, {
-        method: "GET",
-        headers: sameOrigin
-          ? { Authorization: `Bearer ${token(config)}`, Accept: "*/*" }
-          : { Accept: "*/*" },
-        redirect: "manual",
-      })
-    } catch {
-      throw new Error("download request failed")
-    }
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      const location = response.headers.get("location")
-      if (!location || hop === 5) throw new Error("download redirect limit exceeded")
-      const next = new URL(location, current)
-      if (next.origin !== root.origin && !(await publicHttpsUrl(next)))
-        throw new Error("unsafe download redirect")
-      current = next
-      continue
-    }
-    if (!response.ok)
-      throw sameOrigin
-        ? new CanvasHttpError(response.status)
-        : new Error(`External file download failed with HTTP ${response.status}`)
-    return response
-  }
-  throw new Error("download redirect limit exceeded")
-}
 async function syncOne(
   config: ToolkitConfig,
   course: { id: string; code: string; name: string; root: string; syncNamespace?: "Canvas Agent" },
   manager: Managed,
   explicitPilot = false,
+  client: CanvasClient = createCanvasClient(config),
 ): Promise<void> {
   const vault = manager.vault,
     courseRoot = resolve(vault, course.root, course.syncNamespace ?? "")
@@ -839,7 +640,7 @@ async function syncOne(
   try {
     courseInfo = await jsonObject(
       await get(
-        config,
+        client,
         apiUrl(
           root,
           `courses/${encodeURIComponent(course.id)}?include[]=syllabus_body&include[]=term`,
@@ -888,7 +689,7 @@ async function syncOne(
   const sourceReferences: Array<{ path: string; ids: string[] }> = []
   const optionalList = async (endpoint: string, label: string): Promise<Obj[]> => {
     try {
-      return await list(config, apiUrl(root, `${prefix}/${endpoint}`))
+      return await list(client, apiUrl(root, `${prefix}/${endpoint}`))
     } catch (error) {
       if (!unavailable(error)) throw error
       manager.notices.push(
@@ -911,7 +712,7 @@ async function syncOne(
       (endpoint === "pages"
         ? await optionalList("pages?per_page=100", "Pages list")
         : await list(
-            config,
+            client,
             apiUrl(
               root,
               `${prefix}/${endpoint}?per_page=100${endpoint === "assignments" ? "&include[]=all_dates&override_assignment_dates=true" : ""}`,
@@ -925,7 +726,7 @@ async function syncOne(
       if (endpoint === "pages" && typeof value.body !== "string" && typeof value.url === "string") {
         try {
           source = await jsonObject(
-            await get(config, apiUrl(root, `${prefix}/pages/${encodeURIComponent(value.url)}`)),
+            await get(client, apiUrl(root, `${prefix}/pages/${encodeURIComponent(value.url)}`)),
           )
         } catch (error) {
           if (!unavailable(error)) throw error
@@ -1052,7 +853,7 @@ async function syncOne(
   for (const fileId of referencedFileIds) {
     if (knownFileIds.has(fileId)) continue
     try {
-      const response = await get(config, apiUrl(root, `files/${encodeURIComponent(fileId)}`))
+      const response = await get(client, apiUrl(root, `files/${encodeURIComponent(fileId)}`))
       const metadata = await jsonObject(response)
       if (String(metadata.id) === fileId) files.push(metadata)
     } catch (error) {
@@ -1071,12 +872,12 @@ async function syncOne(
       continue
     }
     const url = typeof file.url === "string" ? new URL(file.url, root) : undefined
-    if (!url || (url.origin !== root.origin && !(await publicHttpsUrl(url)))) {
+    if (!url || (url.origin !== root.origin && !(await client.publicHttpsUrl(url)))) {
       manager.notices.push(`Skipped external or unsafe Canvas file ${filename} in ${course.code}.`)
       continue
     }
     try {
-      const response = await download(config, url)
+      const response = await client.download(url)
       const bytes = await readBounded(response, 50 * 1024 * 1024)
       if (!bytes) {
         manager.notices.push(`Skipped Canvas file over 50 MB: ${filename}.`)
@@ -1140,7 +941,7 @@ async function syncOne(
   for (const assignmentId of [...new Set(feedbackAssignmentIds)]) {
     try {
       const response = await get(
-        config,
+        client,
         apiUrl(
           root,
           `${prefix}/assignments/${assignmentId}/submissions/self?include[]=rubric_assessment&include[]=submission_comments`,
@@ -1258,7 +1059,7 @@ async function syncOne(
     )
   }
   try {
-    const topics = await list(config, apiUrl(root, `${prefix}/discussion_topics?per_page=100`))
+    const topics = await list(client, apiUrl(root, `${prefix}/discussion_topics?per_page=100`))
     for (const topic of topics) {
       const title = String(topic.title ?? `Discussion ${topic.id}`)
       const path = join(
@@ -1287,7 +1088,7 @@ async function syncOne(
   }
   try {
     const announcements = await list(
-      config,
+      client,
       apiUrl(root, `${prefix}/discussion_topics?only_announcements=true&per_page=100`),
     )
     for (const announcement of announcements) {
@@ -1366,14 +1167,10 @@ export async function syncCourses(
   config: ToolkitConfig,
   options: {
     unresolvedPilot?: { id: string; code: string; name: string }
-    reminderDays?: number
-    notifyDueSoon?: boolean
     preserveSchool?: boolean
   } = {},
+  client: CanvasClient = createCanvasClient(config),
 ): Promise<SyncReport> {
-  const reminderDays = options.reminderDays ?? 7
-  if (!Number.isInteger(reminderDays) || reminderDays < 1 || reminderDays > 365)
-    throw new Error("Sync reminder lead days must be between 1 and 365")
   const pilot = options.unresolvedPilot
   if (
     pilot &&
@@ -1393,7 +1190,7 @@ export async function syncCourses(
   await assertNoPreservationMigration(vault)
   await guardCanvasOrigin(vault, base(config).origin)
   const stateResult = await loadSyncState(vault, notices, base(config).origin)
-  const subjectHash = await verifiedSubjectHash(config)
+  const subjectHash = await verifiedSubjectHash(config, client)
   const subjectBound = await guardSyncSubject(vault, base(config).origin, subjectHash)
   if (!subjectBound && stateResult.stateHash)
     notices.push(
@@ -1401,7 +1198,7 @@ export async function syncCourses(
     )
   let all: Obj[]
   try {
-    all = await list(config, apiUrl(base(config), "courses?per_page=100&include[]=term"))
+    all = await list(client, apiUrl(base(config), "courses?per_page=100&include[]=term"))
   } catch (error) {
     if (!unavailable(error)) throw error
     all = []
@@ -1421,7 +1218,7 @@ export async function syncCourses(
     if (!/^[1-9]\d*$/.test(id)) throw new Error("Sync allowlist needs numeric Canvas course IDs")
     try {
       const value: unknown = await jsonObject(
-        await get(config, apiUrl(base(config), `courses/${id}?include[]=term`)),
+        await get(client, apiUrl(base(config), `courses/${id}?include[]=term`)),
       )
       if (
         !value ||
@@ -1632,6 +1429,7 @@ export async function syncCourses(
           },
           manager,
           pilot?.id === course.id,
+          client,
         )
         courseReports.push({
           courseId: String(course.id),
@@ -1683,45 +1481,11 @@ export async function syncCourses(
     })
   }
   if (!courses.length) notices.push("No allowlisted courses were returned by Canvas.")
-  let dueSoon:
-    | {
-        status: "saved"
-        receipt: Awaited<ReturnType<typeof saveDueSoon>>
-        notification: Awaited<ReturnType<typeof notifyDueSoon>> | "not-requested"
-      }
-    | { status: "not-refreshed" }
-    | undefined
-  if (courses.length) {
-    try {
-      const workspace = await inspectWorkspace(vault)
-      const syncedIds = new Set(courses.map((course) => course.id))
-      const context = {
-        ...workspace,
-        courses: workspace.courses.filter(
-          (course) => course.canvasId && syncedIds.has(course.canvasId),
-        ),
-      }
-      const plan = await planDueSoon(vault, context, { days: reminderDays })
-      const receipt = await saveDueSoon(vault, plan)
-      const notification = options.notifyDueSoon ? await notifyDueSoon(plan) : "not-requested"
-      dueSoon = { status: "saved", receipt, notification }
-      if (notification === "failed" || notification === "unsupported-platform")
-        notices.push(
-          `Due-soon desktop delivery: ${notification}; the private durable alert remains available.`,
-        )
-    } catch {
-      dueSoon = { status: "not-refreshed" }
-      notices.push(
-        "Due-soon alert was not refreshed; inspect private _meta/due-soon ownership, locks or interrupted state. Synced course files were not rolled back.",
-      )
-    }
-  }
   return {
     courses: courses.length,
     written,
     notices,
     courseReports,
     failedCourses: 0,
-    ...(dueSoon ? { dueSoon } : {}),
   }
 }

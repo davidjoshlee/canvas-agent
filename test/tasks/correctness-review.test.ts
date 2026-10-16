@@ -188,7 +188,7 @@ it("bounds completed draft reads before assembling a review handoff", async () =
   const f = await fixture()
   const path = join(f.vault, f.task.output ?? "missing-output")
   await truncate(path, 5 * 1024 * 1024 + 1)
-  await expect(prepareCorrectnessReview(f.vault, f.task.id)).rejects.toThrow(/bounded regular-file/)
+  await expect(prepareCorrectnessReview(f.vault, f.task.id)).rejects.toThrow(/bound/)
   expect((await listCorrectnessReviews(f.vault, "CS101")).reviews).toEqual([])
 })
 

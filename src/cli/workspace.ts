@@ -4,7 +4,8 @@ import { ingestFile } from "../documents/content.js"
 import { withHomeworkDraftStatus } from "../student/homework-status.js"
 import { readTimeline, renderTimeline } from "../student/timeline.js"
 import { readUpcoming } from "../student/upcoming.js"
-import { createAssignmentTask } from "../tasks/store.js"
+import { createAssignmentTask } from "../tasks/creation.js"
+import { vaultMutation } from "../vault/command-effects.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import { inspectVaultHealth } from "./health.js"
 import { configWithEnv, render, summary, taskMarkdownPath } from "./output.js"
@@ -17,6 +18,10 @@ export function registerWorkspaceCommands(program: Command): void {
   ) => {
     const schedule = program
       .command(name)
+      .hook(
+        "preAction",
+        vaultMutation((options) => Boolean(options.draft)),
+      )
       .description(
         name === "homework"
           ? "show upcoming and overdue assignments"
@@ -129,6 +134,7 @@ export function registerWorkspaceCommands(program: Command): void {
 
   program
     .command("ingest")
+    .hook("preAction", vaultMutation())
     .description("copy a selected local file into one course and extract supported text")
     .argument("<file>", "absolute path to the chosen local file")
     .requiredOption("--course <course>", "explicit course code or title")

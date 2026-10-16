@@ -7,9 +7,9 @@ import { readSimulationCalculations } from "../evaluation/calculations.js"
 import { readSimulationTask } from "../evaluation/tasks.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { TaskRecord } from "../shared/types.js"
+import { CALCULATION_OPERATIONS, calculateValues } from "./calculation-core.js"
 import { checkCandidate } from "./completion.js"
-import { readTask } from "./store.js"
-import { CALCULATION_OPERATIONS, calculateValues } from "./tools.js"
+import { readTask } from "./records.js"
 
 const sha = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex")
 const recordSchema = z

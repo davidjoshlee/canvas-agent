@@ -2,12 +2,9 @@ import type { Command } from "commander"
 import { z } from "zod"
 import { loadAdjacentEnv, loadConfig } from "../config/index.js"
 import type { ToolkitConfig } from "../shared/types.js"
-import {
-  hasPrepMaterial,
-  readTask,
-  selectAssignmentPrompt,
-  selectPrepInputs,
-} from "../tasks/store.js"
+import { hasPrepMaterial, selectAssignmentPrompt, selectPrepInputs } from "../tasks/recipes.js"
+import { readTask } from "../tasks/records.js"
+import { vaultMutation } from "../vault/command-effects.js"
 import { refreshConfiguredReadingMirror } from "../vault/reading-copy.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import { buildCoreDogfoodFlows } from "./core-flows.js"
@@ -127,6 +124,7 @@ async function execute(
 export function registerDogfoodCommand(program: Command) {
   const dogfood = program
     .command("dogfood")
+    .hook("preAction", vaultMutation())
     .description("run resumable student-workflow checks with explicit host/human stops")
     .option("--course <course>", "explicit local course")
     .option("--week <date>", "explicit Monday for prep")
@@ -217,6 +215,7 @@ export function registerDogfoodCommand(program: Command) {
     })
   dogfood
     .command("resume <id>")
+    .hook("preAction", vaultMutation())
     .option(
       "--usage-file <path>",
       "attach a normalized host usage export after the preceding flows finish",

@@ -8,12 +8,22 @@ import { afterEach, expect, it } from "vitest"
 import {
   CanvasSyncPartialError,
   isCanvasUnauthorized,
-  setCanvasFetchForTests,
-  syncCourses,
+  syncCourses as syncCanvasCourses,
 } from "../../src/canvas/sync.js"
 import { createConfig } from "../../src/config/index.js"
+import {
+  type CanvasFetch,
+  type CanvasSleep,
+  createCanvasTestTransport,
+} from "../helpers/canvas-client.js"
 
 const roots: string[] = []
+const canvasTransport = createCanvasTestTransport()
+function useCanvasFetch(fetch?: CanvasFetch, sleep?: CanvasSleep): void {
+  canvasTransport.use({ ...(fetch ? { fetch } : {}), ...(sleep ? { sleep } : {}) })
+}
+const syncCourses = (...args: Parameters<typeof syncCanvasCourses>) =>
+  syncCanvasCourses(args[0], args[1], canvasTransport.client(args[0]))
 it("uses the compiled CLI against a synthetic server with verified auth but forbidden course discovery", async () => {
   const calls: Array<{ path: string; method: string }> = []
   let discoveryStatus = 403
@@ -142,7 +152,7 @@ it.each([403, 404, 401, "malformed"] as const)(
     process.env.CANVAS_SYNTHETIC_MULTI_TOKEN = "synthetic-token"
     const calls: string[] = []
     const json = (value: unknown) => new Response(JSON.stringify(value))
-    setCanvasFetchForTests(async (input, init) => {
+    useCanvasFetch(async (input, init) => {
       expect(init?.method).toBe("GET")
       const path = new URL(String(input)).pathname
       calls.push(path)
@@ -177,7 +187,7 @@ it.each([403, 404, 401, "malformed"] as const)(
   },
 )
 afterEach(async () => {
-  setCanvasFetchForTests()
+  canvasTransport.reset()
   delete process.env.CANVAS_SYNTHETIC_MULTI_TOKEN
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -207,7 +217,7 @@ it.each([
     }))
     const calls: string[] = []
     const json = (value: unknown) => new Response(JSON.stringify(value))
-    setCanvasFetchForTests(
+    useCanvasFetch(
       async (input, init) => {
         expect(init?.method).toBe("GET")
         const path = new URL(String(input)).pathname

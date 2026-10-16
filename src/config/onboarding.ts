@@ -1,3 +1,4 @@
+import type { CanvasClient } from "../canvas/client.js"
 import {
   isCanvasDiscoveryUnavailable,
   listActiveCourses,
@@ -13,6 +14,7 @@ export async function selectOnboardingCourses(
   configPath: string,
   config: ToolkitConfig,
   selection: { ids?: string[]; allActive?: boolean; pilot?: boolean },
+  client?: CanvasClient,
 ): Promise<{
   selected: string[]
   courses: Array<{ id: string; code: string; name: string }>
@@ -33,7 +35,7 @@ export async function selectOnboardingCourses(
     const id = selection.ids[0]
     if (!id || !/^[1-9]\d*$/.test(id))
       throw new Error("Pilot course needs an exact numeric Canvas ID")
-    const concluded = await listConcludedCourses(config)
+    const concluded = await listConcludedCourses(config, client)
     const matches = concluded.filter((course) => String(course.id) === id)
     if (matches.length > 1) throw new Error("Pilot course discovery is ambiguous")
     let course = matches[0]
@@ -41,9 +43,9 @@ export async function selectOnboardingCourses(
       Awaited<ReturnType<typeof selectOnboardingCourses>>["pilotEligibility"]
     > = { basis: "completed-enrollment" }
     if (!course) {
-      if ((await listActiveCourses(config)).some((active) => active.id === id))
+      if ((await listActiveCourses(config, client)).some((active) => active.id === id))
         throw new Error("Known active course cannot be selected as a concluded/unresolved pilot")
-      const probe = await probeUnresolvedPilotCourse(config, id)
+      const probe = await probeUnresolvedPilotCourse(config, id, client)
       course = { id, course_code: probe.code, name: probe.name }
       pilotEligibility = {
         basis: "assignment-date-span-and-own-feedback",
@@ -66,14 +68,14 @@ export async function selectOnboardingCourses(
         "Selected one explicit pilot course. Existing files are preserved; date span and cached feedback do not reconstruct historical contents, authorship or permissions.",
     }
   }
-  const active = await listActiveCourses(config)
+  const active = await listActiveCourses(config, client)
   let discovered: Awaited<ReturnType<typeof listCourses>>
   let discoveryGap = false
   try {
-    discovered = await listCourses(config)
+    discovered = await listCourses(config, false, client)
   } catch (error) {
     if (!isCanvasDiscoveryUnavailable(error)) throw error
-    await verifyAuth(config)
+    await verifyAuth(config, client)
     discovered = active
     discoveryGap = true
   }

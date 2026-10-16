@@ -1,7 +1,7 @@
 import { constants } from "node:fs"
 import { open } from "node:fs/promises"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
-import { createWorkbook, parseWorkbookInput, type WorkbookInput } from "./tools.js"
+import { createWorkbook, parseWorkbookInput, type WorkbookInput } from "./workbook.js"
 
 const generic = new Set(["debit", "credit", "label", "value", "description", "ref", "amount"])
 

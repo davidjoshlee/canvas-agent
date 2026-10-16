@@ -4,27 +4,37 @@ import { join } from "node:path"
 import JSZip from "jszip"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
-  listCourses,
-  setCanvasDnsForTests,
-  setCanvasFetchForTests as setCanvasFetch,
-  syncCourses,
-  verifyAuth,
+  listCourses as listCanvasCourses,
+  syncCourses as syncCanvasCourses,
+  verifyAuth as verifyCanvasAuth,
 } from "../../src/canvas/sync.js"
 import { captureSimulation, replaySimulation } from "../../src/evaluation/captures.js"
 import { createSimulationTask, readSimulationTask } from "../../src/evaluation/tasks.js"
 import type { ToolkitConfig } from "../../src/shared/types.js"
 import { createAssignmentTask, createPrepTask } from "../../src/tasks/store.js"
 import { inspectWorkspace, selectCourse } from "../../src/vault/workspace.js"
+import {
+  type CanvasAddressResolver,
+  type CanvasFetch,
+  type CanvasSleep,
+  createCanvasTestTransport,
+} from "../helpers/canvas-client.js"
 
 const dirs: string[] = []
+const canvasTransport = createCanvasTestTransport()
+const syncCourses = (...args: Parameters<typeof syncCanvasCourses>) =>
+  syncCanvasCourses(args[0], args[1], canvasTransport.client(args[0]))
+const listCourses = (config: ToolkitConfig, includeConcluded = false) =>
+  listCanvasCourses(config, includeConcluded, canvasTransport.client(config))
+const verifyAuth = (config: ToolkitConfig) =>
+  verifyCanvasAuth(config, canvasTransport.client(config))
 async function temp() {
   const d = await mkdtemp(join(tmpdir(), "canvas-agent-canvas-"))
   dirs.push(d)
   return d
 }
 afterEach(async () => {
-  setCanvasFetchForTests()
-  setCanvasDnsForTests()
+  canvasTransport.reset()
   delete process.env.CANVAS_TEST_TOKEN
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
@@ -42,22 +52,28 @@ const json = (body: unknown, headers: Record<string, string> = {}) =>
 
 // Legacy fixtures define no quizzes/own feedback. Dedicated resource tests use
 // the actual fetch hook to exercise pagination, permissions and private payloads.
-function setCanvasFetchForTests(
-  fn?: Parameters<typeof setCanvasFetch>[0],
-  wait?: Parameters<typeof setCanvasFetch>[1],
-) {
-  setCanvasFetch(
-    fn
-      ? async (input, init) => {
-          const path = new URL(String(input)).pathname
-          if (path === "/api/v1/users/self") return json({ id: 99, name: "Synthetic student" })
-          if (path.endsWith("/quizzes")) return json([])
-          const self = path.match(/\/assignments\/([1-9]\d*)\/submissions\/self$/)
-          return self ? json({ assignment_id: self[1] }) : fn(input, init)
+function useCanvasFetch(fn?: CanvasFetch, wait?: CanvasSleep) {
+  canvasTransport.use({
+    ...(fn
+      ? {
+          fetch: async (input, init) => {
+            const path = new URL(String(input)).pathname
+            if (path === "/api/v1/users/self") return json({ id: 99, name: "Synthetic student" })
+            if (path.endsWith("/quizzes")) return json([])
+            const self = path.match(/\/assignments\/([1-9]\d*)\/submissions\/self$/)
+            return self ? json({ assignment_id: self[1] }) : fn(input, init)
+          },
         }
-      : undefined,
-    wait,
-  )
+      : {}),
+    ...(wait ? { sleep: wait } : {}),
+  })
+}
+
+function useCanvasDns(resolver?: CanvasAddressResolver): void {
+  canvasTransport.use({ ...(resolver ? { resolveAddresses: resolver } : {}) })
+}
+function useCanvasRawFetch(fetch: CanvasFetch): void {
+  canvasTransport.use({ fetch })
 }
 
 describe("Canvas read-only sync", () => {
@@ -68,7 +84,7 @@ describe("Canvas read-only sync", () => {
     archive.file("ppt/slides/slide2.xml", "<a:t>Second synthetic evidence</a:t>")
     archive.file("ppt/slides/slide1.xml", "<a:t>First synthetic evidence</a:t>")
     const bytes = await archive.generateAsync({ type: "uint8array" })
-    setCanvasFetchForTests(async (input, init) => {
+    useCanvasFetch(async (input, init) => {
       expect(init?.method).toBe("GET")
       const path = new URL(String(input)).pathname
       if (path === "/api/v1/courses")
@@ -127,7 +143,7 @@ describe("Canvas read-only sync", () => {
     process.env.CANVAS_TEST_TOKEN = "synthetic-token"
     const vault = await temp()
     const calls: string[] = []
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const path = new URL(String(input)).pathname
       calls.push(path)
       if (path === "/api/v1/courses")
@@ -172,7 +188,7 @@ describe("Canvas read-only sync", () => {
         sentinel = join(vault, "student.md")
       await writeFile(sentinel, "Private synthetic existing student file")
       const calls: string[] = []
-      setCanvasFetchForTests(async (input, init) => {
+      useCanvasFetch(async (input, init) => {
         expect(init?.method).toBe("GET")
         const path = new URL(String(input)).pathname
         calls.push(path)
@@ -202,7 +218,7 @@ describe("Canvas read-only sync", () => {
       process.env.CANVAS_TEST_TOKEN = "synthetic-token"
       const vault = await temp()
       let downloads = 0
-      setCanvasFetchForTests(async (input) => {
+      useCanvasFetch(async (input) => {
         const path = new URL(String(input)).pathname
         const course = { id: 1, course_code: "CS101", name: "Synthetic course" }
         if (path === "/api/v1/courses") return json([course])
@@ -247,7 +263,7 @@ describe("Canvas read-only sync", () => {
       ["31", "Substantive synthetic framework reading for the first session."],
       ["32", "Future synthetic reading for the following session."],
     ])
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const url = new URL(String(input)),
         path = url.pathname
       if (path === "/api/v1/courses") return json([course])
@@ -337,7 +353,7 @@ describe("Canvas read-only sync", () => {
       { id: 32, filename: "future.txt", unlock_at: "2026-10-12T08:00:00Z" },
       { id: 33, filename: "undated.txt", created_at: "2026-10-01T08:00:00Z" },
     ].map((file) => ({ ...file, url: `https://canvas.example.edu/files/${file.id}/download` }))
-    setCanvasFetchForTests(async (input, init) => {
+    useCanvasFetch(async (input, init) => {
       expect(init?.method).toBe("GET")
       const path = new URL(String(input)).pathname
       const course = { id: 1, course_code: "CS101", name: "Synthetic release course" }
@@ -433,7 +449,7 @@ describe("Canvas read-only sync", () => {
   it("requires a bounded actual user profile rather than treating every HTTP 200 as authorization", async () => {
     process.env.CANVAS_TEST_TOKEN = "synthetic-auth-secret"
     const config = cfg(await temp())
-    setCanvasFetch(async (_input, init) => {
+    useCanvasRawFetch(async (_input, init) => {
       expect(init?.method).toBe("GET")
       expect(init?.redirect).toBe("error")
       return json({
@@ -454,10 +470,10 @@ describe("Canvas read-only sync", () => {
       '{"id":"self","name":"PRIVATE"}',
       '{"id":1}',
     ]) {
-      setCanvasFetch(async () => new Response(body, { status: 200 }))
+      useCanvasRawFetch(async () => new Response(body, { status: 200 }))
       await expect(verifyAuth(config)).rejects.toThrow(/authorization was not verified/)
     }
-    setCanvasFetch(
+    useCanvasRawFetch(
       async () => new Response(`{"id":1,"name":"Student","bio":"${"x".repeat(256 * 1024)}"}`),
     )
     await expect(verifyAuth(config)).rejects.toThrow(/bounded user profile/)
@@ -466,7 +482,7 @@ describe("Canvas read-only sync", () => {
     process.env.CANVAS_TEST_TOKEN = "synthetic-auth-secret"
     const config = cfg(await temp())
     const cancelled = vi.fn()
-    setCanvasFetch(
+    useCanvasRawFetch(
       async () =>
         new Response(
           new ReadableStream({
@@ -490,7 +506,7 @@ describe("Canvas read-only sync", () => {
   it("retains real API module type/order so fresh assignment and frozen handoffs include preceding readings", async () => {
     process.env.CANVAS_TEST_TOKEN = "synthetic-token"
     const vault = await temp()
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const url = new URL(String(input)),
         path = url.pathname
       const course = { id: 1, course_code: "CS101", name: "Synthetic course" }
@@ -583,7 +599,7 @@ describe("Canvas read-only sync", () => {
     await mkdir(join(vault, "ACCT340"))
     const studentFile = join(vault, "ACCT340", "notes.md")
     await writeFile(studentFile, "Student-owned notes")
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const u = String(input)
       const course = { id: 1, course_code: "F26-ACCT-340-01", name: "Accounting" }
       if (u.includes("/courses?")) return json([course])
@@ -603,7 +619,7 @@ describe("Canvas read-only sync", () => {
   it("continues after disabled Pages and forbidden Files lists and recovers module-linked files/pages", async () => {
     process.env.CANVAS_TEST_TOKEN = "synthetic-secret"
     const vault = await temp()
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const url = new URL(String(input))
       if (url.pathname === "/api/v1/courses")
         return json([{ id: 1, course_code: "MBA101", name: "Test course" }])
@@ -653,7 +669,7 @@ describe("Canvas read-only sync", () => {
   it.each([401, 500])("does not treat HTTP %s on Pages as a disabled tab", async (status) => {
     process.env.CANVAS_TEST_TOKEN = "synthetic-secret"
     const vault = await temp()
-    setCanvasFetchForTests(
+    useCanvasFetch(
       async (input) => {
         const url = String(input)
         if (url.includes("/courses?")) return json([{ id: 1, course_code: "MBA101", name: "Test" }])
@@ -668,7 +684,7 @@ describe("Canvas read-only sync", () => {
   it("stops when linked-file lookup loses authentication", async () => {
     process.env.CANVAS_TEST_TOKEN = "synthetic-secret"
     const vault = await temp()
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const url = String(input)
       if (url.includes("/courses?")) return json([{ id: 1, course_code: "MBA101", name: "Test" }])
       if (url.includes("/courses/1?"))
@@ -681,13 +697,13 @@ describe("Canvas read-only sync", () => {
   it("discovers linked file references and fetches verifier URLs without forwarding Canvas auth", async () => {
     process.env.CANVAS_TEST_TOKEN = "private-token"
     const dnsHosts: string[] = []
-    setCanvasDnsForTests(async (hostname) => {
+    useCanvasDns(async (hostname) => {
       dnsHosts.push(hostname)
       return ["93.184.216.34"]
     })
     const vault = await temp()
     const calls: Array<{ url: string; auth: string | null }> = []
-    setCanvasFetchForTests(
+    useCanvasFetch(
       async (input, init) => {
         const url = String(input)
         calls.push({ url, auth: new Headers(init?.headers).get("authorization") })
@@ -742,11 +758,11 @@ describe("Canvas read-only sync", () => {
     const vault = await temp()
     let externalFetched = false
     let dnsCalls = 0
-    setCanvasDnsForTests(async (hostname) => {
+    useCanvasDns(async (hostname) => {
       dnsCalls++
       return hostname.startsWith("ipv6.") ? ["2606:4700:4700::1111", "fd12::1"] : ["10.20.30.40"]
     })
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const url = String(input)
       if (url.startsWith("https://private.cdn.example.net")) externalFetched = true
       if (url.includes("/courses?"))
@@ -775,7 +791,7 @@ describe("Canvas read-only sync", () => {
 
     const portVault = await temp()
     dnsCalls = 0
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const url = String(input)
       if (url.includes("/courses?"))
         return json([{ id: 1, course_code: "ACCT340", name: "Accounting" }])
@@ -798,14 +814,14 @@ describe("Canvas read-only sync", () => {
   })
   it("explains missing credentials before making a network request", async () => {
     const network = vi.fn()
-    setCanvasFetchForTests(network)
+    useCanvasFetch(network)
     await expect(listCourses(cfg("/unused", []))).rejects.toThrow("CANVAS_TEST_TOKEN is not set")
     expect(network).not.toHaveBeenCalled()
   })
   it("lists all user's courses for discovery and follows same-origin pagination with GET and bearer auth", async () => {
     process.env.CANVAS_TEST_TOKEN = "synthetic-secret"
     const calls: Array<{ url: string; method?: string; auth?: string }> = []
-    setCanvasFetchForTests(async (input, init) => {
+    useCanvasFetch(async (input, init) => {
       calls.push({
         url: String(input),
         method: init?.method,
@@ -846,7 +862,7 @@ describe("Canvas read-only sync", () => {
       '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Local DOCX reading contents</w:t></w:r></w:p></w:body></w:document>',
     )
     const docxBytes = await docxZip.generateAsync({ type: "uint8array" })
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const u = String(input)
       if (u.includes("/courses?")) return json([course])
       if (/\/courses\/1(?:\?|$)/.test(u)) return json(course)
@@ -978,7 +994,7 @@ describe("Canvas read-only sync", () => {
   it("rejects cross-origin pagination and course-code collisions before course writes", async () => {
     process.env.CANVAS_TEST_TOKEN = "x"
     const vault = await temp()
-    setCanvasFetchForTests(async () =>
+    useCanvasFetch(async () =>
       json([
         { id: 1, course_code: "Same" },
         { id: 2, course_code: "Same" },
@@ -988,7 +1004,7 @@ describe("Canvas read-only sync", () => {
     expect(await readFile(join(vault, "_meta", "canvas-courses.json")).catch(() => "missing")).toBe(
       "missing",
     )
-    setCanvasFetchForTests(async () =>
+    useCanvasFetch(async () =>
       json([], {
         link: '<https://user:pass@canvas.example.edu/api/v1/courses?page=2>; rel="next"',
       }),
@@ -1000,13 +1016,13 @@ describe("Canvas read-only sync", () => {
     process.env.CANVAS_TEST_TOKEN = "x"
     const vault = await temp(),
       outside = await temp()
-    setCanvasFetchForTests(async () => json([{ id: 1, course_code: "_meta", name: "Bad" }]))
+    useCanvasFetch(async () => json([{ id: 1, course_code: "_meta", name: "Bad" }]))
     await expect(syncCourses(cfg(vault))).rejects.toThrow("Reserved or unsafe")
     expect(await readFile(join(vault, "_meta", "canvas-courses.json")).catch(() => "missing")).toBe(
       "missing",
     )
     await symlink(outside, join(vault, "ACCT340"))
-    setCanvasFetchForTests(async () => json([{ id: 1, course_code: "F26-ACCT-340", name: "Bad" }]))
+    useCanvasFetch(async () => json([{ id: 1, course_code: "F26-ACCT-340", name: "Bad" }]))
     await expect(syncCourses(cfg(vault))).rejects.toThrow("Symbolic links")
     expect(await readFile(join(vault, "_meta", "canvas-courses.json")).catch(() => "missing")).toBe(
       "missing",
@@ -1017,7 +1033,7 @@ describe("Canvas read-only sync", () => {
     process.env.CANVAS_TEST_TOKEN = "x"
     const rawVault = await temp()
     await mkdir(join(rawVault, "F26-ACCT-340"))
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const u = String(input)
       if (u.includes("/courses?"))
         return json([{ id: 1, course_code: "F26-ACCT-340", name: "Accounting" }])
@@ -1057,7 +1073,7 @@ describe("Canvas read-only sync", () => {
 
   it("does not log or expose the credential in errors", async () => {
     process.env.CANVAS_TEST_TOKEN = "do-not-leak"
-    setCanvasFetchForTests(async () => new Response("", { status: 403 }))
+    useCanvasFetch(async () => new Response("", { status: 403 }))
     try {
       await listCourses(cfg("/tmp/v"))
     } catch (error) {
@@ -1072,7 +1088,7 @@ describe("Canvas read-only sync", () => {
     const vault = await temp()
     let interrupted = true
     let name = "Initial name"
-    setCanvasFetchForTests(async (input) => {
+    useCanvasFetch(async (input) => {
       const url = String(input)
       const course = { id: 1, course_code: "ACCT340", name }
       if (url.includes("/courses?")) return json([course])
@@ -1100,7 +1116,7 @@ describe("Canvas read-only sync", () => {
         courses: [{ id: "2", code: "ACCT340", root: "ACCT340", name: "Old term" }],
       }),
     )
-    setCanvasFetchForTests(async () => json([{ id: 1, course_code: "ACCT340", name: "New term" }]))
+    useCanvasFetch(async () => json([{ id: 1, course_code: "ACCT340", name: "New term" }]))
     await expect(syncCourses(cfg(vault))).rejects.toThrow("existing mapping")
     expect(await readFile(join(vault, "ACCT340", "00 Home.md")).catch(() => null)).toBeNull()
   })

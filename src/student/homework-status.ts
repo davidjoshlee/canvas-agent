@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { WorkspaceContext } from "../shared/types.js"
-import { readTask } from "../tasks/store.js"
+import { readTask } from "../tasks/records.js"
 import type { UndatedItem, UpcomingItem } from "./upcoming.js"
 
 interface DraftPresence {

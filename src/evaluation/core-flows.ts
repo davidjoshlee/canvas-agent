@@ -7,13 +7,9 @@ import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { CourseContext, ToolkitConfig } from "../shared/types.js"
 import { readUpcoming } from "../student/upcoming.js"
 import { completeTask } from "../tasks/completion.js"
-import {
-  createAssignmentTask,
-  createPrepTask,
-  readTask,
-  selectAssignmentPrompt,
-  verifySourceSnapshot,
-} from "../tasks/store.js"
+import { createAssignmentTask, createPrepTask } from "../tasks/creation.js"
+import { selectAssignmentPrompt, verifySourceSnapshot } from "../tasks/recipes.js"
+import { readTask } from "../tasks/records.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import type { DogfoodFlow, DogfoodJournal, DogfoodResult } from "./dogfood.js"
 

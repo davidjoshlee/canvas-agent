@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { diagnostic } from "../../src/shared/diagnostics.js"
 import type { CourseContext, WorkspaceContext } from "../../src/shared/types.js"
 
 const workspace = vi.hoisted(() => ({ inspectWorkspace: vi.fn(), selectCourse: vi.fn() }))
@@ -104,7 +105,7 @@ async function setup() {
     guidance: [],
     existingWork: ["GSB-101/Week 03 - Oct 12"],
   }
-  context = { version: 1, vault, courses: [course], pendingTasks: [], notices: [] }
+  context = { version: 1, vault, courses: [course], pendingTasks: [], notices: [], diagnostics: [] }
   workspace.inspectWorkspace.mockResolvedValue(context)
   workspace.selectCourse.mockReturnValue(course)
 }
@@ -147,6 +148,11 @@ describe("safe task completion", () => {
     const completed = await completeTask(vault, task.id, candidatePath)
     expect(completed.task.status).toBe("completed")
     expect(completed.task.workflow).toBeUndefined()
+    const savedRecord = await readFile(taskPath)
+    const savedOutput = await readFile(join(vault, completed.output))
+    expect((await completeTask(vault, task.id, candidatePath)).output).toBe(completed.output)
+    expect(await readFile(taskPath)).toEqual(savedRecord)
+    expect(await readFile(join(vault, completed.output))).toEqual(savedOutput)
   })
 
   it("requires substantive source-linked coverage for every captured prep question", async () => {
@@ -291,6 +297,43 @@ describe("safe task completion", () => {
       dates: [],
     })
     await expect(completeTask(vault, second.id, candidatePath)).rejects.toThrow(/stale/)
+  })
+
+  it("detects a changed symlink path even when the warning count is unchanged", async () => {
+    await setup()
+    context.notices = ["Skipped symbolic link: GSB-101/old.md"]
+    context.diagnostics = [
+      diagnostic("workspace.symlink_skipped", context.notices[0] ?? "", {
+        scope: "course",
+        path: "GSB-101/old.md",
+      }),
+    ]
+    const task = await makeTask()
+    context.notices = ["Skipped symbolic link: GSB-101/new.md"]
+    context.diagnostics = [
+      diagnostic("workspace.symlink_skipped", context.notices[0] ?? "", {
+        scope: "course",
+        path: "GSB-101/new.md",
+      }),
+    ]
+    await expect(completeTask(vault, task.id, candidatePath)).rejects.toThrow(
+      /restriction notices changed/i,
+    )
+  })
+
+  it("does not double-count unchanged restricted exclusions as workspace notices", async () => {
+    await setup()
+    course.excluded.push({
+      path: "GSB-101/Week 03 - Oct 12/restricted.md",
+      reason: "restricted by policy",
+    })
+    const task = await makeTask()
+    expect(task.notices).toContain(
+      "Excluded GSB-101/Week 03 - Oct 12/restricted.md: restricted by policy",
+    )
+    await expect(completeTask(vault, task.id, candidatePath)).resolves.toMatchObject({
+      task: { status: "completed" },
+    })
   })
 
   it("rejects symlinks in the output hierarchy and candidate path", async () => {

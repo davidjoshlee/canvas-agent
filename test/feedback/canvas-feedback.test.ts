@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { setCanvasFetchForTests, syncCourses } from "../../src/canvas/sync.js"
+import { syncCourses as syncCanvasCourses } from "../../src/canvas/sync.js"
 import { captureSimulation } from "../../src/evaluation/captures.js"
 import { createSimulationTask, readSimulationTask } from "../../src/evaluation/tasks.js"
 import {
@@ -31,8 +31,15 @@ import { createAssignmentTask, createPrepTask, readTask } from "../../src/tasks/
 import { inspectTask, reviewGate } from "../../src/tasks/tools.js"
 import { createReadingCopy, planReadingCopy } from "../../src/vault/reading-copy.js"
 import { inspectWorkspace } from "../../src/vault/workspace.js"
+import { type CanvasFetch, createCanvasTestTransport } from "../helpers/canvas-client.js"
 
 const roots: string[] = []
+const canvasTransport = createCanvasTestTransport()
+const syncCourses = (...args: Parameters<typeof syncCanvasCourses>) =>
+  syncCanvasCourses(args[0], args[1], canvasTransport.client(args[0]))
+function useCanvasFetch(fetch?: CanvasFetch): void {
+  canvasTransport.use(fetch ? { fetch } : {})
+}
 const json = (value: unknown) =>
   new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } })
 async function fixture() {
@@ -65,7 +72,7 @@ async function fixture() {
   let feedbackBody: Response | undefined
   const originalResponse = structuredClone(response)
   const calls: string[] = []
-  setCanvasFetchForTests(async (input, init) => {
+  useCanvasFetch(async (input, init) => {
     expect(init?.method).toBe("GET")
     const url = new URL(String(input)),
       path = url.pathname
@@ -114,7 +121,7 @@ async function fixture() {
 }
 afterEach(async () => {
   vi.useRealTimers()
-  setCanvasFetchForTests()
+  canvasTransport.reset()
   delete process.env.CANVAS_FEEDBACK_FIXTURE_TOKEN
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })

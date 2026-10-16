@@ -2,16 +2,27 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { setCanvasFetchForTests, syncCourses } from "../../src/canvas/sync.js"
+import { syncCourses as syncCanvasCourses } from "../../src/canvas/sync.js"
 import type { ToolkitConfig } from "../../src/shared/types.js"
 import { completeTask } from "../../src/tasks/completion.js"
 import { approveTask, reviseTask } from "../../src/tasks/lifecycle.js"
 import { createAssignmentTask, createPrepTask, readTask } from "../../src/tasks/store.js"
 import { inspectWorkspace, selectCourse } from "../../src/vault/workspace.js"
+import {
+  type CanvasFetch,
+  type CanvasSleep,
+  createCanvasTestTransport,
+} from "../helpers/canvas-client.js"
 
 const roots: string[] = []
+const canvasTransport = createCanvasTestTransport()
+function useCanvasFetch(fetch?: CanvasFetch, sleep?: CanvasSleep): void {
+  canvasTransport.use({ ...(fetch ? { fetch } : {}), ...(sleep ? { sleep } : {}) })
+}
+const syncCourses = (...args: Parameters<typeof syncCanvasCourses>) =>
+  syncCanvasCourses(args[0], args[1], canvasTransport.client(args[0]))
 afterEach(async () => {
-  setCanvasFetchForTests()
+  canvasTransport.reset()
   delete process.env.CANVAS_COEXIST_TEST_TOKEN
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -28,7 +39,7 @@ async function fixture() {
   let description = "Synthetic framework evidence"
   let dueAt = "2026-10-15T12:00:00Z"
   const json = (value: unknown) => new Response(JSON.stringify(value))
-  setCanvasFetchForTests(async (input) => {
+  useCanvasFetch(async (input) => {
     const path = new URL(String(input)).pathname
     if (path === "/api/v1/users/self") return json({ id: 99, name: "Synthetic student" })
     if (path === "/api/v1/courses")
@@ -137,6 +148,22 @@ describe("separate-product writable course namespace", () => {
     expect(task.productNamespaceVersion).toBe(1)
     expect(task.destination).toBe("CS101/Canvas Agent/Generated/Week 01 - Oct 5/Prep")
     await expect(readTask(f.vault, task.id)).resolves.toEqual(task)
+    const candidateFile = join(f.vault, "prep-candidate.md")
+    await writeFile(
+      candidateFile,
+      [
+        `Task: ${task.id}`,
+        ...task.requirements.map((heading) => `## ${heading}\n\n${original} \`${path}\``),
+      ].join("\n\n"),
+    )
+    const completed = await completeTask(f.vault, task.id, candidateFile)
+    expect(completed.output).toContain(`${task.destination}/`)
+    const completedBytes = await readFile(join(f.vault, completed.output))
+    expect((await completeTask(f.vault, task.id, candidateFile)).output).toBe(completed.output)
+    expect(await readFile(join(f.vault, completed.output))).toEqual(completedBytes)
+    expect((await createPrepTask(f.vault, "CS101", "2026-10-05")).destination).toBe(
+      task.destination,
+    )
     expect(await readFile(join(f.vault, path), "utf8")).toBe(original)
     await writeFile(join(f.vault, "_meta/canvas-courses.json"), "{INVALID_MAPPING")
     await expect(createPrepTask(f.vault, "CS101", "2026-10-05")).rejects.toThrow(

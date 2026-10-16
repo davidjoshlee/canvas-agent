@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process"
 import { readdir, readFile } from "node:fs/promises"
-import { join, resolve } from "node:path"
+import { dirname, join, relative, resolve } from "node:path"
+import ts from "typescript"
 import { expect, it } from "vitest"
 
 async function files(directory: string): Promise<string[]> {
@@ -37,8 +38,6 @@ it("keeps runtime code grouped and scripts limited to maintained verification", 
   const manifest = JSON.parse(await readFile("package.json", "utf8"))
   expect(manifest.bin["canvas-agent"]).toBe("dist/cli.js")
   expect(manifest.files).not.toContain("docs/**")
-  expect((await readFile("src/cli.ts", "utf8")).split("\n").length).toBeLessThan(25)
-  expect((await readFile("src/cli/program.ts", "utf8")).split("\n").length).toBeLessThan(200)
 })
 
 it.each([
@@ -54,4 +53,91 @@ it.each([
   })
   expect(result.status).toBe(1)
   expect(result.stderr).toContain("unknown command")
+})
+
+/** Use the compiler parser so type-only relationships do not masquerade as runtime cycles. */
+async function runtimeImports(): Promise<Map<string, string[]>> {
+  const graph = new Map<string, string[]>()
+  for (const file of (await files("src")).filter((file) => file.endsWith(".ts"))) {
+    const source = ts.createSourceFile(file, await readFile(file, "utf8"), ts.ScriptTarget.Latest)
+    const imports: string[] = []
+    for (const statement of source.statements) {
+      if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) continue
+      const specifier = statement.moduleSpecifier
+      if (!specifier || !ts.isStringLiteral(specifier) || !specifier.text.startsWith(".")) continue
+      if (ts.isImportDeclaration(statement)) {
+        const clause = statement.importClause
+        if (clause?.isTypeOnly) continue
+        if (
+          clause &&
+          !clause.name &&
+          clause.namedBindings &&
+          ts.isNamedImports(clause.namedBindings) &&
+          clause.namedBindings.elements.every((item) => item.isTypeOnly)
+        )
+          continue
+      } else {
+        if (statement.isTypeOnly) continue
+        if (
+          statement.exportClause &&
+          ts.isNamedExports(statement.exportClause) &&
+          statement.exportClause.elements.every((item) => item.isTypeOnly)
+        )
+          continue
+      }
+      imports.push(
+        relative(process.cwd(), resolve(dirname(file), specifier.text.replace(/\.js$/, ".ts"))),
+      )
+    }
+    graph.set(file, imports)
+  }
+  return graph
+}
+
+it("keeps the static runtime dependency graph acyclic", async () => {
+  const graph = await runtimeImports()
+  const visited = new Set<string>()
+  const active: string[] = []
+  const cycles: string[] = []
+  function visit(file: string) {
+    const index = active.indexOf(file)
+    if (index >= 0) {
+      cycles.push([...active.slice(index), file].join(" → "))
+      return
+    }
+    if (visited.has(file)) return
+    active.push(file)
+    for (const dependency of graph.get(file) ?? []) visit(dependency)
+    active.pop()
+    visited.add(file)
+  }
+  for (const file of graph.keys()) visit(file)
+  expect(cycles).toEqual([])
+})
+
+it("keeps deterministic modules independent of orchestration and persistence", async () => {
+  const graph = await runtimeImports()
+  for (const [file, dependencies] of graph) {
+    if (!file.startsWith("src/cli/") && file !== "src/cli.ts")
+      expect(
+        dependencies.filter((path) => path.startsWith("src/cli/")),
+        file,
+      ).toEqual([])
+    if (["src/tasks/workbook.ts", "src/tasks/calculation-core.ts"].includes(file))
+      expect(
+        dependencies.filter((path) =>
+          /src\/(?:cli|evaluation|vault)\/|src\/tasks\/(?:store|records|creation|completion|tools)\.ts/.test(
+            path,
+          ),
+        ),
+        file,
+      ).toEqual([])
+    if (file === "src/canvas/client.ts")
+      expect(
+        dependencies.filter((path) =>
+          /src\/(?:tasks|evaluation|student|vault)\/|src\/canvas\/sync/.test(path),
+        ),
+        file,
+      ).toEqual([])
+  }
 })

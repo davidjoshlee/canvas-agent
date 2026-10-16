@@ -3,18 +3,16 @@ import { type Command, Option } from "commander"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { WorkspaceContext } from "../shared/types.js"
 import { completeTask } from "../tasks/completion.js"
+import { createAssignmentTask, createPrepTask } from "../tasks/creation.js"
 import { listCourseTasks } from "../tasks/inventory.js"
 import { approveTask, reviseTask } from "../tasks/lifecycle.js"
 import { taskInspectionCommand, taskLocations } from "../tasks/locations.js"
-import { readTaskOutput } from "../tasks/output.js"
-import {
-  createAssignmentTask,
-  createPrepTask,
-  readTask,
-  selectAssignmentPrompt,
-} from "../tasks/store.js"
+import { selectAssignmentPrompt } from "../tasks/recipes.js"
+import { readTask } from "../tasks/records.js"
+import { vaultMutation } from "../vault/command-effects.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import { configWithEnv, render, summary, taskMarkdownPath } from "./output.js"
+import { readTaskOutput } from "./task-output.js"
 
 export function registerAcademicCommands(program: Command): void {
   program
@@ -44,6 +42,7 @@ export function registerAcademicCommands(program: Command): void {
 
   program
     .command("prep")
+    .hook("preAction", vaultMutation())
     .description("create a prep task for a week or module session")
     .argument("<course>", "course code or title")
     .option("--week <date|current>", "explicit Monday date or current week")
@@ -69,6 +68,7 @@ export function registerAcademicCommands(program: Command): void {
 
   program
     .command("assignment")
+    .hook("preAction", vaultMutation())
     .description("create an assignment discussion, outline, draft, or review task")
     .argument("<course>", "course code or title")
     .requiredOption("--source <path>", "approved vault-relative assignment prompt")
@@ -104,6 +104,7 @@ export function registerAcademicCommands(program: Command): void {
 
   program
     .command("draft")
+    .hook("preAction", vaultMutation())
     .description("create an explicit draft task from a course assignment prompt")
     .argument("<assignment>", "assignment title, Canvas ID, or exact vault path")
     .requiredOption("--course <course>", "explicit course code or title")
@@ -144,6 +145,7 @@ export function registerAcademicCommands(program: Command): void {
 
   program
     .command("revise")
+    .hook("preAction", vaultMutation())
     .description("create a fresh revision task from a completed draft")
     .argument("<id>", "completed draft task UUID")
     .argument("[feedback]", "optional revision feedback")
@@ -176,6 +178,7 @@ export function registerAcademicCommands(program: Command): void {
 
   program
     .command("approve")
+    .hook("preAction", vaultMutation())
     .description("copy a completed draft to a non-overwriting Finals output")
     .argument("<id>", "completed draft task UUID")
     .option("--json", "emit JSON")
@@ -286,6 +289,7 @@ export function registerAcademicCommands(program: Command): void {
     })
   task
     .command("complete")
+    .hook("preAction", vaultMutation())
     .description("validate and save a candidate prep or assignment artifact")
     .argument("<id>", "task UUID")
     .requiredOption("--file <path>", "candidate Markdown file")

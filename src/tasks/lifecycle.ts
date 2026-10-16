@@ -1,37 +1,18 @@
-import { createHash, randomUUID } from "node:crypto"
-import { link, mkdir, open, readdir, readFile, unlink, writeFile } from "node:fs/promises"
-import { isAbsolute, relative, resolve, sep } from "node:path"
+import { createHash } from "node:crypto"
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
+import { resolve } from "node:path"
 import { captureLearningHistory } from "../feedback/history.js"
-import { assertNoSymlinks } from "../shared/fs-safety.js"
+import { publishExclusiveFile, vaultPath } from "../shared/fs-safety.js"
 import type { SourceRecord, TaskRecord } from "../shared/types.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import { readVerifiedCompletedOutput } from "./completion.js"
+import { createAssignmentTask } from "./creation.js"
 import { verifyWorkbookFile } from "./draft-workbook.js"
+import { selectAssignmentInputs } from "./recipes.js"
+import { readTask } from "./records.js"
 import { captureRevisionEdits } from "./revision-edits.js"
-import { createAssignmentTask, readTask, selectAssignmentInputs } from "./store.js"
 
 const sha = (value: Buffer | string) => createHash("sha256").update(value).digest("hex")
-const within = (parent: string, child: string) => {
-  const path = relative(parent, child)
-  return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`))
-}
-
-async function safePath(vault: string, path: string, allowMissing = false): Promise<string> {
-  if (
-    !path ||
-    path.startsWith("/") ||
-    path.includes("\\") ||
-    path.split("/").some((part) => !part || part === "." || part === "..")
-  )
-    throw new Error("Unsafe vault-relative lifecycle path")
-  const root = resolve(vault)
-  const absolute = resolve(root, ...path.split("/"))
-  if (!within(root, absolute)) throw new Error("Lifecycle path escapes the vault")
-  await assertNoSymlinks(root)
-  await assertNoSymlinks(absolute, allowMissing)
-  return absolute
-}
-
 /** Create a fresh draft task from an unchanged, completed assignment artifact. */
 export async function reviseTask(
   vault: string,
@@ -74,7 +55,7 @@ export async function reviseTask(
     revisionSource,
     1,
   )
-  const tasksRoot = await safePath(vault, "_meta/tasks", true)
+  const tasksRoot = await vaultPath(vault, "_meta/tasks", true)
   const revisionEdits = workPath
     ? captureRevisionEdits(selected.sources, priorOutput, workPath)
     : undefined
@@ -141,12 +122,12 @@ export async function approveTask(
   const hash = sha(bytes)
   const assignmentFolder = task.destination.slice(0, task.destination.lastIndexOf("/"))
   const finalDirRel = `${assignmentFolder}/Finals`
-  const finalDir = await safePath(vault, finalDirRel, true)
+  const finalDir = await vaultPath(vault, finalDirRel, true)
   await mkdir(finalDir, { recursive: true, mode: 0o700 })
-  await safePath(vault, finalDirRel)
+  await vaultPath(vault, finalDirRel)
 
   const metadataRel = `_meta/tasks/${task.id}/approval.json`
-  const metadataPath = await safePath(vault, metadataRel, true)
+  const metadataPath = await vaultPath(vault, metadataRel, true)
   try {
     const stored = JSON.parse(await readFile(metadataPath, "utf8")) as {
       sourceOutput?: string
@@ -162,7 +143,7 @@ export async function approveTask(
       stored.outputHash !== hash
     )
       throw new Error("Approval metadata does not match the completed draft")
-    const finalPath = await safePath(vault, stored.output)
+    const finalPath = await vaultPath(vault, stored.output)
     if (sha(await readFile(finalPath)) !== hash)
       throw new Error("Approved Final output is missing or has been modified")
     if (workbookBytes) {
@@ -171,7 +152,7 @@ export async function approveTask(
         stored.workbook.hash !== sha(workbookBytes)
       )
         throw new Error("Approval workbook metadata does not match the completed draft")
-      const path = await safePath(vault, stored.workbook.path)
+      const path = await vaultPath(vault, stored.workbook.path)
       await verifyWorkbookFile(path, workbookBytes)
     } else if (stored.workbook) throw new Error("Approval has an unexpected workbook")
     return {
@@ -193,41 +174,13 @@ export async function approveTask(
   )
     filename = `${base.slice(0, -3)}.v${version++}.md`
   const finalRel = `${finalDirRel}/${filename}`
-  const finalPath = await safePath(vault, finalRel, true)
-  const tempPath = `${finalPath}.tmp-${randomUUID()}`
-  try {
-    const handle = await open(tempPath, "wx", 0o600)
-    try {
-      await handle.writeFile(bytes)
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
-    await safePath(vault, finalRel, true)
-    await link(tempPath, finalPath)
-    await unlink(tempPath)
-  } catch (error) {
-    await unlink(tempPath).catch(() => undefined)
-    throw error
-  }
+  const finalPath = await vaultPath(vault, finalRel, true)
+  await publishExclusiveFile(finalPath, bytes)
   let workbook: { path: string; hash: string } | undefined
   if (workbookBytes) {
     const path = finalRel.replace(/\.md$/, ".xlsx")
-    const finalWorkbookPath = await safePath(vault, path, true)
-    const temporary = `${finalWorkbookPath}.tmp-${randomUUID()}`
-    try {
-      const handle = await open(temporary, "wx", 0o600)
-      try {
-        await handle.writeFile(workbookBytes)
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
-      await safePath(vault, path, true)
-      await link(temporary, finalWorkbookPath)
-    } finally {
-      await unlink(temporary).catch(() => undefined)
-    }
+    const finalWorkbookPath = await vaultPath(vault, path, true)
+    await publishExclusiveFile(finalWorkbookPath, workbookBytes)
     workbook = { path, hash: sha(workbookBytes) }
   }
   const metadata = {

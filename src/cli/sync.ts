@@ -1,18 +1,24 @@
 import type { Command } from "commander"
 import { writeAuthAlert } from "../auth/alerts.js"
+import { type CanvasClientFactory, createCanvasClient } from "../canvas/client.js"
 import {
   CanvasSyncPartialError,
   isCanvasDiscoveryUnavailable,
   listCourses,
-  syncCourses,
 } from "../canvas/sync.js"
+import { syncWithReminderRefresh } from "../canvas/sync-workflow.js"
 import { selectOnboardingCourses } from "../config/onboarding.js"
+import { vaultMutation } from "../vault/command-effects.js"
 import { inspectWorkspace } from "../vault/workspace.js"
 import { configWithEnv, render } from "./output.js"
 
-export function registerSyncCommands(program: Command): void {
+export function registerSyncCommands(
+  program: Command,
+  canvasClient: CanvasClientFactory = createCanvasClient,
+): void {
   program
     .command("sync")
+    .hook("preAction", vaultMutation())
     .description("sync allowlisted Canvas courses")
     .option(
       "--preserve-school",
@@ -48,13 +54,13 @@ export function registerSyncCommands(program: Command): void {
           )
         ) {
           try {
-            discovered = await listCourses(config, true)
+            discovered = await listCourses(config, true, canvasClient(config))
           } catch (error) {
             if (!isCanvasDiscoveryUnavailable(error)) throw error
             const context = await inspectWorkspace(config.vault.path)
             if (
-              context.notices.some((notice) =>
-                notice.startsWith("Canvas course mappings are unavailable or unsafe"),
+              context.diagnostics.some(
+                (diagnostic) => diagnostic.code === "workspace.course_mappings_unavailable",
               )
             )
               throw new Error(
@@ -96,13 +102,17 @@ export function registerSyncCommands(program: Command): void {
         }
         selectedConfig = { ...config, courses: { allowlist: [...new Set(selected)] } }
       }
-      let result: Awaited<ReturnType<typeof syncCourses>>
+      let result: Awaited<ReturnType<typeof syncWithReminderRefresh>>
       try {
-        result = await syncCourses(selectedConfig, {
-          preserveSchool: Boolean(options.preserveSchool),
-          reminderDays: Number(options.leadDays),
-          notifyDueSoon: options.notifyDueSoon,
-        })
+        result = await syncWithReminderRefresh(
+          selectedConfig,
+          {
+            preserveSchool: Boolean(options.preserveSchool),
+            reminderDays: Number(options.leadDays),
+            notifyDueSoon: options.notifyDueSoon,
+          },
+          canvasClient(selectedConfig),
+        )
       } catch (error) {
         if (!(error instanceof CanvasSyncPartialError)) throw error
         process.exitCode = 1
@@ -136,6 +146,10 @@ export function registerSyncCommands(program: Command): void {
 
   program
     .command("onboard")
+    .hook(
+      "preAction",
+      vaultMutation((options) => Boolean(options.pilot)),
+    )
     .description("select active courses, or select and sync one concluded pilot")
     .argument("[id]", "exact concluded Canvas course ID with --pilot")
     .option("--pilot", "select and sync one explicitly chosen concluded course, preserving files")
@@ -162,13 +176,18 @@ export function registerSyncCommands(program: Command): void {
         )
       const configPath = program.opts().config as string
       const config = await configWithEnv(configPath)
-      const result = await selectOnboardingCourses(configPath, config, {
-        ids: id ? [id] : options.course,
-        allActive: options.allActive,
-        pilot: options.pilot,
-      })
+      const result = await selectOnboardingCourses(
+        configPath,
+        config,
+        {
+          ids: id ? [id] : options.course,
+          allActive: options.allActive,
+          pilot: options.pilot,
+        },
+        canvasClient(config),
+      )
       const pilotSync = options.pilot
-        ? await syncCourses(
+        ? await syncWithReminderRefresh(
             { ...config, courses: { allowlist: result.selected } },
             {
               ...(result.pilotEligibility?.basis === "assignment-date-span-and-own-feedback"
@@ -176,6 +195,7 @@ export function registerSyncCommands(program: Command): void {
                 : {}),
               preserveSchool: Boolean(options.preserveSchool),
             },
+            canvasClient({ ...config, courses: { allowlist: result.selected } }),
           )
         : undefined
       render(

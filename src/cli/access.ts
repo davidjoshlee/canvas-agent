@@ -6,13 +6,17 @@ import {
   loginAuth,
   renewalInstructions,
 } from "../auth/credentials.js"
+import { type CanvasClientFactory, createCanvasClient } from "../canvas/client.js"
 import { verifyAuth } from "../canvas/sync.js"
 import { loadAdjacentEnv, loadConfig } from "../config/index.js"
 import type { ToolkitConfig } from "../shared/types.js"
 import { doctorChecks } from "./health.js"
 import { configWithEnv, render } from "./output.js"
 
-export function registerAccessCommands(program: Command): void {
+export function registerAccessCommands(
+  program: Command,
+  canvasClient: CanvasClientFactory = createCanvasClient,
+): void {
   program
     .command("doctor")
     .description("check local readiness without contacting Canvas")
@@ -106,7 +110,7 @@ export function registerAccessCommands(program: Command): void {
     .option("--json", "emit JSON")
     .action(async (options) => {
       const config = await configWithEnv(program.opts().config)
-      const result = await verifyAuth(config)
+      const result = await verifyAuth(config, canvasClient(config))
       let alert: Awaited<ReturnType<typeof writeAuthAlert>> | { status: "not-updated" }
       try {
         alert = await writeAuthAlert(program.opts().config, config, "api-verified")

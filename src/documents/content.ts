@@ -346,11 +346,7 @@ export async function ingestFile(
   await assertNoSymlinks(root)
   const { selectCourse } = await import("../vault/workspace.js")
   const context = await import("../vault/workspace.js").then((m) => m.inspectWorkspace(root))
-  if (
-    context.notices.some((notice) =>
-      notice.startsWith("Canvas course mappings are unavailable or unsafe"),
-    )
-  )
+  if (context.diagnostics?.some((item) => item.code === "workspace.course_mappings_unavailable"))
     throw new Error("Course mappings are unsafe; inspect them before ingesting files")
   const course = selectCourse(context, courseQuery)
   const compatibility = options.compatibility

@@ -5,6 +5,7 @@ import type { Command } from "commander"
 import { syncCourses } from "../canvas/sync.js"
 import { loadAdjacentEnv, loadConfig } from "../config/index.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
+import { vaultMutation } from "../vault/command-effects.js"
 import { refreshConfiguredReadingMirror } from "../vault/reading-copy.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import {
@@ -193,6 +194,7 @@ export function registerDogfoodSweepCommands(program: Command, dogfood: Command)
     })
   sweep
     .command("resume <id>")
+    .hook("preAction", vaultMutation())
     .option("--course <course>", "explicit saved course (required)")
     .option("--offline", "skip live sync deliberately")
     .option("--sync", "authorize selected-course sync")

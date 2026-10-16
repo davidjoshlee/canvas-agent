@@ -1,13 +1,17 @@
 import { mkdir } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import type { Command } from "commander"
+import { type CanvasClientFactory, createCanvasClient } from "../canvas/client.js"
 import { listActiveCourses, listCourses } from "../canvas/sync.js"
 import { createConfig, loadConfig, setupConfig } from "../config/index.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import { discoverInstructions } from "./instructions.js"
 import { configWithEnv, render } from "./output.js"
 
-export function registerSetupCommands(program: Command): void {
+export function registerSetupCommands(
+  program: Command,
+  canvasClient: CanvasClientFactory = createCanvasClient,
+): void {
   program
     .command("instructions")
     .description(
@@ -71,7 +75,7 @@ export function registerSetupCommands(program: Command): void {
     .option("--json", "emit JSON")
     .action(async (options) => {
       const config = await configWithEnv(program.opts().config)
-      const courses = await listCourses(config)
+      const courses = await listCourses(config, false, canvasClient(config))
       render(
         courses,
         options.json,
@@ -119,7 +123,9 @@ export function registerSetupCommands(program: Command): void {
     .option("--json", "emit JSON")
     .action(async (options) => {
       const config = await configWithEnv(program.opts().config)
-      const rows = options.all ? await listCourses(config, true) : await listActiveCourses(config)
+      const rows = options.all
+        ? await listCourses(config, true, canvasClient(config))
+        : await listActiveCourses(config, canvasClient(config))
       render(
         rows,
         options.json || courses.opts().json,
