@@ -3,8 +3,8 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import type { TaskRecord } from "../../src/shared/types.js"
-import { completeTask } from "../../src/tasks/completion.js"
-import { approveTask, reviseTask } from "../../src/tasks/lifecycle.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
+import { approveTask, reviseTask } from "../../src/tasks/artifacts/lifecycle.js"
 import { createAssignmentTask, readTask } from "../../src/tasks/store.js"
 
 const roots: string[] = [],

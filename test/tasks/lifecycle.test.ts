@@ -9,8 +9,8 @@ const workspace = vi.hoisted(() => ({ inspectWorkspace: vi.fn(), selectCourse: v
 vi.mock("../../src/vault/workspace.js", () => workspace)
 
 import type { ToolkitConfig } from "../../src/shared/types.js"
-import { completeTask } from "../../src/tasks/completion.js"
-import { approveTask, reviseTask } from "../../src/tasks/lifecycle.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
+import { approveTask, reviseTask } from "../../src/tasks/artifacts/lifecycle.js"
 import { createAssignmentTask, readTask } from "../../src/tasks/store.js"
 import { compareTasks, reviewGate } from "../../src/tasks/tools.js"
 

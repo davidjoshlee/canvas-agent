@@ -1,6 +1,9 @@
 import JSZip from "jszip"
 import { describe, expect, it } from "vitest"
-import { draftWorkbookBytes, workbookFromDraft } from "../../src/tasks/draft-workbook.js"
+import {
+  draftWorkbookBytes,
+  workbookFromDraft,
+} from "../../src/tasks/calculations/draft-workbook.js"
 import { matchesLegacyWorkbook } from "../../src/tasks/tools.js"
 
 describe("automatic draft workbook extraction", () => {

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { mkdir, rmdir, writeFile } from "node:fs/promises"
 import { isAbsolute, join, resolve } from "node:path"
 import { assertNoSymlinks, readBoundedFile } from "../shared/fs-safety.js"
-import { createWorkbook, parseWorkbookInput } from "../tasks/workbook.js"
+import { createWorkbook, parseWorkbookInput } from "../tasks/calculations/workbook.js"
 import { inspectSimulationTask, readSimulationTask } from "./tasks.js"
 import {
   readSimulationWorkbooksForRecord,

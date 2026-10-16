@@ -1,4 +1,4 @@
-import { readJsonInput } from "../shared/json-input.js"
+import { readJsonInput } from "../../shared/json-input.js"
 import { parseCalculationBatch } from "./calculation-core.js"
 
 /** Explicit bounded JSON input; malformed data and credential files are never echoed. */

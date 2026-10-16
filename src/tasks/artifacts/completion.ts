@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto"
 import { mkdir, open, readdir, readFile, unlink } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { verifyLearningHistory, verifyTaskLearningHistory } from "../feedback/history.js"
-import { restrictedGuidancePaths } from "../guidance/selection.js"
-import { diagnosticFromLegacyNotice } from "../shared/diagnostics.js"
-import { savedExclusions } from "../shared/exclusions.js"
+import { verifyLearningHistory, verifyTaskLearningHistory } from "../../feedback/history.js"
+import { restrictedGuidancePaths } from "../../guidance/selection.js"
+import { diagnosticFromLegacyNotice } from "../../shared/diagnostics.js"
+import { savedExclusions } from "../../shared/exclusions.js"
 import {
   assertNoSymlinks,
   vaultPath as noLinks,
@@ -12,27 +12,27 @@ import {
   readBoundedFile,
   replaceFileAtomically,
   vaultRelativePath as safeRel,
-} from "../shared/fs-safety.js"
-import type { TaskRecord } from "../shared/types.js"
-import { productDestination } from "../vault/destinations.js"
-import { inspectWorkspace } from "../vault/workspace.js"
-import { prepareAnswerEvidence } from "./answer-evidence.js"
-import {
-  assignmentDraftsDirectory,
-  nextArtifactName,
-  parseArtifactVersion,
-  taskArtifactBaseName,
-} from "./artifact-layout.js"
-import { draftWorkbookBytes, verifyWorkbookFile } from "./draft-workbook.js"
+} from "../../shared/fs-safety.js"
+import type { TaskRecord } from "../../shared/types.js"
+import { productDestination } from "../../vault/destinations.js"
+import { inspectWorkspace } from "../../vault/workspace.js"
 import {
   deriveCurrentTaskInputs,
   readGuidanceSnapshot,
   readSelectedGuidance,
   resolvePrepPeriod,
   verifySourceSnapshot,
-} from "./recipes.js"
+} from "../authoring/recipes.js"
+import { workflowFor } from "../authoring/workflows.js"
+import { draftWorkbookBytes, verifyWorkbookFile } from "../calculations/draft-workbook.js"
+import { prepareAnswerEvidence } from "../evidence/answer-evidence.js"
+import {
+  assignmentDraftsDirectory,
+  nextArtifactName,
+  parseArtifactVersion,
+  taskArtifactBaseName,
+} from "./artifact-layout.js"
 import { readTask, TaskRecordSchema } from "./records.js"
-import { workflowFor } from "./workflows.js"
 
 const digest = (value: Buffer | string) => createHash("sha256").update(value).digest("hex")
 async function externalFile(path: string): Promise<Buffer> {

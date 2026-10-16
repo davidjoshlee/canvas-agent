@@ -10,8 +10,8 @@ import {
   inspectSimulationTask,
   readSimulationTask,
 } from "../../src/simulation/tasks.js"
-import { resolveRequirements } from "../../src/tasks/requirements.js"
-import { workflowForRequirements } from "../../src/tasks/workflows.js"
+import { resolveRequirements } from "../../src/tasks/authoring/requirements.js"
+import { workflowForRequirements } from "../../src/tasks/authoring/workflows.js"
 import { compareSimulationEvaluations } from "../../tools/evaluation/comparison.js"
 import { comparisonM1Bundle } from "../../tools/evaluation/m1.js"
 import { evaluationCliArgs } from "../helpers/evaluation-cli.js"

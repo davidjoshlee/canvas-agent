@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { workflowFor, workflowForRequirements } from "../../src/tasks/workflows.js"
+import { workflowFor, workflowForRequirements } from "../../src/tasks/authoring/workflows.js"
 
 describe("academic workflow contracts", () => {
   it("makes new drafts finished deliverables with executed quantitative checks and source-based self-review", () => {

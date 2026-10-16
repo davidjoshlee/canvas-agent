@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import type { SourceRecord } from "../shared/types.js"
+import type { SourceRecord } from "../../shared/types.js"
 
 export interface RevisionEdits {
   version: 1

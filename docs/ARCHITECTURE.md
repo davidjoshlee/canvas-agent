@@ -25,7 +25,11 @@ Canvas GET → synced vault → local course inventory
 | src/canvas | Instance-scoped GET transport, sync ownership, module relationships and assignment metadata |
 | src/documents | Bounded extraction, originals and hash-linked sidecars |
 | src/vault | Safe inventory, destinations, reading copies, Obsidian and local history |
-| src/tasks | Task selection/recipes, validation, revision/approval and arithmetic/workbooks |
+| src/tasks/authoring | Task source selection, requirements and workflow definitions |
+| src/tasks/evidence | Deliverable, answer and revision evidence |
+| src/tasks/artifacts | Task records, validation, inspection and artifact lifecycle |
+| src/tasks/calculations | Arithmetic, workbooks and numeric review |
+| src/tasks/review | Correctness-review handoffs |
 | src/guidance | Course/assignment guidance and inactive proposals |
 | src/feedback | Private own-feedback history and read-only older snapshot formats |
 | src/student | On-demand upcoming work, timeline and calendar |
@@ -55,18 +59,19 @@ Runtime modules never import development tooling.
   onboarding call the same synchronization implementation. Authentication
   failures include renewal steps in the command error.
 - Vault inventory provides safe course text and explicit exclusions, without a DB.
-- tasks/recipes owns evidence selection and destination rules; tasks/records
-  validates persisted identity, recipes and older formats; tasks/creation captures
-  evidence and writes new task handoffs. tasks/store retains explicit compatibility
-  exports, while production callers import the owning modules.
-- tasks/workbook and calculation-core encode deterministic workbooks and arithmetic
-  without task persistence dependencies. Inspection owns evidence audits; task-bound
+- tasks/authoring owns evidence selection, requirements, workflow definitions and
+  new task handoffs. tasks/artifacts validates persisted identity and older formats,
+  inspects snapshots, and owns validated versioned writes and approval. tasks/store
+  retains explicit compatibility exports, while production callers use the owning
+  modules.
+- tasks/calculations contains deterministic arithmetic and workbook creation;
+  tasks/evidence captures deliverable, answer and revision evidence. Task-bound
   tools own calculation/artifact recording. Frozen workbook inventory accepts saved
   task context rather than calling back into task creation/completion.
-- Completion/lifecycle own validated versioned writes; host output cannot choose
-  an arbitrary destination or grant itself approval.
+- tasks/review prepares and saves correctness-review handoffs; it does not certify
+  academic correctness.
 - Shared instructions come from one CLI contract; task workflow instructions come
-  from tasks/workflows.ts. Saved older recipes are not silently regenerated.
+  from tasks/authoring/workflows.ts. Saved older recipes are not silently regenerated.
 - shared/fs-safety owns normalized vault paths, bounded regular-file reads,
   exclusive publication and atomic owned-metadata replacement. Completion and
   approval retain their distinct transaction/retry policies. Checks repeat before
@@ -79,7 +84,7 @@ Runtime modules never import development tooling.
 - Live exclusion codes are projected back to the original path/reason shape before
   saving task and frozen snapshots. Old snapshot bytes and recipe interpretation
   remain authoritative; legacy text decoding stays at the compatibility seam.
-- tasks/artifact-layout owns output names, versions and Drafts/Finals conventions.
+- tasks/artifacts/artifact-layout owns output names, versions and Drafts/Finals conventions.
   Prep period resolution returns a location kind; callers do not infer it from
   a substring of the destination. Saved paths retain their historical parser.
 - Frozen simulations retain saved record formats and private vault locations.

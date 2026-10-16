@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { SourceRecord } from "../../src/shared/types.js"
-import { resolveRequirements } from "../../src/tasks/requirements.js"
+import { resolveRequirements } from "../../src/tasks/authoring/requirements.js"
 
 const source = (path: string, text: string, type = "reading"): SourceRecord => ({
   path,

@@ -16,7 +16,7 @@ import {
   createSimulationWorkbook,
   readSimulationWorkbooks,
 } from "../../src/simulation/workbooks.js"
-import { draftWorkbookBytes } from "../../src/tasks/draft-workbook.js"
+import { draftWorkbookBytes } from "../../src/tasks/calculations/draft-workbook.js"
 import {
   compareSimulationEvaluations,
   readSimulationComparison,

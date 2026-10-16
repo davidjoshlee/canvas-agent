@@ -5,7 +5,7 @@ import { join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
 import { listGuidanceProposals, showGuidanceProposal } from "../../src/guidance/inventory.js"
 import { readGuidanceProposalRecord } from "../../src/guidance/proposals.js"
-import { declaredPrepSections } from "../../src/tasks/requirements.js"
+import { declaredPrepSections } from "../../src/tasks/authoring/requirements.js"
 
 const roots: string[] = []
 afterEach(async () => {

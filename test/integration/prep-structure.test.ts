@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import type { CourseContext, SourceRecord, WorkspaceContext } from "../../src/shared/types.js"
 import { captureSimulation } from "../../src/simulation/captures.js"
 import { createSimulationTask, readSimulationTask } from "../../src/simulation/tasks.js"
-import { completeTask } from "../../src/tasks/completion.js"
-import { resolveRequirements } from "../../src/tasks/requirements.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
+import { resolveRequirements } from "../../src/tasks/authoring/requirements.js"
 
 const workspace = vi.hoisted(() => ({ inspectWorkspace: vi.fn(), selectCourse: vi.fn() }))
 vi.mock("../../src/vault/workspace.js", () => workspace)

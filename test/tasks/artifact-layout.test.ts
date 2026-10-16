@@ -8,8 +8,8 @@ import {
   formatArtifactName,
   nextArtifactName,
   parseArtifactVersion,
-} from "../../src/tasks/artifact-layout.js"
-import { resolvePrepPeriod, savedWeekPrepLocation } from "../../src/tasks/recipes.js"
+} from "../../src/tasks/artifacts/artifact-layout.js"
+import { resolvePrepPeriod, savedWeekPrepLocation } from "../../src/tasks/authoring/recipes.js"
 import { productDestination } from "../../src/vault/destinations.js"
 
 const source = (path: string, title: string, type = "markdown"): SourceRecord => ({

@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { resolveRequirements } from "../../src/tasks/requirements.js"
-import { workflowForRequirements } from "../../src/tasks/workflows.js"
+import { resolveRequirements } from "../../src/tasks/authoring/requirements.js"
+import { workflowForRequirements } from "../../src/tasks/authoring/workflows.js"
 
 const roots: string[] = []
 const prompt = "GSB-101/Assignments/Case response/prompt.md"

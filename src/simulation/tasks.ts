@@ -8,17 +8,24 @@ import { assignmentRelatedSources, relatedSources } from "../canvas/module-conte
 import { selectTaskGuidance } from "../guidance/selection.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { CourseContext, SourceRecord, TaskRecord } from "../shared/types.js"
-import { checkCandidate } from "../tasks/completion.js"
-import { captureTaskDeliverable } from "../tasks/deliverable-evidence.js"
+import { checkCandidate } from "../tasks/artifacts/completion.js"
+import { TaskRecordSchema } from "../tasks/artifacts/records.js"
+import {
+  hasPrepMaterial,
+  selectPrepInputs,
+  validateDiscussionMessage,
+} from "../tasks/authoring/recipes.js"
+import { resolveRequirements } from "../tasks/authoring/requirements.js"
+import {
+  groupAssignmentInstruction,
+  workflowForRequirements,
+} from "../tasks/authoring/workflows.js"
 import {
   draftWorkbookBytes,
   verifyWorkbookFile,
   workbookFromDraft,
-} from "../tasks/draft-workbook.js"
-import { hasPrepMaterial, selectPrepInputs, validateDiscussionMessage } from "../tasks/recipes.js"
-import { TaskRecordSchema } from "../tasks/records.js"
-import { resolveRequirements } from "../tasks/requirements.js"
-import { groupAssignmentInstruction, workflowForRequirements } from "../tasks/workflows.js"
+} from "../tasks/calculations/draft-workbook.js"
+import { captureTaskDeliverable } from "../tasks/evidence/deliverable-evidence.js"
 import { replaySimulation } from "./captures.js"
 import { readSimulationWorkbooksForRecord } from "./workbook-inventory.js"
 

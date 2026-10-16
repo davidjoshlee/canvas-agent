@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { type DeliverableSource, detectDeliverable } from "../../src/tasks/deliverable.js"
+import { type DeliverableSource, detectDeliverable } from "../../src/tasks/evidence/deliverable.js"
 
 // All fixtures are SYNTHETIC — invented companies/topics, not real coursework
 // — but they mimic the two real PDF-extraction shapes this module exists

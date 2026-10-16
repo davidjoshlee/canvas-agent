@@ -1,4 +1,4 @@
-import type { SourceRecord } from "../shared/types.js"
+import type { SourceRecord } from "../../shared/types.js"
 
 const STOPWORDS = new Set(
   "a an and are as at be because been being both by can could did do does for from had has have he her here hers him his how i if in into is it its may me might more most my no nor not of on or our ours she should so than that the their theirs them then there these they this those through to too up us very was we were what when where which while who will with would you your yours".split(

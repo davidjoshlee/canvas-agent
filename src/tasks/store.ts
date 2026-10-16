@@ -1,6 +1,7 @@
 /** Compatibility exports for callers saved before task responsibilities were split. */
 
-export { createAssignmentTask, createPrepTask } from "./creation.js"
+export { readTask, TaskRecordSchema } from "./artifacts/records.js"
+export { createAssignmentTask, createPrepTask } from "./authoring/creation.js"
 export {
   hasPrepMaterial,
   readGuidanceSnapshot,
@@ -14,5 +15,4 @@ export {
   selectPrepInputs,
   validateDiscussionMessage,
   verifySourceSnapshot,
-} from "./recipes.js"
-export { readTask, TaskRecordSchema } from "./records.js"
+} from "./authoring/recipes.js"

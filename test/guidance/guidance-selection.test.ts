@@ -16,7 +16,7 @@ import {
   createSimulationTask,
   readSimulationTask,
 } from "../../src/simulation/tasks.js"
-import { completeTask } from "../../src/tasks/completion.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
 import {
   createAssignmentTask,
   createPrepTask,
@@ -262,9 +262,11 @@ it("preserves an earlier unversioned selection recipe rather than retroactively 
   task.guidance = await Promise.all(
     [otherGuide, commonGuide, ownGuide].map((path) => readGuidanceSnapshot(root, path)),
   )
-  const { captureTaskDeliverable } = await import("../../src/tasks/deliverable-evidence.js")
-  const { resolveRequirements } = await import("../../src/tasks/requirements.js")
-  const { workflowForRequirements } = await import("../../src/tasks/workflows.js")
+  const { captureTaskDeliverable } = await import(
+    "../../src/tasks/evidence/deliverable-evidence.js"
+  )
+  const { resolveRequirements } = await import("../../src/tasks/authoring/requirements.js")
+  const { workflowForRequirements } = await import("../../src/tasks/authoring/workflows.js")
   task.deliverable = captureTaskDeliverable(
     task.kind,
     task.assignment?.mode,
@@ -561,8 +563,8 @@ it("refuses conflicting declarations and keeps an older default-structure draft 
   // Synthetic pre-structure recipe with the same captured guide; no real task
   // is edited, redirected or certified as historically well-selected.
   delete task.assignmentStructureVersion
-  const { resolveRequirements } = await import("../../src/tasks/requirements.js")
-  const { workflowForRequirements } = await import("../../src/tasks/workflows.js")
+  const { resolveRequirements } = await import("../../src/tasks/authoring/requirements.js")
+  const { workflowForRequirements } = await import("../../src/tasks/authoring/workflows.js")
   const old = resolveRequirements(
     task.kind,
     task.assignment?.mode,

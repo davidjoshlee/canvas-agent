@@ -1,4 +1,4 @@
-import type { DeliverableEvidence } from "./deliverable-evidence.js"
+import type { DeliverableEvidence } from "../evidence/deliverable-evidence.js"
 
 export type AssignmentMode = "outline" | "draft" | "review" | "discuss"
 export const assignmentOutputLabel = (mode: AssignmentMode): string =>
