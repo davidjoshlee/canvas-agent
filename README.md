@@ -33,10 +33,12 @@ npm run build
 node dist/cli.js --help
 ```
 
-Set up a private config and vault, then connect and sync one course:
+Choose where the vault should live; `~/canvas-vault` is the suggested default.
+Readings, drafts and generated work live in this vault. Give setup the chosen
+absolute path, then keep the full config and vault locations handy:
 
 ```sh
-node dist/cli.js setup --canvas-url https://canvas.example.edu --config /absolute/private/config.json
+node dist/cli.js setup --canvas-url https://canvas.example.edu --vault /absolute/private/canvas-vault --config /absolute/private/config.json
 node dist/cli.js auth verify --config /absolute/private/config.json
 node dist/cli.js courses list --config /absolute/private/config.json
 node dist/cli.js onboard --course 123 --config /absolute/private/config.json
@@ -44,9 +46,11 @@ node dist/cli.js sync --course 123 --config /absolute/private/config.json
 ```
 
 Keep your Canvas token in the configured environment variable or a private
-adjacent `.env` file. Keep the config outside the vault. The default vault is
-`~/canvas-vault`; existing configs keep their current paths. Choose courses
-explicitly and review sync notices and source coverage.
+adjacent `.env` file. Keep the config outside the vault. Existing configs keep
+their current paths; use `canvas-agent vault location --config CONFIG_PATH` to
+report the selected vault. `vault location --set ABS_PATH` updates only the
+selected config and requires an existing directory; it does not move or copy
+files. Choose courses explicitly and review sync notices and source coverage.
 
 ## Pick up where you left off
 
@@ -56,6 +60,10 @@ canvas-agent prep 123 --week 2026-10-12 --config /absolute/private/config.json
 canvas-agent assignment 123 --source /vault/path/prompt.md --mode outline --config /absolute/private/config.json
 canvas-agent task show TASK_ID --config /absolute/private/config.json
 ```
+
+At the start of a session, read the selected config fresh and report its full
+config and vault paths. If the configured vault is missing, report its location
+and ask for the correct existing path instead of creating a replacement setup.
 
 The task records its sources and instructions. Your coding agent reads it, writes
 a candidate file, then the CLI checks and saves that file as a local version.

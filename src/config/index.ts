@@ -210,6 +210,74 @@ export async function saveAllowlist(
   return { ...config, courses: { allowlist: updated.courses.allowlist as string[] } }
 }
 
+export type VaultLocation = { config: string; vault: string; exists: boolean }
+
+/** Read the configured vault root without requiring that it already exists. */
+export async function readVaultLocation(configPath: string): Promise<VaultLocation> {
+  const config = resolve(configPath)
+  const loaded = await loadConfig(config)
+  const vault = loaded.vault.path
+  await assertNoSymlinks(vault, true)
+  try {
+    const stat = await lstat(vault)
+    if (!stat.isDirectory() || stat.isSymbolicLink())
+      throw new Error("Configured vault must be a real directory")
+    return { config, vault, exists: true }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { config, vault, exists: false }
+    throw error
+  }
+}
+
+/** Change only the configured vault root; this never creates or moves vault files. */
+export async function setVaultLocation(
+  configPath: string,
+  newPath: string,
+): Promise<VaultLocation & { previousVault: string; changed: boolean }> {
+  if (typeof newPath !== "string" || !newPath.trim())
+    throw new Error("Vault path must be a non-empty path")
+  const config = resolve(configPath)
+  const current = await readVaultLocation(config)
+  const expanded = expandHome(newPath.trim())
+  const vault = resolve(dirname(config), expanded)
+  await assertNoSymlinks(vault)
+  const stat = await lstat(vault)
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw new Error("Vault path must be an existing real directory")
+  if (current.vault === vault)
+    return { config, vault, exists: true, previousVault: current.vault, changed: false }
+
+  const original = await readFile(config, "utf8")
+  const raw = JSON.parse(original) as Record<string, unknown>
+  const rawVault = raw.vault as Record<string, unknown>
+  const updated = {
+    ...raw,
+    vault: { ...rawVault, path: requireRelative(dirname(config), vault) },
+  }
+  ConfigSchema.parse(updated)
+  const temporary = `${config}.${process.pid}.${Date.now()}.tmp`
+  await writeFile(temporary, `${JSON.stringify(updated, null, 2)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  })
+  try {
+    await assertNoSymlinks(config)
+    if ((await readFile(config, "utf8")) !== original)
+      throw new Error("Config changed during vault update; no changes were written")
+    await rename(temporary, config)
+  } catch (error) {
+    await unlink(temporary).catch(() => undefined)
+    throw error
+  }
+  return {
+    config,
+    vault,
+    exists: true,
+    previousVault: current.vault,
+    changed: current.vault !== vault,
+  }
+}
+
 function requireRelative(from: string, to: string): string {
   const rel = relative(from, to)
   return isAbsolute(rel) ? to : rel || "."

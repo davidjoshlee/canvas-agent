@@ -70,7 +70,7 @@ export function registerSetupCommands(
       render(
         value,
         options.json,
-        `Created config: ${value.config}\nVault directory ready: ${value.vault}\nCanvas token will be read from ${value.tokenEnv}.`,
+        `Created config: ${value.config}\nVault directory ready: ${value.vault}\nThis vault stores readings, drafts, and generated work. This location is saved in the config. Find it with: canvas-agent vault location --config CONFIG_PATH; change it with --set EXISTING_DIRECTORY.\nCanvas token will be read from ${value.tokenEnv}.`,
       )
     })
 
@@ -115,7 +115,7 @@ export function registerSetupCommands(
           envTemplate,
         },
         options.json,
-        `Created config: ${resolve(configPath)}\nVault directory ready: ${config.vault.path}\nBlank token template: ${envTemplate}\nSet ${config.canvas.tokenEnv} locally before Canvas access.`,
+        `Created config: ${resolve(configPath)}\nVault directory ready: ${config.vault.path}\nThis vault stores readings, drafts, and generated work. This location is saved in the config. Find it with: canvas-agent vault location --config CONFIG_PATH; change it with --set EXISTING_DIRECTORY.\nBlank token template: ${envTemplate}\nSet ${config.canvas.tokenEnv} locally before Canvas access.`,
       )
     })
 

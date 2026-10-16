@@ -1,5 +1,6 @@
 import { resolve } from "node:path"
 import { type Command, Option } from "commander"
+import { readVaultLocation, setVaultLocation } from "../config/index.js"
 import { ingestFile } from "../documents/content.js"
 import { withHomeworkDraftStatus } from "../student/homework-status.js"
 import { readTimeline, renderTimeline } from "../student/timeline.js"
@@ -192,6 +193,27 @@ export function registerWorkspaceCommands(program: Command): void {
     })
 
   const vault = program.command("vault").description("inspect local vault")
+  vault
+    .command("location")
+    .description("show or change the configured vault directory")
+    .option("--set <path>", "point the config to an existing vault directory")
+    .option("--json", "emit JSON")
+    .action(async (options) => {
+      const configPath = resolve(program.opts().config)
+      const result =
+        options.set !== undefined
+          ? await setVaultLocation(configPath, options.set)
+          : await readVaultLocation(configPath)
+      const status = result.exists
+        ? "Vault directory exists."
+        : "Vault directory is missing; reconnect by selecting an existing vault with --set <path>."
+      const human =
+        options.set !== undefined
+          ? `Config: ${result.config}\nVault: ${result.vault}\n${"changed" in result && !result.changed ? "Location already configured" : "Config updated"}; vault files were not moved.\n${status}`
+          : `Config: ${result.config}\nVault: ${result.vault}\n${status}\nChange the configured location with: canvas-agent vault location --set <existing-directory> --config CONFIG_PATH`
+      render(result, options.json, human)
+    })
+
   vault
     .command("health")
     .description("check vault structure read-only")

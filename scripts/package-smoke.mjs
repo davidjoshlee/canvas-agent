@@ -294,6 +294,29 @@ try {
   assert.equal(defaultSetup.vault, join(syntheticHome, "canvas-vault"))
   assert.equal(await readFile(join(schoolVault, "original.md"), "utf8"), schoolOriginal)
   cli(["setup", "--canvas-url", "https://canvas.example.test", "--vault", vault])
+  const initialLocation = cli(["vault", "location"])
+  assert.equal(initialLocation.vault, vault)
+  assert.equal(initialLocation.exists, true)
+  assert.equal(initialLocation.config, config)
+  const alternateVault = join(workspace, "alternate vault")
+  await mkdir(alternateVault)
+  const originalMarker = join(vault, ".location-original")
+  const alternateMarker = join(alternateVault, ".location-alternate")
+  await writeFile(originalMarker, "Original files remain here.\n")
+  await writeFile(alternateMarker, "Alternate files remain here.\n")
+  const envBeforeLocation = await readFile(join(workspace, "private/.env"))
+  const changedLocation = cli(["vault", "location", "--set", alternateVault])
+  assert.equal(changedLocation.vault, alternateVault)
+  assert.equal(cli(["config", "show"]).vault, alternateVault)
+  assert.equal(cli(["vault", "location"]).vault, alternateVault)
+  assert.equal(await readFile(originalMarker, "utf8"), "Original files remain here.\n")
+  assert.equal(await readFile(alternateMarker, "utf8"), "Alternate files remain here.\n")
+  await assert.rejects(stat(join(alternateVault, ".location-original")), { code: "ENOENT" })
+  const configBeforeBadLocation = await readFile(config)
+  cli(["vault", "location", "--set", join(workspace, "missing-vault")], 1)
+  assert.deepEqual(await readFile(config), configBeforeBadLocation)
+  cli(["vault", "location", "--set", vault])
+  assert.deepEqual(await readFile(join(workspace, "private/.env")), envBeforeLocation)
   cli(["config", "validate"])
   cli(["doctor", "--offline"])
   assert.equal(cli(["sync", "--full", "--preserve-school"]).fullRequested, true)
@@ -1062,6 +1085,7 @@ try {
         boundedAgentEntrypointsTested: true,
         fullWorkflowReferenceBundled: true,
         separateDefaultVaultTested: true,
+        vaultLocationPersistenceTested: true,
         savedTaskRecoveryDiscoveryTested: true,
         savedGuidanceRecoveryTested: true,
         feedbackGuidanceProposalInstalledTested: true,

@@ -53,10 +53,13 @@ Confirm explicit course permission for the exact assistance before generation; l
 
 ### Setup, discovery and recovery
 
-New setup defaults to `~/canvas-vault`; existing configs keep their paths. Shared School vaults need explicit preservation scope. Doctor/auth status are local; auth verify contacts Canvas. Successful authentication is not complete course access. Select course IDs explicitly before sync; don't choose all by default. Report partial coverage.
+At the start of each session, read the explicitly selected config and report its config and vault locations. For new setup, ask where the vault should go, suggest `~/canvas-vault`, and explain that readings, drafts and generated work live there. Pass the chosen absolute path with `setup --vault`; after setup, report both full config and vault paths. Existing users keep their selected config and vault without being asked again unless they request a change. If the configured vault is missing, report its path and ask for the correct location; do not create a replacement setup.
+
+`vault location` reports the vault from the selected config. `vault location --set ABS_PATH` changes only that config's vault path and requires an existing directory. It does not move or copy files. Use the selected config, not chat memory, to locate saved work. Shared School vaults need explicit preservation scope. Doctor/auth status are local; auth verify contacts Canvas. Successful authentication is not complete course access. Select course IDs explicitly before sync; don't choose all by default. Report partial coverage.
 
 ```text
 setup --canvas-url URL [--vault ABS_PATH]
+vault location [--set ABS_PATH]
 doctor --offline; auth status; auth verify
 courses list; onboard --course ID; sync [--course ID_OR_CODE] [--preserve-school]
 context; homework [--course COURSE]; timeline [--course COURSE]; vault health

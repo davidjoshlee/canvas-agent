@@ -1,8 +1,13 @@
-import { mkdtemp, readFile, rm, symlink } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { createConfig, loadConfig } from "../../src/config/index.js"
+import {
+  createConfig,
+  loadConfig,
+  readVaultLocation,
+  setVaultLocation,
+} from "../../src/config/index.js"
 
 const dirs: string[] = []
 async function temp() {
@@ -66,5 +71,81 @@ describe("config", () => {
         baseUrl: "https://canvas.example.edu",
       }),
     ).rejects.toThrow("Symbolic links")
+  })
+
+  it("reads a missing configured root without creating it", async () => {
+    const dir = await temp()
+    const path = join(dir, "config.json")
+    await createConfig(path, { vault: "old-vault", baseUrl: "https://canvas.example.edu" })
+    const result = await readVaultLocation(path)
+    expect(result).toEqual({ config: path, vault: join(dir, "old-vault"), exists: false })
+    await expect(lstat(result.vault)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("changes the root by config-relative mapping and preserves config and adjacent env", async () => {
+    const dir = await temp()
+    const path = join(dir, "nested", "config.json")
+    await mkdir(join(dir, "nested"))
+    const oldRoot = join(dir, "nested", "old")
+    const nextRoot = join(dir, "next")
+    await mkdir(oldRoot)
+    await mkdir(nextRoot)
+    await createConfig(path, {
+      vault: "old",
+      baseUrl: "https://canvas.example.edu",
+      tokenEnv: "MY_CANVAS_TOKEN",
+      courses: ["12", "34"],
+    })
+    const envPath = join(dir, "nested", ".env")
+    await writeFile(envPath, "MY_CANVAS_TOKEN=keep-this-secret\n", { mode: 0o600 })
+
+    const changed = await setVaultLocation(path, "../next")
+    expect(changed).toEqual({
+      config: path,
+      vault: nextRoot,
+      exists: true,
+      previousVault: oldRoot,
+      changed: true,
+    })
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+      version: 1,
+      canvas: { baseUrl: "https://canvas.example.edu", tokenEnv: "MY_CANVAS_TOKEN" },
+      vault: { path: "../next" },
+      courses: { allowlist: ["12", "34"] },
+    })
+    expect(await readFile(envPath, "utf8")).toBe("MY_CANVAS_TOKEN=keep-this-secret\n")
+
+    const previousCwd = process.cwd()
+    try {
+      process.chdir(tmpdir())
+      expect(await loadConfig(path)).toMatchObject({ vault: { path: nextRoot } })
+      expect(await readVaultLocation(path)).toMatchObject({
+        config: path,
+        vault: nextRoot,
+        exists: true,
+      })
+    } finally {
+      process.chdir(previousCwd)
+    }
+  })
+
+  it("rejects empty, missing, file, and symlink targets without changing config bytes", async () => {
+    const dir = await temp()
+    const target = await temp()
+    const path = join(dir, "config.json")
+    const oldRoot = join(dir, "old")
+    const file = join(dir, "file")
+    const linked = join(dir, "linked")
+    await mkdir(oldRoot)
+    await writeFile(file, "not a directory")
+    await symlink(target, linked)
+    await createConfig(path, { vault: "old", baseUrl: "https://canvas.example.edu" })
+    const original = await readFile(path, "utf8")
+
+    for (const invalid of ["", "missing", "file", "linked"]) {
+      await expect(setVaultLocation(path, invalid)).rejects.toThrow()
+      expect(await readFile(path, "utf8")).toBe(original)
+    }
+    await expect(readVaultLocation(path)).resolves.toMatchObject({ vault: oldRoot, exists: true })
   })
 })
