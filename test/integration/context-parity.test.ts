@@ -3,9 +3,9 @@ import { tmpdir } from "node:os"
 import { dirname, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import {
-  CONTEXT_CORE_MAX_BYTES,
-  CONTEXT_ENTRY_MAX_BYTES,
-  CONTEXT_SKILL_MAX_BYTES,
+  CONTEXT_CORE_BUDGET_BYTES,
+  CONTEXT_ENTRY_BUDGET_BYTES,
+  CONTEXT_SKILL_BUDGET_BYTES,
   syncContext,
   WORKFLOW_REFERENCE,
   workflowBlock,
@@ -53,11 +53,7 @@ afterEach(async () => {
 })
 
 describe("shared agent CLI context", () => {
-  it("keeps every complete entrypoint within the local budget without copying detailed reference bodies", async () => {
-    for (const file of targets)
-      expect((await readFile(resolve(file))).length).toBeLessThanOrEqual(CONTEXT_ENTRY_MAX_BYTES)
-    for (const file of targets.slice(1))
-      expect((await readFile(resolve(file))).length).toBeLessThanOrEqual(CONTEXT_SKILL_MAX_BYTES)
+  it("does not copy detailed reference bodies into entrypoints", async () => {
     const root = await fixture()
     await writeFile(
       resolve(root, source),
@@ -67,29 +63,35 @@ describe("shared agent CLI context", () => {
     expect(await readFile(resolve(root, targets[0]), "utf8")).not.toContain("x".repeat(100))
   })
 
-  it("rejects oversized shared cores before writing any entrypoint", async () => {
+  it("warns about a large shared core while synchronizing it without truncation", async () => {
     const root = await fixture()
-    const before = await readFile(resolve(root, targets[0]))
-    await writeFile(
-      resolve(root, source),
-      `${start}\n${"x".repeat(CONTEXT_CORE_MAX_BYTES)}\n${end}`,
-    )
-    await expect(syncContext(root, true)).rejects.toThrow("Shared CLI core exceeds")
-    expect(await readFile(resolve(root, targets[0]))).toEqual(before)
+    const core = `${start}\n${"x".repeat(CONTEXT_CORE_BUDGET_BYTES)}\n${end}`
+    await writeFile(resolve(root, source), core)
+    const warnings: string[] = []
+    await syncContext(root, true, (warning: string) => warnings.push(warning))
+    expect(warnings.some((warning) => warning.startsWith("Shared CLI core"))).toBe(true)
+    for (const target of targets)
+      expect(await readFile(resolve(root, target), "utf8")).toContain(core)
+    expect(await syncContext(root, false, () => {})).toEqual([])
   })
 
-  it("rejects a skill below the old entrypoint budget but above the native safety budget without partial repair", async () => {
+  it("warns about a large skill without blocking repairs or changing surrounding content", async () => {
     const root = await fixture()
     const stalePath = resolve(root, targets[1])
-    const stale = (await readFile(stalePath, "utf8")).replace("Shared contract", "Stale contract")
-    await writeFile(stalePath, stale)
+    await writeFile(
+      stalePath,
+      (await readFile(stalePath, "utf8")).replace("Shared contract", "Stale contract"),
+    )
     const largePath = resolve(root, targets[2])
-    const large = `${"x".repeat(CONTEXT_SKILL_MAX_BYTES)}\n${await readFile(largePath, "utf8")}`
-    expect(Buffer.byteLength(large)).toBeLessThan(CONTEXT_ENTRY_MAX_BYTES)
+    const large = `${"x".repeat(CONTEXT_SKILL_BUDGET_BYTES)}\n${await readFile(largePath, "utf8")}`
     await writeFile(largePath, large)
-    await expect(syncContext(root, true)).rejects.toThrow("Agent entrypoint exceeds 7500 bytes")
-    expect(await readFile(stalePath, "utf8")).toBe(stale)
+    const warnings: string[] = []
+    expect(await syncContext(root, true, (warning: string) => warnings.push(warning))).toEqual([
+      targets[1],
+    ])
+    expect(warnings.some((warning) => warning.includes(targets[2]))).toBe(true)
     expect(await readFile(largePath, "utf8")).toBe(large)
+    expect(await readFile(stalePath, "utf8")).toContain(canonical)
   })
 
   it("detects full workflow reference drift and repairs only that generated reference", async () => {
@@ -104,17 +106,22 @@ describe("shared agent CLI context", () => {
     expect(await Promise.all(targets.map((file) => readFile(resolve(root, file))))).toEqual(before)
   })
 
-  it("rejects oversized surrounding instructions before repairing other stale files", async () => {
+  it("warns about large surrounding instructions and retains a separate hard file bound", async () => {
     const root = await fixture()
+    const path = resolve(root, targets[0])
+    const original = await readFile(path, "utf8")
+    const large = `${"x".repeat(CONTEXT_ENTRY_BUDGET_BYTES)}\n${original}`
+    await writeFile(path, large)
+    const warnings: string[] = []
+    expect(await syncContext(root, false, (warning: string) => warnings.push(warning))).toEqual([])
+    expect(warnings.some((warning) => warning.includes("AGENTS.md"))).toBe(true)
+    expect(await readFile(path, "utf8")).toBe(large)
     const stalePath = resolve(root, targets[1])
     const stale = (await readFile(stalePath, "utf8")).replace("Shared contract", "Stale contract")
     await writeFile(stalePath, stale)
-    const oversized = resolve(root, targets[0])
-    const bytes = `${"x".repeat(CONTEXT_ENTRY_MAX_BYTES)}\n${await readFile(oversized, "utf8")}`
-    await writeFile(oversized, bytes)
-    await expect(syncContext(root, true)).rejects.toThrow("Agent entrypoint exceeds")
+    await writeFile(path, "x".repeat(1024 * 1024 + 1))
+    await expect(syncContext(root, true)).rejects.toThrow(/bounds/)
     expect(await readFile(stalePath, "utf8")).toBe(stale)
-    expect(await readFile(oversized, "utf8")).toBe(bytes)
   })
   it("keeps all repository entry points identical to the authoritative reference", async () => {
     expect(await syncContext(resolve("."))).toEqual([])

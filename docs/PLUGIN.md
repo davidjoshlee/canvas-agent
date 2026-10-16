@@ -45,7 +45,10 @@ src/tasks/workflows.ts, then run context:sync. context:check rejects drift;
 the full default workflow reference is generated beside the CLI reference.
 Saved task instructions and custom requirements govern actual work.
 
-Keep the shared core within 5000 bytes, skills within 7500 bytes and AGENTS within
-24 KiB. Load conditional CLI detail by topic instead of duplicating the reference
-or adding historical investigation logs. Equal content does not imply equal host
+The shared core has a suggested 5000-byte budget, skills 7500 bytes, and AGENTS
+24 KiB. Exceeding those budgets produces maintenance warnings and does not block
+synchronization, discovery, or packaging. Instruction files retain a separate
+1 MiB read limit. Topic lookups paginate complete matching paragraphs with
+`--page`; a large paragraph or fenced example stays intact. Load conditional CLI
+detail by topic instead of duplicating the reference or adding historical logs. Equal content does not imply equal host
 priority, successful injection, attention or publisher authenticity.

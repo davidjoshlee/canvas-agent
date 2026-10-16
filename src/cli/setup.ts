@@ -18,15 +18,20 @@ export function registerSetupCommands(
       "locate this installation's agent instructions without config, credentials or vault access",
     )
     .option("--topic <text>", "read matching installed CLI paragraphs (literal, case-insensitive)")
+    .option("--page <number>", "topic result page (requires --topic)")
     .option("--json", "emit JSON")
     .action(async (options) => {
-      const result = await discoverInstructions(undefined, options.topic)
+      const page = options.page === undefined ? undefined : Number(options.page)
+      if (options.page !== undefined && !/^[1-9]\d*$/.test(options.page))
+        throw new Error("Instruction page must be a positive integer")
+      const result = await discoverInstructions(undefined, options.topic, page)
+      const human = result.lookup
+        ? `${result.lookup.excerpts.map((part) => `${part.heading} (lines ${part.startLine}–${part.endLine})\n${part.text}`).join("\n\n")}\n\nPage ${result.lookup.page} of ${result.lookup.totalPages}.${result.lookup.hasMore ? ` Continue with --page ${result.lookup.nextPage} and the same --topic.` : ""}\n${result.lookup.note}`
+        : `Canvas Agent ${result.packageVersion} instructions\n${result.files.map((file) => `${file.id}: ${file.path}`).join("\n")}\n${result.note}`
       render(
         result,
         options.json,
-        result.lookup
-          ? `${result.lookup.excerpts.map((part) => `${part.heading} (lines ${part.startLine}–${part.endLine})\n${part.text}`).join("\n\n")}\n\n${result.lookup.note}`
-          : `Canvas Agent ${result.packageVersion} instructions\n${result.files.map((file) => `${file.id}: ${file.path}`).join("\n")}\n${result.note}`,
+        [human, ...result.warnings.map((warning) => `Warning: ${warning}`)].join("\n"),
       )
     })
 

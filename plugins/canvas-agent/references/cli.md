@@ -46,6 +46,19 @@ Revision preserves edits and produces a new full artifact. Approve only at expli
 Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, dogfood/sweep/window resume, vault history, playbooks/feedback, guidance, correctness, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
 <!-- canvas-agent-cli:end -->
 
+### Installed instruction lookup
+
+`instructions --json` locates installed instruction files and reports advisory size
+warnings separately from consistency errors. The suggested instruction budgets do
+not restrict academic output length. Files retain a 1 MiB read limit.
+
+Use `instructions --topic PHRASE --json` for literal matching paragraphs. Results
+include `page`, `totalPages`, `totalMatches`, and `nextPage`; continue with the same
+phrase and `--page NUMBER`. The page target is 64 KiB, with complete paragraphs and
+fenced examples kept intact even when one exceeds that target. Topic queries must
+be non-empty printable text, up to 4096 characters. `--page` requires `--topic`.
+
+
 ## Install and select the exact CLI
 
 Node 22+ and npm are required. Build a clone with npm ci and npm run build;

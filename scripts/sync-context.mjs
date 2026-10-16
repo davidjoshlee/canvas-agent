@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises"
+import { writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { resolveRequirements } from "../src/tasks/requirements.ts"
@@ -7,9 +7,17 @@ import { entrypointOutcomes, workflowForRequirements } from "../src/tasks/workfl
 const start = "<!-- canvas-agent-cli:start -->"
 const end = "<!-- canvas-agent-cli:end -->"
 const source = "plugins/canvas-agent/references/cli.md"
-export const CONTEXT_CORE_MAX_BYTES = 5000
-export const CONTEXT_ENTRY_MAX_BYTES = 24 * 1024
-export const CONTEXT_SKILL_MAX_BYTES = 7500
+
+import {
+  INSTRUCTION_CORE_BUDGET_BYTES as CONTEXT_CORE_BUDGET_BYTES,
+  INSTRUCTION_ENTRY_BUDGET_BYTES as CONTEXT_ENTRY_BUDGET_BYTES,
+  INSTRUCTION_SKILL_BUDGET_BYTES as CONTEXT_SKILL_BUDGET_BYTES,
+  INSTRUCTION_FILE_MAX_BYTES,
+  instructionSizeWarning,
+} from "../src/cli/instruction-policy.ts"
+import { readBoundedFile } from "../src/shared/fs-safety.ts"
+
+export { CONTEXT_CORE_BUDGET_BYTES, CONTEXT_ENTRY_BUDGET_BYTES, CONTEXT_SKILL_BUDGET_BYTES }
 export const WORKFLOW_REFERENCE = "plugins/canvas-agent/references/workflows.md"
 const targets = [
   "AGENTS.md",
@@ -78,15 +86,26 @@ export function workflowReference() {
 }
 
 // Resolve and validate all blocks before writing anything; preserve all workflow-specific text.
-export async function syncContext(root, write = false) {
-  const canonical = block(await readFile(resolve(root, source), "utf8"), source).value
-  if (Buffer.byteLength(canonical, "utf8") > CONTEXT_CORE_MAX_BYTES)
-    throw new Error(
-      "Shared CLI core exceeds 5000 bytes; move applicable detail outside the shared block",
+export async function syncContext(
+  root,
+  write = false,
+  warn = (message) => console.error(`Warning: ${message}`),
+) {
+  const readText = async (file) =>
+    new TextDecoder("utf-8", { fatal: true }).decode(
+      await readBoundedFile(resolve(root, file), INSTRUCTION_FILE_MAX_BYTES),
     )
+  const canonical = block(await readText(source), source).value
+  const warnings = []
+  const coreWarning = instructionSizeWarning(
+    "Shared CLI core",
+    Buffer.byteLength(canonical),
+    CONTEXT_CORE_BUDGET_BYTES,
+  )
+  if (coreWarning) warnings.push(coreWarning)
   const documents = await Promise.all(
     targets.map(async (file) => {
-      const text = await readFile(resolve(root, file), "utf8")
+      const text = await readText(file)
       const replacements = [{ section: block(text, file), value: canonical }]
       for (const mode of workflowTargets[file] ?? []) {
         replacements.push({
@@ -105,16 +124,21 @@ export async function syncContext(root, write = false) {
       )) {
         updated = updated.slice(0, section.first) + value + updated.slice(section.after)
       }
-      const limit = file === "AGENTS.md" ? CONTEXT_ENTRY_MAX_BYTES : CONTEXT_SKILL_MAX_BYTES
-      if (Buffer.byteLength(updated, "utf8") > limit)
-        throw new Error(
-          `Agent entrypoint exceeds ${limit} bytes: ${file}; keep workflows/core compact and route to detail`,
-        )
-      return { file, text, updated }
+      const limit = file === "AGENTS.md" ? CONTEXT_ENTRY_BUDGET_BYTES : CONTEXT_SKILL_BUDGET_BYTES
+      if (Buffer.byteLength(updated) > INSTRUCTION_FILE_MAX_BYTES)
+        throw new Error(`Generated instruction exceeds file safety limit: ${file}`)
+      return {
+        file,
+        text,
+        updated,
+        warning: instructionSizeWarning(file, Buffer.byteLength(updated), limit),
+      }
     }),
   )
-  const fullText = await readFile(resolve(root, WORKFLOW_REFERENCE), "utf8")
+  const fullText = await readText(WORKFLOW_REFERENCE)
   documents.push({ file: WORKFLOW_REFERENCE, text: fullText, updated: workflowReference() })
+  for (const document of documents) if (document.warning) warnings.push(document.warning)
+  for (const warning of warnings) warn(warning)
   const changed = documents.filter(({ text, updated }) => text !== updated)
   if (!write && changed.length) {
     throw new Error(

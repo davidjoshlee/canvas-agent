@@ -17,6 +17,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import JSZip from "jszip"
+import { INSTRUCTION_FILE_MAX_BYTES } from "../dist/cli/instruction-policy.js"
 
 // Exercise an actual npm package and executable outside the checkout. All CLI
 // inputs are synthetic/offline; registry installation is the only network step.
@@ -182,8 +183,8 @@ try {
   )
   const agents = await readFile(join(installed, "AGENTS.md"), "utf8")
   assert(
-    Buffer.byteLength(agents, "utf8") <= 24 * 1024,
-    "Packaged AGENTS exceeds the entrypoint budget",
+    Buffer.byteLength(agents, "utf8") <= INSTRUCTION_FILE_MAX_BYTES,
+    "Packaged AGENTS exceeds the file safety limit",
   )
   assert.equal(block(agents, "cli"), core)
   for (const [skill, workflows] of [
@@ -193,7 +194,10 @@ try {
   ]) {
     const relative = `plugins/canvas-agent/skills/${skill}/SKILL.md`
     const text = await readFile(join(installed, relative), "utf8")
-    assert(Buffer.byteLength(text, "utf8") <= 7500, "Packaged skill exceeds the entrypoint budget")
+    assert(
+      Buffer.byteLength(text, "utf8") <= INSTRUCTION_FILE_MAX_BYTES,
+      "Packaged skill exceeds the file safety limit",
+    )
     assert.equal(text, await readFile(join(checkout, relative), "utf8"))
     assert.equal(block(text, "cli"), core)
     for (const mode of workflows)

@@ -1,39 +1,32 @@
 import { createHash } from "node:crypto"
-import { constants } from "node:fs"
-import { open } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { assertNoSymlinks } from "../shared/fs-safety.js"
+import { readBoundedFile } from "../shared/fs-safety.js"
+import {
+  INSTRUCTION_CORE_BUDGET_BYTES,
+  INSTRUCTION_ENTRY_BUDGET_BYTES,
+  INSTRUCTION_FILE_MAX_BYTES,
+  INSTRUCTION_SKILL_BUDGET_BYTES,
+  instructionSizeWarning,
+} from "./instruction-policy.js"
 
 const definitions = [
-  ["agents", "AGENTS.md", 24 * 1024],
-  ["cli", "plugins/canvas-agent/references/cli.md", 512 * 1024],
-  ["workflows", "plugins/canvas-agent/references/workflows.md", 24 * 1024],
-  ["prep", "plugins/canvas-agent/skills/canvas-workspace/SKILL.md", 7500],
-  ["assignment", "plugins/canvas-agent/skills/assignment-workflow/SKILL.md", 7500],
-  ["setup", "plugins/canvas-agent/skills/setup-and-sync/SKILL.md", 7500],
+  ["agents", "AGENTS.md", INSTRUCTION_ENTRY_BUDGET_BYTES],
+  ["cli", "plugins/canvas-agent/references/cli.md", undefined],
+  ["workflows", "plugins/canvas-agent/references/workflows.md", INSTRUCTION_ENTRY_BUDGET_BYTES],
+  ["prep", "plugins/canvas-agent/skills/canvas-workspace/SKILL.md", INSTRUCTION_SKILL_BUDGET_BYTES],
+  [
+    "assignment",
+    "plugins/canvas-agent/skills/assignment-workflow/SKILL.md",
+    INSTRUCTION_SKILL_BUDGET_BYTES,
+  ],
+  ["setup", "plugins/canvas-agent/skills/setup-and-sync/SKILL.md", INSTRUCTION_SKILL_BUDGET_BYTES],
 ] as const
 
 async function textAt(path: string, limit: number): Promise<string> {
-  await assertNoSymlinks(path)
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-  try {
-    const stat = await file.stat()
-    if (!stat.isFile() || stat.size > limit)
-      throw new Error("Packaged instructions exceed file bounds")
-    const bytes = Buffer.alloc(limit + 1)
-    let length = 0
-    while (length < bytes.length) {
-      const part = await file.read(bytes, length, bytes.length - length, length)
-      if (!part.bytesRead) break
-      length += part.bytesRead
-    }
-    if (length > limit || bytes.subarray(0, length).includes(0))
-      throw new Error("Packaged instructions exceed text bounds")
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, length))
-  } finally {
-    await file.close()
-  }
+  const bytes = await readBoundedFile(path, limit)
+  if (bytes.includes(0)) throw new Error("Packaged instructions contain invalid text")
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes)
 }
 function coreOf(text: string): string {
   const start = "<!-- canvas-agent-cli:start -->"
@@ -51,14 +44,14 @@ function coreOf(text: string): string {
 }
 
 /** Literal paragraph lookup; keep fenced command examples intact and never truncate. */
-function topicExcerpts(text: string, topic: string) {
+function topicExcerpts(text: string, topic: string, page: number) {
   const query = topic.trim()
   if (
-    query.length < 2 ||
-    query.length > 120 ||
+    query.length < 1 ||
+    query.length > 4096 ||
     [...topic].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
   )
-    throw new Error("Instruction topic must be 2–120 printable characters")
+    throw new Error("Instruction topic must be 1–4096 printable characters")
   const lines = text.split("\n")
   const excerpts: { heading: string; startLine: number; endLine: number; text: string }[] = []
   let heading = ""
@@ -84,16 +77,47 @@ function topicExcerpts(text: string, topic: string) {
   }
   flush(lines.length)
   if (!excerpts.length) throw new Error("No installed CLI guidance matches that literal topic")
-  if (Buffer.byteLength(JSON.stringify(excerpts)) > 64 * 1024)
-    throw new Error("Instruction topic is too broad; use a more specific literal phrase")
-  return { topic: query, matchMode: "literal-case-insensitive", excerpts }
+  const pages: (typeof excerpts)[] = []
+  let current: typeof excerpts = []
+  let bytes = 2
+  const pageByteTarget = 64 * 1024
+  for (const excerpt of excerpts) {
+    const size = Buffer.byteLength(JSON.stringify(excerpt)) + 1
+    if (current.length && bytes + size > pageByteTarget) {
+      pages.push(current)
+      current = []
+      bytes = 2
+    }
+    // A single large paragraph or fenced example stays intact on its own page.
+    current.push(excerpt)
+    bytes += size
+  }
+  if (current.length) pages.push(current)
+  const selected = pages[page - 1]
+  if (!selected) throw new Error("Instruction page is out of range")
+  return {
+    topic: query,
+    matchMode: "literal-case-insensitive",
+    excerpts: selected,
+    page,
+    totalPages: pages.length,
+    totalMatches: excerpts.length,
+    hasMore: page < pages.length,
+    nextPage: page < pages.length ? page + 1 : null,
+    pageByteTarget,
+  }
 }
 
 /** Locate this installation's public instructions; never inspect config or vault. */
 export async function discoverInstructions(
   packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../.."),
   topic?: string,
+  page?: number,
 ) {
+  if (page !== undefined && topic === undefined)
+    throw new Error("Instruction --page requires --topic")
+  if (page !== undefined && (!Number.isSafeInteger(page) || page < 1))
+    throw new Error("Instruction page must be a positive integer")
   const root = resolve(packageRoot)
   let version: unknown
   try {
@@ -109,12 +133,13 @@ export async function discoverInstructions(
     throw new Error("Packaged instruction metadata is unavailable or invalid")
   }
   const texts = new Map<string, string>()
+  const warnings: string[] = []
   const files = await Promise.all(
-    definitions.map(async ([id, relativePath, limit]) => {
+    definitions.map(async ([id, relativePath]) => {
       const path = join(root, relativePath)
       let text: string
       try {
-        text = await textAt(path, limit)
+        text = await textAt(path, INSTRUCTION_FILE_MAX_BYTES)
       } catch {
         throw new Error(`Packaged instruction unavailable or unsafe: ${id}`)
       }
@@ -128,19 +153,30 @@ export async function discoverInstructions(
       }
     }),
   )
-  const core = coreOf(texts.get("cli") ?? "")
-  if (
-    Buffer.byteLength(core) > 5000 ||
-    ["agents", "prep", "assignment", "setup"].some((id) => coreOf(texts.get(id) ?? "") !== core)
-  )
-    throw new Error(
-      "Packaged instruction cores differ or exceed bounds; reinstall matching instructions",
+  for (const [id, , budget] of definitions) {
+    if (budget === undefined) continue
+    const warning = instructionSizeWarning(
+      `Instruction ${id}`,
+      Buffer.byteLength(texts.get(id) ?? ""),
+      budget,
     )
+    if (warning) warnings.push(warning)
+  }
+  const core = coreOf(texts.get("cli") ?? "")
+  const coreWarning = instructionSizeWarning(
+    "Shared CLI core",
+    Buffer.byteLength(core),
+    INSTRUCTION_CORE_BUDGET_BYTES,
+  )
+  if (coreWarning) warnings.push(coreWarning)
+  if (["agents", "prep", "assignment", "setup"].some((id) => coreOf(texts.get(id) ?? "") !== core))
+    throw new Error("Packaged instruction cores differ; reinstall matching instructions")
   return {
     version: 1,
     packageVersion: version,
     packageRoot: root,
     files,
+    warnings,
     sharedCoreHash: createHash("sha256").update(core).digest("hex"),
     sharedCoreConsistent: true,
     contextInjectionVerified: false,
@@ -149,7 +185,7 @@ export async function discoverInstructions(
       ? {}
       : {
           lookup: {
-            ...topicExcerpts(texts.get("cli") ?? "", topic),
+            ...topicExcerpts(texts.get("cli") ?? "", topic, page ?? 1),
             fileId: "cli",
             completeReference: false,
             note: "Matching paragraphs only, with line numbers and heading context. Read related guidance and command --help; excerpts do not replace the applicable skill, saved task or student permission.",

@@ -32,6 +32,8 @@ export function registerCapabilityCommands(program: Command): void {
     .action((options) => {
       const commands = collectCapabilities(program).slice(1)
       if (options.json) console.log(JSON.stringify({ commands }, null, 2))
-      else for (const command of commands) console.log(`${command.path.padEnd(32)} ${command.description}`)
+      else
+        for (const command of commands)
+          console.log(`${command.path.padEnd(32)} ${command.description}`)
     })
 }
