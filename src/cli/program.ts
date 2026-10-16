@@ -10,6 +10,7 @@ import { registerObsidianCommand } from "../vault/obsidian.js"
 import { registerReadingCopyCommands } from "../vault/reading-copy-cli.js"
 import { registerAcademicCommands } from "./academic.js"
 import { registerAccessCommands } from "./access.js"
+import { registerCapabilityCommands } from "./capabilities.js"
 import { registerSetupCommands } from "./setup.js"
 import { registerStudentCommands } from "./student.js"
 import { registerSyncCommands } from "./sync.js"
@@ -69,6 +70,7 @@ function makeProgram(runtime: CliRuntime): Command {
   registerAcademicCommands(program)
   registerAccessCommands(program, runtime.canvasClient)
   registerWorkspaceCommands(program)
+  registerCapabilityCommands(program)
   registerToolCommands(program)
   registerDogfoodCommand(program)
   registerStudentCommands(program)
