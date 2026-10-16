@@ -21,14 +21,14 @@ Canvas GET → synced vault → local course inventory
 | --- | --- |
 | src/cli | Command registration, output, diagnostics and instruction discovery |
 | src/config | Explicit configuration and course onboarding |
-| src/auth | Credentials, expiry/alerts and sync-account identity |
+| src/auth | Credentials, recorded expiry and sync-account identity |
 | src/canvas | Instance-scoped GET transport, sync ownership, module relationships and assignment metadata |
 | src/documents | Bounded extraction, originals and hash-linked sidecars |
 | src/vault | Safe inventory, destinations, reading copies, Obsidian and local history |
 | src/tasks | Task selection/recipes, validation, revision/approval and arithmetic/workbooks |
 | src/guidance | Course/assignment guidance and inactive proposals |
 | src/feedback | Private own-feedback history and read-only older snapshot formats |
-| src/student | Upcoming work, timeline, calendar and reminders |
+| src/student | On-demand upcoming work, timeline and calendar |
 | src/simulation | Frozen source captures, saved tasks, calculations and workbook evidence |
 | src/usage | Explicit host-export usage and cost reporting |
 | tools/evaluation | Checkout-only dogfood, sweeps, experiment windows and human comparison reports |
@@ -51,9 +51,9 @@ Runtime modules never import development tooling.
 - canvas/client owns GET transport, origin restrictions, retries, pagination and
   safe downloads. Fetch, DNS and sleep dependencies belong to each client instance;
   the CLI accepts a client factory for synthetic tests without process-global setters.
-- Sync owns account/allowlist checks and hash-based write ownership. The
-  sync-workflow module refreshes reminders after a successful sync, leaving
-  transport and synchronization independent of desktop delivery.
+- Sync owns account/allowlist checks and hash-based write ownership. Sync and
+  onboarding call the same synchronization implementation without reminder or
+  notification side effects. Authentication failures remain immediate CLI errors.
 - Vault inventory provides safe course text and explicit exclusions, without a DB.
 - tasks/recipes owns evidence selection and destination rules; tasks/records
   validates persisted identity, recipes and older formats; tasks/creation captures

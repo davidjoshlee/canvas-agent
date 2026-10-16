@@ -1,9 +1,7 @@
 import { createRequire } from "node:module"
 import { Command, Option } from "commander"
-import { writeAuthAlert } from "../auth/alerts.js"
 import type { CanvasClientFactory } from "../canvas/client.js"
 import { isCanvasUnauthorized } from "../canvas/sync.js"
-import { loadConfig } from "../config/index.js"
 import { finishVaultHistory, registerVaultHistory } from "../vault/history-cli.js"
 import { registerObsidianCommand } from "../vault/obsidian.js"
 import { registerReadingCopyCommands } from "../vault/reading-copy-cli.js"
@@ -39,6 +37,9 @@ function configOptionArgs(args: string[]): string[] {
 
 function safeError(error: unknown, configPath: string): string {
   let message = error instanceof Error ? error.message : "Command failed"
+  if (isCanvasUnauthorized(error))
+    message +=
+      ". Run auth renew for local renewal steps, then auth login and auth verify with your selected config."
   try {
     for (const [name, value] of Object.entries(process.env)) {
       if (value && /token|secret|password|credential|api[_-]?key/i.test(name))
@@ -112,20 +113,8 @@ export async function runCli(
     const configIndex = args.indexOf("--config")
     const configPath = configIndex >= 0 ? (args[configIndex + 1] ?? DEFAULT_CONFIG) : DEFAULT_CONFIG
     const message = safeError(error, configPath)
-    let authAlert:
-      | Awaited<ReturnType<typeof writeAuthAlert>>
-      | { status: "not-updated" }
-      | undefined
-    if (isCanvasUnauthorized(error)) {
-      try {
-        const selectedPath = program.opts().config as string
-        authAlert = await writeAuthAlert(selectedPath, await loadConfig(selectedPath), "http-401")
-      } catch {
-        authAlert = { status: "not-updated" }
-      }
-    }
     process.stderr.write(
-      `${jsonRequested ? `${JSON.stringify({ error: message, ...(authAlert ? { authAlert } : {}) })}\n` : `Error: ${message}${authAlert && "alertFile" in authAlert ? `\nPrivate auth alert: ${authAlert.alertFile}` : ""}\n`}`,
+      jsonRequested ? `${JSON.stringify({ error: message })}\n` : `Error: ${message}\n`,
     )
     process.exitCode = 1
     await finishVaultHistory(program, false)

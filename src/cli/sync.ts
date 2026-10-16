@@ -1,12 +1,11 @@
 import type { Command } from "commander"
-import { writeAuthAlert } from "../auth/alerts.js"
 import { type CanvasClientFactory, createCanvasClient } from "../canvas/client.js"
 import {
   CanvasSyncPartialError,
   isCanvasDiscoveryUnavailable,
   listCourses,
+  syncCourses,
 } from "../canvas/sync.js"
-import { syncWithReminderRefresh } from "../canvas/sync-workflow.js"
 import { selectOnboardingCourses } from "../config/onboarding.js"
 import { vaultMutation } from "../vault/command-effects.js"
 import { inspectWorkspace } from "../vault/workspace.js"
@@ -35,16 +34,9 @@ export function registerSyncCommands(
       [] as string[],
     )
     .option("--json", "emit JSON")
-    .option(
-      "--notify-due-soon",
-      "explicitly deliver a due-soon macOS notification after saving the private alert",
-    )
-    .option("--lead-days <days>", "due-soon reminder horizon, 1–365 days", "7")
     .action(async (options) => {
       const config = await configWithEnv(program.opts().config)
       let selectedConfig = config
-      if (!/^[1-9]\d*$/.test(String(options.leadDays)) || Number(options.leadDays) > 365)
-        throw new Error("--lead-days must be between 1 and 365")
       if (options.course.length) {
         const allow = new Set(config.courses.allowlist)
         let discovered: Awaited<ReturnType<typeof listCourses>> = []
@@ -102,14 +94,12 @@ export function registerSyncCommands(
         }
         selectedConfig = { ...config, courses: { allowlist: [...new Set(selected)] } }
       }
-      let result: Awaited<ReturnType<typeof syncWithReminderRefresh>>
+      let result: Awaited<ReturnType<typeof syncCourses>>
       try {
-        result = await syncWithReminderRefresh(
+        result = await syncCourses(
           selectedConfig,
           {
             preserveSchool: Boolean(options.preserveSchool),
-            reminderDays: Number(options.leadDays),
-            notifyDueSoon: options.notifyDueSoon,
           },
           canvasClient(selectedConfig),
         )
@@ -124,23 +114,14 @@ export function registerSyncCommands(
             status: "partial-failure",
           },
           options.json,
-          `Partial sync: ${error.report.courses} course(s) synced; ${error.report.failedCourses} failed.\n${error.report.courseReports?.map((course) => `${course.courseId}\t${course.code ?? "unknown code"}\t${course.status}${course.httpStatus ? `\tHTTP ${course.httpStatus}` : ""}`).join("\n")}\nRetry the failed course explicitly; due-soon alerts/auth resolution and reading-copy refresh were not performed.`,
+          `Partial sync: ${error.report.courses} course(s) synced; ${error.report.failedCourses} failed.\n${error.report.courseReports?.map((course) => `${course.courseId}\t${course.code ?? "unknown code"}\t${course.status}${course.httpStatus ? `\tHTTP ${course.httpStatus}` : ""}`).join("\n")}\nRetry the failed course explicitly; reading-copy refresh was not performed.`,
         )
         return
-      }
-      if (result.courses) {
-        try {
-          await writeAuthAlert(program.opts().config, config, "selected-sync-succeeded")
-        } catch {
-          result.notices.push(
-            "Sync succeeded but its private auth alert could not be resolved; inspect the alert/state without overwriting it.",
-          )
-        }
       }
       render(
         { ...result, refreshMode: "full", fullRequested: Boolean(options.full) },
         options.json,
-        `Synced ${result.courses} course(s); wrote ${result.written.length} file(s).${result.dueSoon?.status === "saved" ? `\nDue-soon alert: ${result.dueSoon.receipt.alertFile}; assignments=${result.dueSoon.receipt.assignments}; desktop=${result.dueSoon.notification}.` : ""}${result.notices.length ? `\n${result.notices.join("\n")}` : ""}`,
+        `Synced ${result.courses} course(s); wrote ${result.written.length} file(s).${result.notices.length ? `\n${result.notices.join("\n")}` : ""}`,
       )
     })
 
@@ -187,7 +168,7 @@ export function registerSyncCommands(
         canvasClient(config),
       )
       const pilotSync = options.pilot
-        ? await syncWithReminderRefresh(
+        ? await syncCourses(
             { ...config, courses: { allowlist: result.selected } },
             {
               ...(result.pilotEligibility?.basis === "assignment-date-span-and-own-feedback"

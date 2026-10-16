@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -356,6 +356,15 @@ it("returns partial-failure JSON/nonzero through the compiled CLI and leaves an 
       }
     }
     expect((await run(["sync"])).code).toBe(0)
+    await expect(stat(join(config.vault.path, "_meta/due-soon"))).rejects.toMatchObject({
+      code: "ENOENT",
+    })
+    await mkdir(join(config.vault.path, "_meta/due-soon"), { recursive: true, mode: 0o700 })
+    await writeFile(
+      join(config.vault.path, "_meta/due-soon/ALERT.md"),
+      "Retained legacy reminder bytes.\n",
+      { mode: 0o600 },
+    )
     expect(
       (await run(["vault", "reading-copy", "--destination", phone, "--current", "--apply"])).code,
     ).toBe(0)

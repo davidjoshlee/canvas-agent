@@ -125,7 +125,7 @@ describe("assignment effective and alternate date evidence", () => {
       }).success,
     ).toBe(false)
   })
-  it("retains API-effective dates in upcoming/reminders scope and never schedules alternatives or stale null-date prose", async () => {
+  it("retains API-effective dates in upcoming scope and never schedules alternatives or stale null-date prose", async () => {
     const { context, vault } = await fixture()
     const result = collectUpcoming(context, {
       course: "CS101",

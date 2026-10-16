@@ -106,6 +106,15 @@ try {
     packed.files.every(({ path }) => !/^(?:tools\/|dist\/evaluation\/)/.test(path)),
     "Development evaluation tooling leaked into the package",
   )
+  assert(
+    packed.files.every(
+      ({ path }) =>
+        !/^dist\/(?:student\/reminders|auth\/alerts|canvas\/sync-workflow)\.(?:js|d\.ts)$/.test(
+          path,
+        ),
+    ),
+    "Retired notification modules leaked into the package",
+  )
   const bundledRoots = new Set(packed.bundled.map((name) => `node_modules/${name}/`))
   const packagedDocs = new Set(["docs/ARCHITECTURE.md", "docs/PLUGIN.md", "docs/DEVELOPMENT.md"])
   assert(
@@ -175,6 +184,10 @@ try {
     ["simulate", "window"],
     ["simulate", "compare"],
     ["gate", "m1"],
+    ["reminders"],
+    ["auth", "alerts"],
+    ["sync", "--notify-due-soon"],
+    ["sync", "--lead-days", "7"],
   ]) {
     commands.push(`${args.join(" ")} unavailable in installed CLI`)
     run(bin, args, workspace, 1)
@@ -321,7 +334,6 @@ try {
   cli(["doctor", "--offline"])
   assert.equal(cli(["sync", "--full", "--preserve-school"]).fullRequested, true)
   cli(["auth", "status"])
-  assert.equal(cli(["auth", "alerts"]).alert.status, "no-record")
   cli(["auth", "verify"], 1) // Missing token must fail before any HTTP request.
   const usageFile = join(workspace, "host-usage.json")
   const usage = JSON.stringify({
@@ -396,7 +408,6 @@ try {
       courses: [{ id: "1", code: "CS101", name: "Synthetic", root: "CS101" }],
     }),
   )
-  assert.equal(cli(["reminders", "--course", "CS101"]).applied, false)
   const starter = cli(["guidance", "init-assignment", "CS101", "--source", prompt])
   assert.equal(starter.created, true)
   assert.equal(starter.aiPermissionVerified, false)
@@ -404,9 +415,6 @@ try {
   const starterBytes = await readFile(starterPath)
   assert.equal(cli(["guidance", "init-assignment", "CS101", "--source", prompt]).created, false)
   assert.deepEqual(await readFile(starterPath), starterBytes)
-  const reminder = cli(["reminders", "--course", "CS101", "--apply"])
-  assert.equal(reminder.notification, "not-requested")
-  assert.equal((await stat(join(vault, reminder.receipt.alertFile))).mode & 0o777, 0o600)
   const feedback = {
     version: 1,
     courseId: "1",
@@ -1074,6 +1082,7 @@ try {
         version: JSON.parse(await readFile(join(installed, "package.json"), "utf8")).version,
         commands: commands.length,
         installedVersionTested: true,
+        retiredNotificationCommandsRejected: true,
         installedInstructionDiscoveryTested: true,
         optionalLocalVaultHistoryTested: true,
         historyMetadataReadinessTested: true,

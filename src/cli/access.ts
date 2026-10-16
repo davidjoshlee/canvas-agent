@@ -1,5 +1,4 @@
 import type { Command } from "commander"
-import { writeAuthAlert } from "../auth/alerts.js"
 import {
   authStatus,
   importSchoolKeychainAuth,
@@ -111,17 +110,7 @@ export function registerAccessCommands(
     .action(async (options) => {
       const config = await configWithEnv(program.opts().config)
       const result = await verifyAuth(config, canvasClient(config))
-      let alert: Awaited<ReturnType<typeof writeAuthAlert>> | { status: "not-updated" }
-      try {
-        alert = await writeAuthAlert(program.opts().config, config, "api-verified")
-      } catch {
-        alert = { status: "not-updated" }
-      }
-      render(
-        { ...result, alert },
-        options.json,
-        `Canvas authentication succeeded.${alert.status === "not-updated" ? " Private auth alert was preserved but could not be resolved; inspect it separately." : ""}`,
-      )
+      render(result, options.json, "Canvas authentication succeeded.")
     })
 
   auth
