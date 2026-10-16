@@ -1,8 +1,6 @@
 import { isAbsolute } from "node:path"
 import type { Command } from "commander"
-import { readAuthAlert, writeAuthAlert } from "../auth/alerts.js"
-import { authStatus } from "../auth/credentials.js"
-import { loadAdjacentEnv, loadConfig } from "../config/index.js"
+import { loadConfig } from "../config/index.js"
 import { readCoursePlaybook, readOwnFeedback } from "../feedback/history.js"
 import { initializeAssignmentGuidance } from "../guidance/assignment-guidance.js"
 import { listGuidanceProposals, showGuidanceProposal } from "../guidance/inventory.js"
@@ -14,13 +12,6 @@ import {
   readCalendarFile,
   setCalendarOverride,
 } from "../student/calendar.js"
-import {
-  notifyDesktopAlert,
-  notifyDueSoon,
-  planDueSoon,
-  renderDueSoon,
-  saveDueSoon,
-} from "../student/reminders.js"
 import { readUpcoming } from "../student/upcoming.js"
 import { vaultMutation } from "../vault/command-effects.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
@@ -35,82 +26,6 @@ async function localConfig(path: string) {
 
 /** Register model-free student conveniences over the local vault. */
 export function registerStudentCommands(program: Command): void {
-  const auth = program.commands.find((command) => command.name() === "auth")
-  if (!auth) throw new Error("Auth command must be registered before student commands")
-  auth
-    .command("alerts")
-    .hook(
-      "preAction",
-      vaultMutation((options) => Boolean(options.apply)),
-    )
-    .description("inspect private observed auth alerts; optionally record a local expiry hint")
-    .option("--apply", "record an expired local metadata hint, not API denial")
-    .option("--notify", "explicitly display an existing warning via macOS notification")
-    .option("--json", "emit credential-free alert metadata")
-    .action(async (options) => {
-      const path = program.opts<RootOptions>().config
-      const config = await localConfig(path)
-      if (options.apply) {
-        await loadAdjacentEnv(path)
-        const status = await authStatus(path, config)
-        if (status.renewal !== "expired" || !("expiresAt" in status))
-          throw new Error(
-            "Only fingerprint-matched expired local metadata can record an expiry hint; use auth verify for API authorization",
-          )
-        await writeAuthAlert(path, config, "recorded-expiry", { expiresAt: status.expiresAt })
-      }
-      const alert = await readAuthAlert(path, config)
-      const notification =
-        options.notify &&
-        (alert.status === "reauthentication-required" || alert.status === "local-expiry-warning")
-          ? await notifyDesktopAlert(
-              "Canvas Agent: authentication warning",
-              alert.status === "reauthentication-required"
-                ? `Canvas returned HTTP 401 at ${alert.checkedAt}. Renew locally, then auth login and auth verify.`
-                : `Recorded expiry at ${alert.expiresAt}; local hint only. Run auth verify before treating it as API denial.`,
-            )
-          : "not-requested"
-      emit(
-        { alert, notification },
-        Boolean(options.json),
-        `Auth alert: ${alert.status}. Notification: ${notification}. This is a cached observation, not current API authorization.${"alertFile" in alert ? `\nPrivate note: ${alert.alertFile}` : ""}`,
-      )
-    })
-  program
-    .command("reminders")
-    .hook(
-      "preAction",
-      vaultMutation((options) => Boolean(options.apply)),
-    )
-    .description("preview due-soon local deadlines, or save a private durable alert")
-    .option("--days <days>", "lead days, 1–365", "7")
-    .option("--course <course>", "explicit local course")
-    .option("--apply", "save the private owned alert and retained report")
-    .option("--notify", "explicitly send a macOS notification; requires --apply")
-    .option("--json", "emit deadline metadata, never source bodies")
-    .action(async (options) => {
-      if (options.notify && !options.apply) throw new Error("--notify requires --apply")
-      if (!/^[1-9]\d*$/.test(String(options.days)) || Number(options.days) > 365)
-        throw new Error("--days must be between 1 and 365")
-      const config = await localConfig(program.opts<RootOptions>().config)
-      const workspace = await inspectWorkspace(config.vault.path)
-      const context = {
-        ...workspace,
-        courses: options.course
-          ? [selectCourse(workspace, options.course)]
-          : workspace.courses.filter(
-              (course) => course.canvasId && config.courses.allowlist.includes(course.canvasId),
-            ),
-      }
-      const plan = await planDueSoon(config.vault.path, context, { days: Number(options.days) })
-      const receipt = options.apply ? await saveDueSoon(config.vault.path, plan) : undefined
-      const notification = options.notify ? await notifyDueSoon(plan) : "not-requested"
-      emit(
-        { plan, ...(receipt ? { receipt } : {}), notification, applied: Boolean(options.apply) },
-        Boolean(options.json),
-        `${renderDueSoon(plan)}${receipt ? `\n\nSaved: ${receipt.alertFile}` : "\n\nPreview only; no files changed."}\nNotification: ${notification}`,
-      )
-    })
   program
     .command("playbook <course>")
     .description("read private retained feedback/learning history, not a chronological grading log")

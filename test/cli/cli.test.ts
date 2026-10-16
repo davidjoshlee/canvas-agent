@@ -195,6 +195,10 @@ describe("CLI", () => {
     const onboard = await invoke(["onboard", "909", "--pilot", "--config", config, "--json"])
     expect(onboard.exitCode, onboard.stderr).toBe(0)
     expect(JSON.parse(onboard.stdout)).toMatchObject({ selected: ["909"], sync: { courses: 1 } })
+    expect(JSON.parse(onboard.stdout).sync).not.toHaveProperty("dueSoon")
+    await expect(readFile(join(vault, "_meta/due-soon/ALERT.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    })
     const promptPath = JSON.parse(onboard.stdout).sync.written.find((path: string) =>
       path.includes("/Assignments/"),
     )
@@ -266,7 +270,10 @@ describe("CLI", () => {
       refreshMode: "full",
       fullRequested: true,
       courses: 1,
-      dueSoon: { status: "saved", notification: "not-requested" },
+    })
+    expect(JSON.parse(full.stdout)).not.toHaveProperty("dueSoon")
+    await expect(readFile(join(vault, "_meta/due-soon/ALERT.md"))).rejects.toMatchObject({
+      code: "ENOENT",
     })
     const original = join(vault, "CS101/Canvas/Files/31-reading.txt")
     await writeFile(original, "Student-edited original.")

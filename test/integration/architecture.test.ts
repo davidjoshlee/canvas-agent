@@ -43,6 +43,8 @@ it("keeps runtime code grouped and scripts limited to maintained verification", 
 it.each([
   ["legacy"],
   ["dogfood"],
+  ["reminders"],
+  ["auth", "alerts"],
   ["simulate", "window"],
   ["simulate", "compare"],
   ["gate", "m1"],
@@ -157,5 +159,26 @@ it("keeps development tooling out of all runtime imports", async () => {
       ts.forEachChild(node, visit)
     }
     visit(source)
+  }
+})
+
+it.each([["--notify-due-soon"], ["--lead-days", "7"]])(
+  "rejects removed sync notification options: %s",
+  (...args) => {
+    const result = spawnSync(process.execPath, [resolve("dist/cli.js"), "sync", ...args], {
+      env: { PATH: process.env.PATH },
+      encoding: "utf8",
+      timeout: 30_000,
+    })
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain("unknown option")
+  },
+)
+
+it("does not ship retired notification implementations", async () => {
+  const output = new Set(await files("dist"))
+  for (const module of ["student/reminders", "auth/alerts", "canvas/sync-workflow"]) {
+    expect(output.has(`dist/${module}.js`)).toBe(false)
+    expect(output.has(`dist/${module}.d.ts`)).toBe(false)
   }
 })
