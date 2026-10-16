@@ -15,7 +15,7 @@ import {
   prepareCorrectnessReview,
   saveCorrectnessReview,
   showCorrectnessReview,
-} from "../../src/tasks/correctness-review.js"
+} from "../../src/tasks/review/correctness-review.js"
 
 const roots: string[] = []
 afterEach(async () => {

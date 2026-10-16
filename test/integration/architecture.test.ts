@@ -129,10 +129,14 @@ it("keeps deterministic modules independent of orchestration and persistence", a
         dependencies.filter((path) => path.startsWith("src/cli/")),
         file,
       ).toEqual([])
-    if (["src/tasks/workbook.ts", "src/tasks/calculation-core.ts"].includes(file))
+    if (
+      ["src/tasks/calculations/workbook.ts", "src/tasks/calculations/calculation-core.ts"].includes(
+        file,
+      )
+    )
       expect(
         dependencies.filter((path) =>
-          /src\/(?:cli|simulation|vault)\/|src\/tasks\/(?:store|records|creation|completion|tools)\.ts/.test(
+          /src\/(?:cli|simulation|vault)\/|src\/tasks\/(?:store|tools)\.ts|src\/tasks\/(?:artifacts\/(?:records|completion)|authoring\/creation)\.ts/.test(
             path,
           ),
         ),

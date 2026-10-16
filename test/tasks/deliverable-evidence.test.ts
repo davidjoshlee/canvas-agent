@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   captureDeliverable,
   DeliverableEvidenceSchema,
-} from "../../src/tasks/deliverable-evidence.js"
+} from "../../src/tasks/evidence/deliverable-evidence.js"
 
 const source = (text: string, path = "CS101/assignment.md") => ({ text, path })
 describe("bounded source-derived deliverable evidence", () => {

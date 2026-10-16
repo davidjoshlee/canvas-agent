@@ -4,7 +4,11 @@ import { join, resolve } from "node:path"
 import { z } from "zod"
 import { assertNoSymlinks, readBoundedFile } from "../shared/fs-safety.js"
 import type { SourceRecord } from "../shared/types.js"
-import { createWorkbook, matchesLegacyWorkbook, parseWorkbookInput } from "../tasks/workbook.js"
+import {
+  createWorkbook,
+  matchesLegacyWorkbook,
+  parseWorkbookInput,
+} from "../tasks/calculations/workbook.js"
 
 const hash = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex")
 const digest = z.string().regex(/^[a-f0-9]{64}$/)

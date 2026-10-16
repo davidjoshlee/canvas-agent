@@ -7,7 +7,7 @@ import { ingestFile } from "../../src/documents/content.js"
 import type { TaskRecord } from "../../src/shared/types.js"
 import { captureSimulation, replaySimulation } from "../../src/simulation/captures.js"
 import { createSimulationTask, readSimulationTask } from "../../src/simulation/tasks.js"
-import { completeTask } from "../../src/tasks/completion.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
 import {
   createAssignmentTask,
   createPrepTask,

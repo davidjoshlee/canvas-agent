@@ -66,7 +66,7 @@ it("resumes a killed completion between Markdown and workbook commits without al
         }
       };
       syncBuiltinESMExports();
-      const {completeTask}=await import(${JSON.stringify(pathToFileURL(resolve("dist/tasks/completion.js")).href)});
+      const {completeTask}=await import(${JSON.stringify(pathToFileURL(resolve("dist/tasks/artifacts/completion.js")).href)});
       await completeTask(process.argv[1],process.argv[2],process.argv[3]);
     `
     const child = spawn(

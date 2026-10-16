@@ -11,10 +11,13 @@ import type {
 } from "../../src/shared/types.js"
 import { captureSimulation } from "../../src/simulation/captures.js"
 import { createSimulationTask, readSimulationTask } from "../../src/simulation/tasks.js"
-import { prepareAnswerEvidence, validateAnswerEvidence } from "../../src/tasks/answer-evidence.js"
-import { checkCandidate, completeTask } from "../../src/tasks/completion.js"
+import { checkCandidate, completeTask } from "../../src/tasks/artifacts/completion.js"
+import { workflowForRequirements } from "../../src/tasks/authoring/workflows.js"
+import {
+  prepareAnswerEvidence,
+  validateAnswerEvidence,
+} from "../../src/tasks/evidence/answer-evidence.js"
 import { TaskRecordSchema } from "../../src/tasks/store.js"
-import { workflowForRequirements } from "../../src/tasks/workflows.js"
 
 const workspace = vi.hoisted(() => ({ inspectWorkspace: vi.fn(), selectCourse: vi.fn() }))
 vi.mock("../../src/vault/workspace.js", () => workspace)

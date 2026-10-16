@@ -8,7 +8,7 @@ import type { CourseContext, WorkspaceContext } from "../../src/shared/types.js"
 const workspace = vi.hoisted(() => ({ inspectWorkspace: vi.fn(), selectCourse: vi.fn() }))
 vi.mock("../../src/vault/workspace.js", () => workspace)
 
-import { completeTask } from "../../src/tasks/completion.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
 import { createAssignmentTask, readTask } from "../../src/tasks/store.js"
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex")

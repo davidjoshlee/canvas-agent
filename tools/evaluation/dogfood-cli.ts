@@ -2,12 +2,12 @@ import type { Command } from "commander"
 import { z } from "zod"
 import { loadAdjacentEnv, loadConfig } from "../../src/config/index.js"
 import type { ToolkitConfig } from "../../src/shared/types.js"
+import { readTask } from "../../src/tasks/artifacts/records.js"
 import {
   hasPrepMaterial,
   selectAssignmentPrompt,
   selectPrepInputs,
-} from "../../src/tasks/recipes.js"
-import { readTask } from "../../src/tasks/records.js"
+} from "../../src/tasks/authoring/recipes.js"
 import { readHostUsage } from "../../src/usage/host-usage.js"
 import { vaultMutation } from "../../src/vault/command-effects.js"
 import { refreshConfiguredReadingMirror } from "../../src/vault/reading-copy.js"

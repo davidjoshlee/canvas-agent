@@ -7,9 +7,9 @@ import { afterEach, expect, it } from "vitest"
 import { readTaskOutput } from "../../src/cli/task-output.js"
 import { captureSimulation } from "../../src/simulation/captures.js"
 import { completeSimulationTask, createSimulationTask } from "../../src/simulation/tasks.js"
-import { completeTask } from "../../src/tasks/completion.js"
-import { approveTask, reviseTask } from "../../src/tasks/lifecycle.js"
-import { taskInspectionCommand, taskLocations } from "../../src/tasks/locations.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
+import { approveTask, reviseTask } from "../../src/tasks/artifacts/lifecycle.js"
+import { taskInspectionCommand, taskLocations } from "../../src/tasks/artifacts/locations.js"
 import { createPrepTask } from "../../src/tasks/store.js"
 
 const roots: string[] = []

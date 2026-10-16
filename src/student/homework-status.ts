@@ -6,8 +6,8 @@ import {
   artifactBaseName,
   legacyAssignmentDraftsDirectory,
   parseArtifactVersion,
-} from "../tasks/artifact-layout.js"
-import { readTask } from "../tasks/records.js"
+} from "../tasks/artifacts/artifact-layout.js"
+import { readTask } from "../tasks/artifacts/records.js"
 import type { UndatedItem, UpcomingItem } from "./upcoming.js"
 
 interface DraftPresence {

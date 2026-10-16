@@ -26,7 +26,7 @@ import {
 } from "../../src/feedback/history.js"
 import { captureSimulation } from "../../src/simulation/captures.js"
 import { createSimulationTask, readSimulationTask } from "../../src/simulation/tasks.js"
-import { completeTask, readVerifiedCompletedOutput } from "../../src/tasks/completion.js"
+import { completeTask, readVerifiedCompletedOutput } from "../../src/tasks/artifacts/completion.js"
 import { createAssignmentTask, createPrepTask, readTask } from "../../src/tasks/store.js"
 import { inspectTask, reviewGate } from "../../src/tasks/tools.js"
 import { createReadingCopy, planReadingCopy } from "../../src/vault/reading-copy.js"

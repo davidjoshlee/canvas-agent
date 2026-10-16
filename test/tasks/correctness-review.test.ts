@@ -3,13 +3,13 @@ import { mkdir, mkdtemp, readFile, rm, stat, symlink, truncate, writeFile } from
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
-import { completeTask } from "../../src/tasks/completion.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
 import {
   listCorrectnessReviews,
   prepareCorrectnessReview,
   saveCorrectnessReview,
   showCorrectnessReview,
-} from "../../src/tasks/correctness-review.js"
+} from "../../src/tasks/review/correctness-review.js"
 import { createAssignmentTask } from "../../src/tasks/store.js"
 import { calculateTask } from "../../src/tasks/tools.js"
 

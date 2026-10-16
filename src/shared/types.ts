@@ -56,7 +56,7 @@ export interface WorkspaceContext {
 }
 export interface TaskRecord {
   version: 1
-  deliverable?: import("../tasks/deliverable-evidence.js").DeliverableEvidence
+  deliverable?: import("../tasks/evidence/deliverable-evidence.js").DeliverableEvidence
   deliverableScopeVersion?: 1
   deliverableParserVersion?: 2 | 3
   guidanceSelectionVersion?: 1
@@ -77,7 +77,7 @@ export interface TaskRecord {
   period?: { kind: "week" | "session"; value: string; root?: string }
   parentTaskId?: string
   feedback?: string
-  revisionEdits?: import("../tasks/revision-edits.js").RevisionEdits
+  revisionEdits?: import("../tasks/evidence/revision-edits.js").RevisionEdits
   learningHistory?: LearningHistory
   questions?: string[]
   discussion?: { message: string }

@@ -1,15 +1,13 @@
 import { readFile, realpath } from "node:fs/promises"
 import { resolve } from "node:path"
 import { z } from "zod"
-import { AssignmentDatesSchema } from "../canvas/assignment-dates.js"
-import { groupCategoryFromPrompt } from "../canvas/assignment-group.js"
-import { LearningHistorySchema, learningHistoryInstruction } from "../feedback/history.js"
-import { selectTaskGuidance } from "../guidance/selection.js"
-import { vaultPath } from "../shared/fs-safety.js"
-import type { CourseContext, TaskRecord } from "../shared/types.js"
-import { productDestination } from "../vault/destinations.js"
-import { assignmentDraftsDirectory } from "./artifact-layout.js"
-import { captureTaskDeliverable, DeliverableEvidenceSchema } from "./deliverable-evidence.js"
+import { AssignmentDatesSchema } from "../../canvas/assignment-dates.js"
+import { groupCategoryFromPrompt } from "../../canvas/assignment-group.js"
+import { LearningHistorySchema, learningHistoryInstruction } from "../../feedback/history.js"
+import { selectTaskGuidance } from "../../guidance/selection.js"
+import { vaultPath } from "../../shared/fs-safety.js"
+import type { CourseContext, TaskRecord } from "../../shared/types.js"
+import { productDestination } from "../../vault/destinations.js"
 import {
   inWeekDates,
   isCourseReference,
@@ -21,15 +19,20 @@ import {
   savedWeekPrepLocation,
   selectLegacyPrepInputs,
   selectPrepInputs,
-} from "./recipes.js"
-import { resolveRequirements } from "./requirements.js"
-import { captureRevisionEdits } from "./revision-edits.js"
+} from "../authoring/recipes.js"
+import { resolveRequirements } from "../authoring/requirements.js"
 import {
   groupAssignmentInstruction,
   revisionEditsInstruction,
   workflowFor,
   workflowForRequirements,
-} from "./workflows.js"
+} from "../authoring/workflows.js"
+import {
+  captureTaskDeliverable,
+  DeliverableEvidenceSchema,
+} from "../evidence/deliverable-evidence.js"
+import { captureRevisionEdits } from "../evidence/revision-edits.js"
+import { assignmentDraftsDirectory } from "./artifact-layout.js"
 
 const TASKS = ["_meta", "tasks"]
 

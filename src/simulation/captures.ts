@@ -8,7 +8,7 @@ import { guidanceAssignmentIdentity, restrictedGuidancePaths } from "../guidance
 import { savedExclusions } from "../shared/exclusions.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { CourseContext, SourceRecord } from "../shared/types.js"
-import { readGuidanceSnapshot, readStudentWork } from "../tasks/recipes.js"
+import { readGuidanceSnapshot, readStudentWork } from "../tasks/authoring/recipes.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import {
   inferredSignalFields,

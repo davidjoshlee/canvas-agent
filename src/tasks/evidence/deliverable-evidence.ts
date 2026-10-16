@@ -1,5 +1,5 @@
 import { z } from "zod"
-import type { SourceRecord } from "../shared/types.js"
+import type { SourceRecord } from "../../shared/types.js"
 import { detectDeliverable } from "./deliverable.js"
 
 const item = z

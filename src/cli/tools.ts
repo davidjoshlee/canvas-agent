@@ -1,16 +1,16 @@
 import type { Command } from "commander"
 import { loadConfig } from "../config/index.js"
 import type { ToolkitConfig } from "../shared/types.js"
-import { CALCULATION_OPERATIONS } from "../tasks/calculation-core.js"
-import { readCalculationBatchFile } from "../tasks/calculation-input.js"
+import { compareTasks, inspectTask } from "../tasks/artifacts/inspection.js"
+import { CALCULATION_OPERATIONS } from "../tasks/calculations/calculation-core.js"
+import { readCalculationBatchFile } from "../tasks/calculations/calculation-input.js"
+import { checkTaskNumbers } from "../tasks/calculations/numeric-review.js"
 import {
   listCorrectnessReviews,
   prepareCorrectnessReview,
   saveCorrectnessReview,
   showCorrectnessReview,
-} from "../tasks/correctness-review.js"
-import { compareTasks, inspectTask } from "../tasks/inspection.js"
-import { checkTaskNumbers } from "../tasks/numeric-review.js"
+} from "../tasks/review/correctness-review.js"
 import { calculateBatchTask, calculateTask, reviewGate, workbookTask } from "../tasks/tools.js"
 import { readHostUsage, renderHostUsage } from "../usage/host-usage.js"
 import { vaultMutation } from "../vault/command-effects.js"

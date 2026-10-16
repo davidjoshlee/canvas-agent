@@ -10,8 +10,8 @@ import {
   readGuidanceSnapshot,
   readSelectedGuidance,
   verifySourceSnapshot,
-} from "../tasks/recipes.js"
-import { declaredPrepSections } from "../tasks/requirements.js"
+} from "../tasks/authoring/recipes.js"
+import { declaredPrepSections } from "../tasks/authoring/requirements.js"
 import { isAssignmentSource, isFeedbackSource, isSyllabusSource } from "../vault/source-kind.js"
 import { inspectWorkspace } from "../vault/workspace.js"
 import {

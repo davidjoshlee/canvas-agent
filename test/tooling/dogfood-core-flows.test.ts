@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import type { ToolkitConfig } from "../../src/shared/types.js"
-import { completeTask } from "../../src/tasks/completion.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
 import { readTask } from "../../src/tasks/store.js"
 import { inspectWorkspace, selectCourse } from "../../src/vault/workspace.js"
 import {

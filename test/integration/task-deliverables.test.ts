@@ -10,12 +10,12 @@ import {
   createSimulationTask,
   readSimulationTask,
 } from "../../src/simulation/tasks.js"
-import { completeTask } from "../../src/tasks/completion.js"
-import { detectDeliverable } from "../../src/tasks/deliverable.js"
-import { captureTaskDeliverable } from "../../src/tasks/deliverable-evidence.js"
-import { resolveRequirements } from "../../src/tasks/requirements.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
+import { resolveRequirements } from "../../src/tasks/authoring/requirements.js"
+import { workflowForRequirements } from "../../src/tasks/authoring/workflows.js"
+import { detectDeliverable } from "../../src/tasks/evidence/deliverable.js"
+import { captureTaskDeliverable } from "../../src/tasks/evidence/deliverable-evidence.js"
 import { createAssignmentTask, createPrepTask, readTask } from "../../src/tasks/store.js"
-import { workflowForRequirements } from "../../src/tasks/workflows.js"
 
 const roots: string[] = []
 afterEach(async () => {

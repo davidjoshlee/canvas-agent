@@ -5,7 +5,7 @@ import { join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
 import { withHomeworkDraftStatus } from "../../src/student/homework-status.js"
 import { collectUpcoming } from "../../src/student/upcoming.js"
-import { completeTask } from "../../src/tasks/completion.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
 import { createAssignmentTask } from "../../src/tasks/store.js"
 import { inspectWorkspace } from "../../src/vault/workspace.js"
 

@@ -6,13 +6,17 @@ import { assertNoSymlinks } from "../shared/fs-safety.js"
 import { readJsonInput } from "../shared/json-input.js"
 import type { SourceRecord, ToolkitConfig } from "../shared/types.js"
 import {
+  auditTaskSnapshots,
+  automaticWorkbookEvidence,
+  readOutput,
+} from "./artifacts/inspection.js"
+import { readTask } from "./artifacts/records.js"
+import {
   CALCULATION_OPERATIONS,
   type CalculationBatchItem,
   calculateValues,
-} from "./calculation-core.js"
-import { auditTaskSnapshots, automaticWorkbookEvidence, readOutput } from "./inspection.js"
-import { readTask } from "./records.js"
-import { createWorkbook, parseWorkbookInput } from "./workbook.js"
+} from "./calculations/calculation-core.js"
+import { createWorkbook, parseWorkbookInput } from "./calculations/workbook.js"
 
 const MAX_LOG = 1024 * 1024
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex")
@@ -21,18 +25,22 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const within = (parent: string, child: string) =>
   child === parent || child.startsWith(`${parent}${sep}`)
 
-export type { CalculationBatchItem } from "./calculation-core.js"
-export {
-  CALCULATION_OPERATIONS,
-  calculateValues,
-  parseCalculationBatch,
-} from "./calculation-core.js"
 export {
   auditTaskSnapshots,
   compareTasks,
   inspectTask,
-} from "./inspection.js"
-export { createWorkbook, matchesLegacyWorkbook, parseWorkbookInput } from "./workbook.js"
+} from "./artifacts/inspection.js"
+export type { CalculationBatchItem } from "./calculations/calculation-core.js"
+export {
+  CALCULATION_OPERATIONS,
+  calculateValues,
+  parseCalculationBatch,
+} from "./calculations/calculation-core.js"
+export {
+  createWorkbook,
+  matchesLegacyWorkbook,
+  parseWorkbookInput,
+} from "./calculations/workbook.js"
 
 async function taskVault(config: ToolkitConfig, taskId: string) {
   const vault = resolve(config.vault.path)

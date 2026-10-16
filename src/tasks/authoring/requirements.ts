@@ -1,6 +1,6 @@
-import { guidanceAssignmentIdentity } from "../guidance/selection.js"
-import type { SourceRecord } from "../shared/types.js"
-import type { DeliverableEvidence } from "./deliverable-evidence.js"
+import { guidanceAssignmentIdentity } from "../../guidance/selection.js"
+import type { SourceRecord } from "../../shared/types.js"
+import type { DeliverableEvidence } from "../evidence/deliverable-evidence.js"
 
 export interface ResolvedRequirements {
   sections: string[]

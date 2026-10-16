@@ -15,10 +15,10 @@ import {
   listSimulationTasks,
 } from "../simulation/tasks.js"
 import { createSimulationWorkbook, readSimulationWorkbooks } from "../simulation/workbooks.js"
-import { CALCULATION_OPERATIONS } from "../tasks/calculation-core.js"
-import { readCalculationBatchFile } from "../tasks/calculation-input.js"
-import { taskInspectionCommand, taskLocations } from "../tasks/locations.js"
-import { checkFrozenTaskNumbers } from "../tasks/numeric-review.js"
+import { taskInspectionCommand, taskLocations } from "../tasks/artifacts/locations.js"
+import { CALCULATION_OPERATIONS } from "../tasks/calculations/calculation-core.js"
+import { readCalculationBatchFile } from "../tasks/calculations/calculation-input.js"
+import { checkFrozenTaskNumbers } from "../tasks/calculations/numeric-review.js"
 import { vaultMutation } from "../vault/command-effects.js"
 import { readTaskOutput } from "./task-output.js"
 

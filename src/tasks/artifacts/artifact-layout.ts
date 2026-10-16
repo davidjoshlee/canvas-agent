@@ -1,5 +1,5 @@
-import type { TaskRecord } from "../shared/types.js"
-import { type AssignmentMode, assignmentOutputLabel } from "./workflows.js"
+import type { TaskRecord } from "../../shared/types.js"
+import { type AssignmentMode, assignmentOutputLabel } from "../authoring/workflows.js"
 
 export type AcademicArtifactKind = "prep" | "assignment-draft" | "assignment-final"
 

@@ -2,16 +2,18 @@ import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { z } from "zod"
-import { groupCategoryFromPrompt } from "../canvas/assignment-group.js"
-import { captureLearningHistory, learningHistoryInstruction } from "../feedback/history.js"
-import { restrictedGuidancePaths } from "../guidance/selection.js"
-import { savedExclusions } from "../shared/exclusions.js"
-import { vaultPath } from "../shared/fs-safety.js"
-import type { SourceRecord, TaskRecord } from "../shared/types.js"
-import { productDestination } from "../vault/destinations.js"
-import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
-import { assignmentDraftsDirectory } from "./artifact-layout.js"
-import { captureTaskDeliverable } from "./deliverable-evidence.js"
+import { groupCategoryFromPrompt } from "../../canvas/assignment-group.js"
+import { captureLearningHistory, learningHistoryInstruction } from "../../feedback/history.js"
+import { restrictedGuidancePaths } from "../../guidance/selection.js"
+import { savedExclusions } from "../../shared/exclusions.js"
+import { vaultPath } from "../../shared/fs-safety.js"
+import type { SourceRecord, TaskRecord } from "../../shared/types.js"
+import { productDestination } from "../../vault/destinations.js"
+import { inspectWorkspace, selectCourse } from "../../vault/workspace.js"
+import { assignmentDraftsDirectory } from "../artifacts/artifact-layout.js"
+import { TaskRecordSchema } from "../artifacts/records.js"
+import { captureTaskDeliverable } from "../evidence/deliverable-evidence.js"
+import { captureRevisionEdits } from "../evidence/revision-edits.js"
 import {
   currentMonday,
   hasPrepMaterial,
@@ -24,9 +26,7 @@ import {
   validateDiscussionMessage,
   verifySourceSnapshot,
 } from "./recipes.js"
-import { TaskRecordSchema } from "./records.js"
 import { needsPrepStructureVersion, resolveRequirements } from "./requirements.js"
-import { captureRevisionEdits } from "./revision-edits.js"
 import {
   type AssignmentMode,
   groupAssignmentInstruction,

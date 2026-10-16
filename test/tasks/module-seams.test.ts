@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest"
-import { calculateValues, parseCalculationBatch } from "../../src/tasks/calculation-core.js"
-import { createWorkbook, parseWorkbookInput } from "../../src/tasks/workbook.js"
+import {
+  calculateValues,
+  parseCalculationBatch,
+} from "../../src/tasks/calculations/calculation-core.js"
+import { createWorkbook, parseWorkbookInput } from "../../src/tasks/calculations/workbook.js"
 
 describe("task tool seams", () => {
   it("keeps arithmetic and batch parsing independent from task storage", () => {

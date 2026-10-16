@@ -2,11 +2,11 @@ import { createHash } from "node:crypto"
 import { lstat, readFile } from "node:fs/promises"
 import { basename, extname, isAbsolute, relative, sep } from "node:path"
 import { parse as parseYaml } from "yaml"
-import { assignmentRelatedSources, relatedSources } from "../canvas/module-context.js"
-import { restrictedGuidancePaths, selectTaskGuidance } from "../guidance/selection.js"
-import { vaultPath } from "../shared/fs-safety.js"
-import type { CourseContext, SourceRecord } from "../shared/types.js"
-import { isLegacyTaskModuleSource } from "../vault/source-kind.js"
+import { assignmentRelatedSources, relatedSources } from "../../canvas/module-context.js"
+import { restrictedGuidancePaths, selectTaskGuidance } from "../../guidance/selection.js"
+import { vaultPath } from "../../shared/fs-safety.js"
+import type { CourseContext, SourceRecord } from "../../shared/types.js"
+import { isLegacyTaskModuleSource } from "../../vault/source-kind.js"
 import { questionText } from "./requirements.js"
 import type { AssignmentMode } from "./workflows.js"
 
@@ -440,7 +440,7 @@ export async function verifySourceSnapshot(
   if (source.ingestProvenance) {
     if (source.ingestProvenance.path !== `${source.path}.ingest.json`)
       throw new Error("Invalid compatible provenance scope")
-    const { readIngestProvenance } = await import("../documents/ingest-compatibility.js")
+    const { readIngestProvenance } = await import("../../documents/ingest-compatibility.js")
     const companion = await noSymlinkPath(vault, source.ingestProvenance.path)
     if ((await readIngestProvenance(companion)).hash !== source.ingestProvenance.hash)
       throw new Error("Compatible source provenance changed since snapshot")
@@ -855,7 +855,7 @@ export function validateDiscussionMessage(
 export async function deriveCurrentTaskInputs(
   vault: string,
   course: CourseContext,
-  task: import("../shared/types.js").TaskRecord,
+  task: import("../../shared/types.js").TaskRecord,
 ): Promise<
   | Awaited<ReturnType<typeof selectAssignmentInputs>>
   | { sources: SourceRecord[]; excluded: CourseContext["excluded"] }

@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest"
 import { createConfig } from "../../src/config/index.js"
 import { extractText, ingestFile } from "../../src/documents/content.js"
 import { captureSimulation, replaySimulation } from "../../src/simulation/captures.js"
-import { completeTask } from "../../src/tasks/completion.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
 import { createAssignmentTask, createPrepTask } from "../../src/tasks/store.js"
 import { inspectWorkspace } from "../../src/vault/workspace.js"
 

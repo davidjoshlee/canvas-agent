@@ -3,10 +3,10 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import type { TaskRecord } from "../../src/shared/types.js"
-import { completeTask } from "../../src/tasks/completion.js"
-import { resolveRequirements } from "../../src/tasks/requirements.js"
+import { completeTask } from "../../src/tasks/artifacts/completion.js"
+import { resolveRequirements } from "../../src/tasks/authoring/requirements.js"
+import { workflowForRequirements } from "../../src/tasks/authoring/workflows.js"
 import { createAssignmentTask, createPrepTask, readTask } from "../../src/tasks/store.js"
-import { workflowForRequirements } from "../../src/tasks/workflows.js"
 
 const roots: string[] = [],
   source = "MBA101/Week 01 - Oct 5/case.md",

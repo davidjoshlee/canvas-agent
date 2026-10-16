@@ -10,7 +10,7 @@ import {
   checkFrozenTaskNumbers,
   checkTaskNumbers,
   numericPresenceReview,
-} from "../../src/tasks/numeric-review.js"
+} from "../../src/tasks/calculations/numeric-review.js"
 import { createPrepTask } from "../../src/tasks/store.js"
 import { calculateBatchTask } from "../../src/tasks/tools.js"
 

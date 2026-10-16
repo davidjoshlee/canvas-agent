@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import type { SourceRecord } from "../../src/shared/types.js"
-import { captureRevisionEdits, revisionLineDiff } from "../../src/tasks/revision-edits.js"
+import { captureRevisionEdits, revisionLineDiff } from "../../src/tasks/evidence/revision-edits.js"
 
 const source = (path: string, text: string): SourceRecord => ({
   path,

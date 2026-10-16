@@ -136,7 +136,7 @@ describe("task tools", () => {
     const draft = (id: string, body: string) =>
       `Task: ${id}\n\n${first.requirements.map((heading) => `## ${heading}\n\n${heading === "Sources" ? `- \`${first.sources[0]?.path}\`` : body}`).join("\n")}`
     await writeFile(candidate, draft(first.id, "One version."))
-    const { completeTask } = await import("../../src/tasks/completion.js")
+    const { completeTask } = await import("../../src/tasks/artifacts/completion.js")
     await completeTask(root, first.id, candidate)
     await writeFile(candidate, draft(second.id, "Another version."))
     await completeTask(root, second.id, candidate)

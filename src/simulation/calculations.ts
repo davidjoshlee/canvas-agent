@@ -9,7 +9,7 @@ import {
   type CalculationBatchItem,
   calculateValues,
   parseCalculationBatch,
-} from "../tasks/calculation-core.js"
+} from "../tasks/calculations/calculation-core.js"
 import { readSimulationTask } from "./tasks.js"
 
 const hash = (value: Buffer | string) => createHash("sha256").update(value).digest("hex")

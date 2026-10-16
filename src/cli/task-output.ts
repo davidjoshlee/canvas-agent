@@ -1,6 +1,6 @@
 import { readSavedSimulationOutput } from "../simulation/tasks.js"
-import { checkArtifactPrivacy, readSavedCompletedOutput } from "../tasks/completion.js"
-import { type TaskScope, taskLocations } from "../tasks/locations.js"
+import { checkArtifactPrivacy, readSavedCompletedOutput } from "../tasks/artifacts/completion.js"
+import { type TaskScope, taskLocations } from "../tasks/artifacts/locations.js"
 
 /** Existing output integrity only; neither generation nor academic approval. */
 export async function readTaskOutput(config: string, vault: string, id: string, scope: TaskScope) {

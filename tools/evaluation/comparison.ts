@@ -13,7 +13,7 @@ import {
   readSimulationWorkbooks,
   SimulationWorkbookEvidenceSchema,
 } from "../../src/simulation/workbooks.js"
-import { verifySourceSnapshot } from "../../src/tasks/recipes.js"
+import { verifySourceSnapshot } from "../../src/tasks/authoring/recipes.js"
 import { inspectWorkspace, selectCourse } from "../../src/vault/workspace.js"
 import {
   captureReviewFeedback,
