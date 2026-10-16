@@ -83,8 +83,8 @@ doctor --offline and auth status are local. auth verify performs a GET against
 Canvas. Successful authentication is separate from endpoint/course permissions.
 courses list discovers courses; onboard --course ID (repeatable) saves only
 explicit choices. An auth failure requires user action, not indefinite retries.
-auth renew explains manual renewal. Authentication failures are reported directly
-by the invoked command; the CLI does not create notification or alert files.
+auth renew explains manual renewal. Authentication failures include renewal
+steps in the command error.
 Keychain import is an explicit opt-in operation; read its --help and never
 enumerate unrelated entries or print credentials.
 
@@ -101,9 +101,7 @@ and timeline --course COURSE show local upcoming, overdue and undated work.
 Sync first only when fresh remote information is wanted. Calendar overrides
 affect local views, not Canvas: calendar override PATH --due ISO.
 calendar check --file ABS_ICS reports conflicts; calendar export --file NEW_ABS_ICS
-writes a new calendar. These are on-demand views; the CLI does not deliver
-desktop notifications or create saved reminder plans. Existing private alert files
-from older versions are preserved.
+writes a new calendar.
 
 Use a separate vault for an independent product. Existing course folders can be
 read without a database or conversion. sync --preserve-school enables a separate

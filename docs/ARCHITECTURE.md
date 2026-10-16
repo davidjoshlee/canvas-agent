@@ -52,8 +52,8 @@ Runtime modules never import development tooling.
   safe downloads. Fetch, DNS and sleep dependencies belong to each client instance;
   the CLI accepts a client factory for synthetic tests without process-global setters.
 - Sync owns account/allowlist checks and hash-based write ownership. Sync and
-  onboarding call the same synchronization implementation without reminder or
-  notification side effects. Authentication failures remain immediate CLI errors.
+  onboarding call the same synchronization implementation. Authentication
+  failures include renewal steps in the command error.
 - Vault inventory provides safe course text and explicit exclusions, without a DB.
 - tasks/recipes owns evidence selection and destination rules; tasks/records
   validates persisted identity, recipes and older formats; tasks/creation captures

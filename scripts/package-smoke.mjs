@@ -113,7 +113,7 @@ try {
           path,
         ),
     ),
-    "Retired notification modules leaked into the package",
+    "Retired runtime modules leaked into the package",
   )
   const bundledRoots = new Set(packed.bundled.map((name) => `node_modules/${name}/`))
   const packagedDocs = new Set(["docs/ARCHITECTURE.md", "docs/PLUGIN.md", "docs/DEVELOPMENT.md"])
@@ -1082,7 +1082,7 @@ try {
         version: JSON.parse(await readFile(join(installed, "package.json"), "utf8")).version,
         commands: commands.length,
         installedVersionTested: true,
-        retiredNotificationCommandsRejected: true,
+        removedCommandsRejected: true,
         installedInstructionDiscoveryTested: true,
         optionalLocalVaultHistoryTested: true,
         historyMetadataReadinessTested: true,
