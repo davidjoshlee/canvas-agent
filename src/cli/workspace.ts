@@ -6,6 +6,7 @@ import { readTimeline, renderTimeline } from "../student/timeline.js"
 import { readUpcoming } from "../student/upcoming.js"
 import { createAssignmentTask } from "../tasks/creation.js"
 import { vaultMutation } from "../vault/command-effects.js"
+import { isAssignmentSource } from "../vault/source-kind.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import { inspectVaultHealth } from "./health.js"
 import { configWithEnv, render, summary, taskMarkdownPath } from "./output.js"
@@ -42,10 +43,7 @@ export function registerWorkspaceCommands(program: Command): void {
             : context.courses
           const matches = candidates.flatMap((course) =>
             course.sources
-              .filter(
-                (source) =>
-                  /^assignments?(?:\.md)?$/i.test(source.type) && source.canvasId === options.draft,
-              )
+              .filter((source) => isAssignmentSource(source) && source.canvasId === options.draft)
               .map((prompt) => ({ course, prompt })),
           )
           if (matches.length !== 1)

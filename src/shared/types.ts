@@ -12,6 +12,7 @@ export interface SourceRecord {
   title: string
   hash: string
   text: string
+  /** Original persisted label. Live role decisions use vault/source-kind. */
   type: string
   dates: string[]
   canvasUrl?: string
@@ -30,6 +31,7 @@ export interface SourceRecord {
 export interface ExcludedSource {
   path: string
   reason: string
+  reasonCode?: import("./exclusions.js").SourceExclusionCode
 }
 export interface CourseContext {
   syncNamespace?: "Canvas Agent"

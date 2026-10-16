@@ -6,8 +6,9 @@ import { relatedSources } from "../canvas/module-context.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { CourseContext, SourceRecord } from "../shared/types.js"
 import { hasPrepMaterial, selectPrepInputs } from "../tasks/recipes.js"
+import { isAssignmentSource, isTeachingModuleSource } from "../vault/source-kind.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
-import { createDogfood, readDogfood } from "./dogfood.js"
+import { createDogfood, isUninitializedDogfoodRun, readDogfood } from "./dogfood.js"
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex")
 const sessionSchema = z
@@ -46,12 +47,7 @@ const manifestSchema = z
       ctx.addIssue({ code: "custom", message: "Sweep sessions must be in numerical order" })
   })
 function sessionNumber(source: SourceRecord) {
-  if (
-    !source.moduleCanvasId &&
-    !/module|session|milestone/i.test(source.type) &&
-    !/(?:^|\/)(?:modules?|sessions?|milestones?)(?:\/|$)/i.test(source.path)
-  )
-    return undefined
+  if (!isTeachingModuleSource(source)) return undefined
   const match = source.title.match(/\bsession\s+(\d+)\b/i)
   if (!match) return undefined
   const value = Number(match[1])
@@ -100,7 +96,7 @@ export function resolveDogfoodSessions(course: CourseContext, count: number) {
     if (!hasPrepMaterial(course, selected))
       throw new Error("Teaching session has no substantive preparation material")
     const linked = relatedSources(course, group.sources).filter((source) =>
-      /^assignments?(?:\.md)?$/i.test(source.type),
+      isAssignmentSource(source),
     )
     if (linked.length > 1)
       throw new Error(
@@ -235,9 +231,6 @@ export async function listDogfoodSweeps(vault: string, query: string) {
       "Validated saved manifest metadata only. Child checkpoints, current sources, outputs, permission, completion and live workers are not verified. Unreadable records have unknown course scope and may hide sweeps; inspect without rewriting history.",
   }
 }
-const missingRun = (error: unknown) =>
-  (error as NodeJS.ErrnoException).code === "ENOENT" ||
-  (error instanceof Error && error.message === "Dogfood journal has no checkpoint")
 export async function validateDogfoodSweepSelection(vault: string, query: string, id: string) {
   const { manifest, course } = await loadSweep(vault, query, id)
   const current = resolveDogfoodSessions(course, manifest.sessions.length)
@@ -287,7 +280,7 @@ export async function initializeDogfoodSweep(
       try {
         run = await readDogfood(vault, session.runId)
       } catch (error) {
-        if (!missingRun(error)) throw error
+        if (!isUninitializedDogfoodRun(error)) throw error
         run = await createDogfood(
           vault,
           {
@@ -316,7 +309,7 @@ export async function inspectDogfoodSweep(vault: string, query: string, id: stri
     } catch (error) {
       entries.push({
         ...session,
-        state: missingRun(error) ? "not-initialized" : "invalid",
+        state: isUninitializedDogfoodRun(error) ? "not-initialized" : "invalid",
         flowsRecorded: 0,
         recordedComplete: false,
       })

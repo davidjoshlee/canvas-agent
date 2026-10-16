@@ -4,6 +4,22 @@ import { join, resolve } from "node:path"
 import { z } from "zod"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 
+/** Expected empty-journal state, distinct from corruption or an unsafe journal. */
+export class MissingDogfoodCheckpointError extends Error {
+  readonly code = "DOGFOOD_CHECKPOINT_MISSING"
+  constructor() {
+    super("Dogfood journal has no checkpoint")
+    this.name = "MissingDogfoodCheckpointError"
+  }
+}
+
+export function isUninitializedDogfoodRun(error: unknown): boolean {
+  return (
+    error instanceof MissingDogfoodCheckpointError ||
+    (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+  )
+}
+
 export const dogfoodFlowNames = [
   "sync",
   "timeline",
@@ -105,7 +121,7 @@ async function checkpoints(path: string) {
 export async function readDogfood(vault: string, id: string, budget?: { remaining: number }) {
   const path = directory(vault, id),
     files = await checkpoints(path)
-  if (!files.length) throw new Error("Dogfood journal has no checkpoint")
+  if (!files.length) throw new MissingDogfoodCheckpointError()
   let previous: DogfoodJournal | undefined
   for (const file of files) {
     const current = await readCheckpoint(join(path, file), budget)

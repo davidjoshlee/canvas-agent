@@ -14,7 +14,7 @@ import {
   readSimulationTask,
 } from "../../src/evaluation/tasks.js"
 import { proposeGuidance, saveGuidanceProposal } from "../../src/guidance/proposals.js"
-import { selectTaskGuidance } from "../../src/guidance/selection.js"
+import { restrictedGuidancePaths, selectTaskGuidance } from "../../src/guidance/selection.js"
 import type { TaskRecord } from "../../src/shared/types.js"
 import { completeTask } from "../../src/tasks/completion.js"
 import {
@@ -64,6 +64,47 @@ async function fixture() {
   )
   return root
 }
+
+it("uses stable exclusion codes for restricted guidance and fails closed on unknown formats", () => {
+  const guidancePath = "CS101/guidance/prep-guidance.md"
+  expect(
+    restrictedGuidancePaths({
+      excluded: [
+        {
+          path: guidancePath,
+          reason: "Display text can be reworded without changing the classification.",
+          reasonCode: "source.restricted_policy_metadata",
+        },
+      ],
+    }),
+  ).toEqual([guidancePath])
+  expect(
+    restrictedGuidancePaths({
+      excluded: [{ path: guidancePath, reason: "Restricted policy metadata; text omitted" }],
+    }),
+  ).toEqual([guidancePath])
+  expect(
+    restrictedGuidancePaths({
+      excluded: [{ path: guidancePath, reason: "New legacy wording with no known classification" }],
+    }),
+  ).toEqual([guidancePath])
+  expect(
+    restrictedGuidancePaths({
+      excluded: [
+        {
+          path: guidancePath,
+          reason: "Unknown coded exclusion",
+          reasonCode: "source.future_code" as never,
+        },
+      ],
+    }),
+  ).toEqual([guidancePath])
+  expect(
+    restrictedGuidancePaths({
+      excluded: [{ path: "CS101/guidance/prep-guidance.proposed.md", reason: "unknown" }],
+    }),
+  ).toEqual([])
+})
 async function candidate(root: string, task: TaskRecord) {
   const cite = `\`${prompt}\``
   const items =

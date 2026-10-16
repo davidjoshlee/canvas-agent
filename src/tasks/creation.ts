@@ -5,10 +5,12 @@ import { z } from "zod"
 import { groupCategoryFromPrompt } from "../canvas/assignment-group.js"
 import { captureLearningHistory, learningHistoryInstruction } from "../feedback/history.js"
 import { restrictedGuidancePaths } from "../guidance/selection.js"
+import { savedExclusions } from "../shared/exclusions.js"
 import { vaultPath } from "../shared/fs-safety.js"
 import type { SourceRecord, TaskRecord } from "../shared/types.js"
 import { productDestination } from "../vault/destinations.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
+import { assignmentDraftsDirectory } from "./artifact-layout.js"
 import { captureTaskDeliverable } from "./deliverable-evidence.js"
 import {
   currentMonday,
@@ -156,7 +158,7 @@ export async function createPrepTask(
     throw new Error(
       `No readable course materials match ${selectedPeriod.kind} ${selectedPeriod.value}; no task was created`,
     )
-  const { root: periodRoot, destination } = resolvePrepPeriod(course, selectedPeriod)
+  const { root: periodRoot, destination, locationKind } = resolvePrepPeriod(course, selectedPeriod)
   const selected = await Promise.all(
     chosen.map((source) => verifySourceSnapshot(context.vault, source)),
   )
@@ -180,7 +182,7 @@ export async function createPrepTask(
       .filter((e) => excluded.includes(e))
       .map((e) => `Excluded ${e.path}: ${e.reason}`),
   ]
-  if (destination.includes("/Other/Prep/") && selectedPeriod.kind === "week")
+  if (locationKind === "fallback-week")
     notices.push("No matching dated Week folder; using date-labelled Other/Prep fallback.")
   const deliverable = captureTaskDeliverable("prep", undefined, selected, guidance, undefined, 3)
   const prepStructureVersion = needsPrepStructureVersion(guidance) ? 1 : undefined
@@ -226,7 +228,7 @@ export async function createPrepTask(
     requirements: [...workflow.requiredSections],
     workflow,
     sources: selected,
-    excluded,
+    excluded: savedExclusions(excluded),
     guidance,
     notices,
     questions: resolved.questions,
@@ -239,11 +241,6 @@ export async function createPrepTask(
   const task = TaskRecordSchema.parse(record) as TaskRecord
   await persistNewTask(context.vault, task, taskMarkdown(task))
   return task
-}
-
-function assignmentDestination(source: string): string {
-  const parent = source.slice(0, source.lastIndexOf("/"))
-  return `${parent}/Drafts`
 }
 
 export async function createAssignmentTask(
@@ -366,13 +363,13 @@ export async function createAssignmentTask(
     },
     destination: productDestination(
       course.root,
-      assignmentDestination(prompt.path),
+      assignmentDraftsDirectory(prompt.path),
       course.syncNamespace ? 1 : undefined,
     ),
     ...(course.syncNamespace ? { productNamespaceVersion: 1 as const } : {}),
     requirements: [...workflow.requiredSections],
     sources: selected.sources,
-    excluded: selected.excluded,
+    excluded: savedExclusions(selected.excluded),
     guidance: selected.guidance,
     notices: [
       ...workspace.notices,

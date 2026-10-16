@@ -3,6 +3,7 @@ import { lstat, mkdir, open, readFile, realpath, rename } from "node:fs/promises
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { WorkspaceContext } from "../shared/types.js"
+import { isAssignmentSource } from "../vault/source-kind.js"
 import type { UpcomingItem } from "./upcoming.js"
 
 export type DueOverride = { path: string; dueAt: string; updatedAt: string }
@@ -110,10 +111,7 @@ export async function setCalendarOverride(
     throw new Error("Assignment path must be a regular file")
   const match = workspace.courses.flatMap((course) =>
     course.sources
-      .filter(
-        (source) =>
-          source.path === normalized && /assignment/i.test(`${source.type} ${source.path}`),
-      )
+      .filter((source) => source.path === normalized && isAssignmentSource(source))
       .map((source) => ({ course, source })),
   )
   if (match.length !== 1)
@@ -169,9 +167,7 @@ export async function applyCalendarOverrides(
       ...course,
       sources: course.sources.map((source) => {
         const dueAt = byPath.get(source.path)
-        return dueAt && /assignment/i.test(`${source.type} ${source.path}`)
-          ? { ...source, dueAt }
-          : source
+        return dueAt && isAssignmentSource(source) ? { ...source, dueAt } : source
       }),
     })),
   }
@@ -241,9 +237,7 @@ function readEvents(ics: string): Event[] {
 }
 export function compareCalendar(context: WorkspaceContext, ics: string): CalendarNotice[] {
   const assignments = context.courses.flatMap((course) => {
-    const sources = course.sources.filter((source) =>
-      /assignment/i.test(`${source.type} ${source.path}`),
-    )
+    const sources = course.sources.filter((source) => isAssignmentSource(source))
     const activeIds = new Set(
       course.syncNamespace
         ? sources

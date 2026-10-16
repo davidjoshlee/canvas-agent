@@ -3,6 +3,7 @@ import { type FileHandle, mkdir, open } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import { readGuidanceSnapshot, verifySourceSnapshot } from "../tasks/recipes.js"
+import { isAssignmentSource } from "../vault/source-kind.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import { guidanceAssignmentIdentity } from "./selection.js"
 
@@ -18,7 +19,7 @@ export async function initializeAssignmentGuidance(
     throw new Error("Course mappings are unsafe; inspect them before creating guidance")
   const course = selectCourse(context, query)
   const prompt = course.sources.find(
-    (source) => source.path === sourcePath && /assignment/i.test(source.type),
+    (source) => source.path === sourcePath && isAssignmentSource(source),
   )
   if (!prompt?.path.startsWith(`${course.root}/`) || !/^[1-9]\d{0,39}$/.test(prompt.canvasId ?? ""))
     throw new Error("Choose one readable assignment prompt with an exact numeric Canvas identity")

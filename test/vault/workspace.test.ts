@@ -174,6 +174,7 @@ describe("workspace inventory", () => {
     )
     expect(course.excluded).toContainEqual({
       path: "ACCT312/Canvas/Files/restricted.md.extracted.md",
+      reasonCode: "source.restricted_original_metadata",
       reason: "Original document has malformed or restricted policy metadata; extraction omitted",
     })
   })
@@ -215,6 +216,7 @@ describe("workspace inventory", () => {
     expect(course.existingWork).toEqual(["ACCT312/Assignments/Prep/01 Prep Brief.md"])
     expect(course.excluded).toContainEqual({
       path: "ACCT312/Resources/Guidance/prep-guidance.proposed.md",
+      reasonCode: "source.proposed_guidance",
       reason: "Proposed guidance is not active context; text omitted",
     })
     expect(JSON.stringify(context)).not.toContain("student work")
@@ -276,6 +278,7 @@ describe("workspace inventory", () => {
     expect(context.courses[0]?.sources.map((source) => source.path)).toEqual(["FINC320/safe.md"])
     expect(context.courses[0]?.excluded).toContainEqual({
       path: "FINC320/scanned.pdf",
+      reasonCode: "source.unsupported_file_type",
       reason: "Unsupported or binary file type; text not read",
     })
     expect(context.notices).toContain("Skipped symbolic link: FINC320/linked.md")
@@ -368,6 +371,7 @@ describe("workspace inventory", () => {
     expect(JSON.stringify(context)).not.toContain("DO NOT EXPOSE")
     expect(context.courses[0]?.excluded).toContainEqual({
       path: "F26-ACCT-340/credentials.txt",
+      reasonCode: "source.credential_like",
       reason: "Credential-like file; text omitted",
     })
   })

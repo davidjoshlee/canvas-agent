@@ -68,8 +68,18 @@ scripts contains only maintained build/context/package checks.
   approval retain their distinct transaction/retry policies. Checks repeat before
   publication; path-based operations do not provide atomic containment against a
   hostile process renaming ancestors, or power-loss durability for directory entries.
-- Workspace diagnostics carry producer-assigned codes, scope and severity alongside
-  readable notices. Historical saved notice strings remain available unchanged.
+- Workspace diagnostics and source exclusions carry producer-assigned codes alongside
+  readable messages. Live source roles prefer explicit types over incidental filename
+  words; vault/source-kind owns supported legacy decoding. Persisted task selection
+  retains its historical role rules through an explicit compatibility decoder.
+- Live exclusion codes are projected back to the original path/reason shape before
+  saving task and frozen snapshots. Old snapshot bytes and recipe interpretation
+  remain authoritative; legacy text decoding stays at the compatibility seam.
+- tasks/artifact-layout owns output names, versions and Drafts/Finals conventions.
+  Prep period resolution returns a location kind; callers do not infer it from
+  a substring of the destination. Saved paths retain their historical parser.
+- Empty evaluation journals use a typed recovery condition; display wording does
+  not decide whether a run is initialized.
 - Mutating commands declare their effects at registration through vault/command-effects,
   including conditional writes. Local history consumes those declarations on success
   or failure; snapshot warnings do not overwrite primary results or alter JSON stdout.

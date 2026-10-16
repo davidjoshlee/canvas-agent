@@ -1,11 +1,12 @@
 import { basename } from "node:path"
+import { isRestrictedGuidanceExclusion } from "../shared/exclusions.js"
 import type { CourseContext, SourceRecord } from "../shared/types.js"
 
 export function restrictedGuidancePaths(course: Pick<CourseContext, "excluded">): string[] {
   return course.excluded
     .filter(
       (entry) =>
-        /Restricted policy metadata/i.test(entry.reason) &&
+        isRestrictedGuidanceExclusion(entry) &&
         (/(?:^|\/)guidance\/[^/]+\.(?:md|markdown|txt)$/i.test(entry.path) ||
           /^(?:AGENTS\.md|[^/]+\/AGENTS\.md)$/i.test(entry.path)) &&
         !/(?:\.proposed\.|\/proposed-|-proposal\.md$)/i.test(entry.path),

@@ -31,6 +31,10 @@ describe("local work visibility", () => {
           guidance: [],
           existingWork: [],
           sources: [
+            source("announcement-analysis", "assignment", {
+              path: "MBA-101/Assignments/announcement-analysis.md",
+              dueAt: "2026-10-11T10:00:00Z",
+            }),
             source("Unscheduled", "assignment", {}),
             source("Tomorrow", "assignment", { dueAt: "2026-10-10T10:00:00Z" }),
             source("Today", "announcement", { postedAt: "2026-10-09T08:00:00Z" }),
@@ -41,10 +45,14 @@ describe("local work visibility", () => {
     }
     const options = { now: new Date("2026-10-09T12:00:00Z"), days: 14 }
     const homework = collectUpcoming(context, options)
-    expect(homework.items.map((item) => item.title)).toEqual(["Tomorrow"])
+    expect(homework.items.map((item) => item.title)).toEqual(["Tomorrow", "announcement-analysis"])
     expect(homework.undated.map((item) => item.title)).toEqual(["Unscheduled"])
     const timeline = collectUpcoming(context, { ...options, includeAnnouncements: true })
-    expect(timeline.items.map((item) => item.title)).toEqual(["Today", "Tomorrow"])
+    expect(timeline.items.map((item) => item.title)).toEqual([
+      "Today",
+      "Tomorrow",
+      "announcement-analysis",
+    ])
     expect(timeline.overdue).toEqual([])
   })
 })

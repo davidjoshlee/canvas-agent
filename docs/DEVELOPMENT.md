@@ -15,6 +15,10 @@ Declare vault mutations beside command registration, including option-dependent
 writes, so local history captures partial writes after failed commands too.
 Canvas tests inject a client instance (or the CLI client factory); never mutate
 process-global network/DNS hooks.
+Use domain-owned codes and source classifiers for behavior; keep explanatory text
+separate. New source roles use explicit metadata before legacy filename conventions.
+Preserve old saved recipe selection rules and bytes through compatibility decoders,
+rather than applying new classification rules to existing snapshots.
 
 ## Verify
 

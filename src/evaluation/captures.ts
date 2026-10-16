@@ -5,6 +5,7 @@ import { join, resolve, sep } from "node:path"
 import { parse as parseYaml } from "yaml"
 import { AssignmentDatesSchema } from "../canvas/assignment-dates.js"
 import { guidanceAssignmentIdentity, restrictedGuidancePaths } from "../guidance/selection.js"
+import { savedExclusions } from "../shared/exclusions.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { CourseContext, SourceRecord } from "../shared/types.js"
 import { readGuidanceSnapshot, readStudentWork } from "../tasks/recipes.js"
@@ -199,7 +200,7 @@ export async function captureSimulation(
   const course: CourseContext = selectCourse(await inspectWorkspace(vault), query)
   const sources: SimulationSource[] = []
   const guidance: SimulationSource[] = []
-  const excluded: SimulationSnapshot["excluded"] = course.excluded.map((item) => ({ ...item }))
+  const excluded: SimulationSnapshot["excluded"] = savedExclusions(course.excluded)
   const restrictedPaths = restrictedGuidancePaths(course)
   if (restrictedPaths.length > 100)
     throw new Error("Simulation restricted guidance inventory exceeds 100 files")

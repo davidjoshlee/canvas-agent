@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path"
 import { verifyLearningHistory, verifyTaskLearningHistory } from "../feedback/history.js"
 import { restrictedGuidancePaths } from "../guidance/selection.js"
 import { diagnosticFromLegacyNotice } from "../shared/diagnostics.js"
+import { savedExclusions } from "../shared/exclusions.js"
 import {
   assertNoSymlinks,
   vaultPath as noLinks,
@@ -16,6 +17,12 @@ import type { TaskRecord } from "../shared/types.js"
 import { productDestination } from "../vault/destinations.js"
 import { inspectWorkspace } from "../vault/workspace.js"
 import { prepareAnswerEvidence } from "./answer-evidence.js"
+import {
+  assignmentDraftsDirectory,
+  nextArtifactName,
+  parseArtifactVersion,
+  taskArtifactBaseName,
+} from "./artifact-layout.js"
 import { draftWorkbookBytes, verifyWorkbookFile } from "./draft-workbook.js"
 import {
   deriveCurrentTaskInputs,
@@ -25,7 +32,7 @@ import {
   verifySourceSnapshot,
 } from "./recipes.js"
 import { readTask, TaskRecordSchema } from "./records.js"
-import { assignmentOutputLabel, workflowFor } from "./workflows.js"
+import { workflowFor } from "./workflows.js"
 
 const digest = (value: Buffer | string) => createHash("sha256").update(value).digest("hex")
 async function externalFile(path: string): Promise<Buffer> {
@@ -261,7 +268,7 @@ async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
       throw new Error("Assignment inputs are stale: selected sources or their snapshots changed")
     if (!sameRecords(current.guidance, task.guidance))
       throw new Error("Course guidance changed or was modified since this task was created")
-    if (!sameRecords(current.excluded, task.excluded))
+    if (!sameRecords(savedExclusions(current.excluded), task.excluded))
       throw new Error("Assignment source restrictions or exclusions changed since task creation")
     for (const source of task.sources) await verifySourceSnapshot(vault, source)
     return
@@ -330,7 +337,7 @@ async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
     )
       throw new Error("Guidance identity changed or was modified")
   }
-  const relevantExcluded = currentExcluded
+  const relevantExcluded = savedExclusions(currentExcluded)
   const priorExcluded = task.excluded
   if (
     JSON.stringify(relevantExcluded.map((e) => [e.path, e.reason]).sort()) !==
@@ -362,13 +369,8 @@ function validateOutputReference(task: TaskRecord, output: string): void {
   if (!output.startsWith(`${task.destination}/`))
     throw new Error("Completed output is outside the task destination")
   const filename = output.slice(task.destination.length + 1)
-  const valid =
-    task.kind === "prep"
-      ? /^01 Prep Brief(?:\.v(?:[2-9]|[1-9]\d+))?\.md$/.test(filename)
-      : new RegExp(
-          `^01 Assignment ${assignmentOutputLabel(task.assignment?.mode ?? "review")}(?:\\.v(?:[2-9]|[1-9]\\d+))?\\.md$`,
-        ).test(filename)
-  if (!valid) throw new Error("Completed output filename is not a supported version")
+  if (parseArtifactVersion(filename, taskArtifactBaseName(task)) === undefined)
+    throw new Error("Completed output filename is not a supported version")
 }
 
 async function verifyTaskDestination(vault: string, task: TaskRecord): Promise<void> {
@@ -392,7 +394,7 @@ async function verifyTaskDestination(vault: string, task: TaskRecord): Promise<v
       task.destination !==
         productDestination(
           course.root,
-          `${task.assignment.source.slice(0, task.assignment.source.lastIndexOf("/"))}/Drafts`,
+          assignmentDraftsDirectory(task.assignment.source),
           task.productNamespaceVersion,
         )
   }
@@ -525,17 +527,8 @@ export async function completeTask(
     validateOutputReference(task, outputRel)
   } else {
     const files = await readdir(destination)
-    const base =
-      task.kind === "prep"
-        ? "01 Prep Brief.md"
-        : `01 Assignment ${assignmentOutputLabel(task.assignment?.mode ?? "review")}.md`
-    let name = base
-    let version = 2
-    while (
-      files.includes(name) ||
-      (task.workbookVersion && files.includes(name.replace(/\.md$/, ".xlsx")))
-    )
-      name = `${base.slice(0, -3)}.v${version++}.md`
+    const base = taskArtifactBaseName(task)
+    const name = nextArtifactName(base, files, Boolean(task.workbookVersion))
     outputRel = `${task.destination}/${name}`
     const markerData = JSON.stringify({ hash: candidateHash, output: outputRel })
     try {

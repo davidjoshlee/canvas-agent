@@ -6,6 +6,7 @@ import { assignmentRelatedSources, relatedSources } from "../canvas/module-conte
 import { restrictedGuidancePaths, selectTaskGuidance } from "../guidance/selection.js"
 import { vaultPath } from "../shared/fs-safety.js"
 import type { CourseContext, SourceRecord } from "../shared/types.js"
+import { isLegacyTaskModuleSource } from "../vault/source-kind.js"
 import { questionText } from "./requirements.js"
 import type { AssignmentMode } from "./workflows.js"
 
@@ -111,7 +112,14 @@ function weekFolders(
   }
   return [...new Map(out.map((item) => [item.path, item])).values()]
 }
-function destinationFor(course: CourseContext, week: Date): string {
+function destinationFor(
+  course: CourseContext,
+  week: Date,
+): {
+  locationKind: "week-folder" | "fallback-week"
+  root?: string
+  destination: string
+} {
   const folders = weekFolders(course, week)
   const exact = folders.filter(
     (f) => f.date && f.date.toISOString().slice(5, 10) === week.toISOString().slice(5, 10),
@@ -119,8 +127,16 @@ function destinationFor(course: CourseContext, week: Date): string {
   if (exact.length > 1)
     throw new Error("Multiple conventional week folders match the requested date")
   const exactFolder = exact[0]
-  if (exactFolder) return `${exactFolder.path}/Prep`
-  return `${course.root}/Other/Prep/${week.toISOString().slice(0, 10)}`
+  if (exactFolder)
+    return {
+      locationKind: "week-folder",
+      root: exactFolder.path,
+      destination: `${exactFolder.path}/Prep`,
+    }
+  return {
+    locationKind: "fallback-week",
+    destination: `${course.root}/Other/Prep/${week.toISOString().slice(0, 10)}`,
+  }
 }
 export function isPrepOrDraft(path: string): boolean {
   return (
@@ -147,10 +163,7 @@ export function isSyllabusSource(path: string): boolean {
   return /(?:^|\/)syllabus\.(?:md|markdown|txt)$/i.test(path)
 }
 function isCanvasModuleIndex(source: SourceRecord): boolean {
-  return (
-    /(?:^|\/)Canvas\/Modules(?:\/|$)/i.test(source.path) ||
-    /module|session|milestone/i.test(source.type)
-  )
+  return /(?:^|\/)Canvas\/Modules(?:\/|$)/i.test(source.path) || isLegacyTaskModuleSource(source)
 }
 function hasSubstantiveModuleContent(source: SourceRecord): boolean {
   if (!source.text.trim()) return false
@@ -205,24 +218,68 @@ export function inWeekDates(source: SourceRecord, monday: Date): boolean {
   return source.dates.some((value) => dateInWeek(value, monday)) || dateInWeek(source.dueAt, monday)
 }
 export function resolvePrepDestination(course: CourseContext, weekValue: string): string {
-  return destinationFor(course, mondayDate(weekValue))
+  return destinationFor(course, mondayDate(weekValue)).destination
 }
 
 export function resolvePrepPeriod(
   course: CourseContext,
   period: { kind: "week" | "session"; value: string },
-): { root?: string; destination: string } {
-  const root =
-    period.kind === "week"
-      ? prepWeekFolder(course, period.value)
-      : resolveSessionRoot(course, period.value)
+): {
+  locationKind: "week-folder" | "session-folder" | "fallback-week" | "fallback-session"
+  root?: string
+  destination: string
+} {
+  if (period.kind === "week") return destinationFor(course, mondayDate(period.value))
+  const root = resolveSessionRoot(course, period.value)
   const conventional = root !== undefined && /(?:^|\/)(?:Week\s+\d+|Milestone\s+\d+)\b/i.test(root)
+  const locationKind = conventional ? "session-folder" : "fallback-session"
   return {
+    locationKind,
     ...(root ? { root } : {}),
     destination: conventional
       ? `${root}/Prep`
-      : `${course.root}/Other/Prep/${period.kind === "week" ? period.value : `session-${slug(period.value)}`}`,
+      : `${course.root}/Other/Prep/session-${slug(period.value)}`,
   }
+}
+
+/** Read adapter for the exact unnamespaced week destinations accepted by older task records. */
+export function savedWeekPrepLocation(
+  courseRoot: string,
+  weekValue: string,
+  destination: string,
+):
+  | {
+      locationKind: "week-folder" | "fallback-week"
+      root?: string
+    }
+  | undefined {
+  if (destination === `${courseRoot}/Other/Prep/${weekValue}`)
+    return { locationKind: "fallback-week" }
+  const prefix = `${courseRoot}/`
+  if (!destination.startsWith(prefix)) return undefined
+  const suffix = destination.slice(prefix.length)
+  const match = /^Week \d+ - ([A-Za-z]{3}) (\d{1,2})\/Prep$/.exec(suffix)
+  if (!match) return undefined
+  const months = [
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "may",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
+  ]
+  if (
+    months.indexOf((match[1] ?? "").toLowerCase()) !== Number(weekValue.slice(5, 7)) - 1 ||
+    Number(match[2]) !== Number(weekValue.slice(8, 10))
+  )
+    return undefined
+  return { locationKind: "week-folder", root: `${courseRoot}/${suffix.slice(0, -"/Prep".length)}` }
 }
 export function selectPrepInputs(
   course: CourseContext,
@@ -313,10 +370,8 @@ export function selectLegacyPrepInputs(
 }
 
 export function prepWeekFolder(course: CourseContext, weekValue: string): string | undefined {
-  const destination = resolvePrepDestination(course, weekValue)
-  return destination.includes("/Other/Prep/")
-    ? undefined
-    : destination.slice(0, destination.lastIndexOf("/Prep"))
+  const period = resolvePrepPeriod(course, { kind: "week", value: weekValue })
+  return period.locationKind === "week-folder" ? period.root : undefined
 }
 
 function findSessionAnchors(course: CourseContext, value: string): SourceRecord[] {
@@ -326,7 +381,7 @@ function findSessionAnchors(course: CourseContext, value: string): SourceRecord[
   return course.sources.filter((source) => {
     if (isPrepOrDraft(source.path)) return false
     const isModule =
-      /module|session|milestone/i.test(source.type) ||
+      isLegacyTaskModuleSource(source) ||
       /(?:^|\/)(?:modules?|milestones?|sessions?)(?:\/|$)/i.test(source.path)
     if (!isModule) return false
     const dateMatches =
@@ -667,11 +722,6 @@ export function hasPrepMaterial(course: CourseContext, sources: SourceRecord[]):
       !isSyllabusSource(source.path) &&
       hasSubstantiveModuleContent(source),
   )
-}
-
-export function assignmentDestination(source: string): string {
-  const parent = source.slice(0, source.lastIndexOf("/"))
-  return `${parent}/Drafts`
 }
 
 export async function selectAssignmentInputs(

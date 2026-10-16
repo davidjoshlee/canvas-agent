@@ -12,6 +12,7 @@ import {
   verifySourceSnapshot,
 } from "../tasks/recipes.js"
 import { declaredPrepSections } from "../tasks/requirements.js"
+import { isAssignmentSource, isFeedbackSource, isSyllabusSource } from "../vault/source-kind.js"
 import { inspectWorkspace } from "../vault/workspace.js"
 import {
   captureProposalFeedback,
@@ -116,11 +117,10 @@ function guidanceSources(course: CourseContext, version?: 1): SourceRecord[] {
   const permitted = (source: SourceRecord) =>
     Boolean(source.text.trim()) &&
     !/\.(?:feedback|summary)\.md$/i.test(source.path) &&
-    !/feedback/i.test(source.type) &&
+    !isFeedbackSource(source) &&
     !work.has(source.path)
   const selected = course.sources.filter(
-    (source) =>
-      /syllabus/i.test(`${source.path} ${source.type}`) && (!version || permitted(source)),
+    (source) => isSyllabusSource(source) && (!version || permitted(source)),
   )
   selected.sort((a, b) => a.path.localeCompare(b.path))
   if (!version) return selected
@@ -135,7 +135,7 @@ function guidanceSources(course: CourseContext, version?: 1): SourceRecord[] {
   const assignments = course.sources
     .filter(
       (source) =>
-        /^assignments?$/i.test(source.type) &&
+        isAssignmentSource(source) &&
         permitted(source) &&
         !selected.some((row) => row.path === source.path),
     )
@@ -168,7 +168,7 @@ export async function proposeGuidance(
     throw new Error("Course must come from the supplied workspace context")
   course = selectedCourse
   const sources = guidanceSources(course, 1)
-  if (!sources.some((source) => /syllabus/i.test(`${source.path} ${source.type}`)))
+  if (!sources.some(isSyllabusSource))
     throw new Error(
       `No readable syllabus is available for ${course.code}; guidance proposal needs a source syllabus.`,
     )
@@ -380,7 +380,7 @@ export async function saveGuidanceProposal(
       throw new Error("Selected proposal feedback changed; create a new proposal")
   }
   const currentSources = guidanceSources(course, metadata.proposalContextVersion)
-  if (!currentSources.some((source) => /syllabus/i.test(`${source.path} ${source.type}`)))
+  if (!currentSources.some(isSyllabusSource))
     throw new Error("Syllabus is no longer available; create a new guidance proposal")
   const currentGuidance = metadata.guidanceSelectionVersion
     ? await readSelectedGuidance(

@@ -6,7 +6,9 @@ import {
   createDogfood,
   type DogfoodFlow,
   dogfoodFlowNames,
+  isUninitializedDogfoodRun,
   listDogfood,
+  MissingDogfoodCheckpointError,
   readDogfood,
   runDogfood,
 } from "../../src/evaluation/dogfood.js"
@@ -200,3 +202,20 @@ describe("resumable ten-flow dogfood core", () => {
 })
 
 import { randomUUID } from "node:crypto"
+
+it("recognizes an empty journal independently of its display wording", async () => {
+  const { root, journal, directory } = await fixture()
+  await rm(join(directory, "000000.json"))
+  const error = await readDogfood(root, journal.id).catch((error: unknown) => error)
+  expect(error).toBeInstanceOf(MissingDogfoodCheckpointError)
+  if (!(error instanceof MissingDogfoodCheckpointError))
+    throw new Error("Expected empty checkpoint error")
+  error.message = "Reworded empty-journal explanation"
+  expect(isUninitializedDogfoodRun(error)).toBe(true)
+  expect(isUninitializedDogfoodRun(new Error("Dogfood journal has no checkpoint"))).toBe(false)
+  expect(
+    isUninitializedDogfoodRun(Object.assign(new Error("Missing directory"), { code: "ENOENT" })),
+  ).toBe(true)
+  expect(isUninitializedDogfoodRun(null)).toBe(false)
+  expect(await readdir(directory)).toEqual([])
+})

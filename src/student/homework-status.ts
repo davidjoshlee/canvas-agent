@@ -2,6 +2,11 @@ import { readdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { WorkspaceContext } from "../shared/types.js"
+import {
+  artifactBaseName,
+  legacyAssignmentDraftsDirectory,
+  parseArtifactVersion,
+} from "../tasks/artifact-layout.js"
 import { readTask } from "../tasks/records.js"
 import type { UndatedItem, UpcomingItem } from "./upcoming.js"
 
@@ -34,15 +39,6 @@ const slug = (value: string, fallback: string) =>
     .slice(0, 96) || fallback
 const legacySlug = (item: { title: string; canvasId?: string }) =>
   slug(item.title, `untitled-${item.canvasId}`)
-const version = (filename: string, base: string) => {
-  if (filename === `${base}.md`) return 1
-  if (!filename.startsWith(`${base}.v`) || !filename.endsWith(".md")) return undefined
-  const suffix = filename.slice(base.length + 2, -3)
-  if (!/^[1-9]\d*$/.test(suffix)) return undefined
-  const value = Number(suffix)
-  return Number.isSafeInteger(value) ? value : undefined
-}
-
 /** Filename/metadata presence only, never completion validity, approval or academic review. */
 export async function withHomeworkDraftStatus(
   vault: string,
@@ -72,7 +68,10 @@ export async function withHomeworkDraftStatus(
       // from the prompt's directory when both products preserve separate writers.
       const prefix = `${task.destination}/`
       if (!task.output.startsWith(prefix)) continue
-      const number = version(task.output.slice(prefix.length), "01 Assignment Draft")
+      const number = parseArtifactVersion(
+        task.output.slice(prefix.length),
+        artifactBaseName("assignment-draft", "draft"),
+      )
       if (!number) continue
       const key = `${course.code}\0${task.assignment.source}`
       const paths = native.get(key) ?? new Map<string, number>()
@@ -109,9 +108,9 @@ export async function withHomeworkDraftStatus(
           /^assignments?(?:\.md)?$/i.test(source.type) && legacySlug(source) === titleSlug,
       ) ?? []
     for (const path of course?.existingWork ?? []) {
-      const prefix = `${course?.root}/Drafts/`
+      const prefix = `${legacyAssignmentDraftsDirectory(course?.root ?? "")}/`
       if (!path.startsWith(prefix)) continue
-      const number = version(path.slice(prefix.length), titleSlug)
+      const number = parseArtifactVersion(path.slice(prefix.length), titleSlug, true)
       if (number) legacy.set(path, number)
     }
     const ambiguous = legacy.size > 0 && collisions.length > 1

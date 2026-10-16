@@ -388,5 +388,13 @@ describe("setup and local upcoming inventory", () => {
       message: "Extraction needs refreshing: MGTE220/Canvas/Files/reading.pdf.extracted.md",
     })
     expect(JSON.stringify(result)).not.toContain("PRIVATE BODY")
+    await rm(join(course, "reading.pdf"))
+    const missingOriginal = await inspectVaultHealth(root)
+    expect(missingOriginal.checks).toContainEqual({
+      name: "stale-extraction",
+      status: "warning",
+      message: "Extraction needs refreshing: MGTE220/Canvas/Files/reading.pdf.extracted.md",
+    })
+    expect(JSON.stringify(missingOriginal)).not.toContain("PRIVATE BODY")
   })
 })

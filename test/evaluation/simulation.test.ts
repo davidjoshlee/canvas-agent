@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { captureSimulation, replaySimulation } from "../../src/evaluation/captures.js"
+import { createSimulationTask, readSimulationTask } from "../../src/evaluation/tasks.js"
 
 const roots: string[] = []
 async function fixture() {
@@ -118,6 +119,40 @@ describe("historical source replay", () => {
       await writeFile(path, JSON.stringify(changed))
       await expect(replaySimulation(root, capture.id)).rejects.toThrow(/invalid source/)
     }
+  })
+  it("reads legacy captures with availability-excluded guidance without treating it as restricted policy", async () => {
+    const { root } = await fixture()
+    await mkdir(join(root, "ACCT312/Guidance"), { recursive: true })
+    await mkdir(join(root, "ACCT312/Assignments"), { recursive: true })
+    await writeFile(
+      join(root, "ACCT312/Assignments/prompt.md"),
+      "---\navailable_at: 2026-10-05\n---\nDescribe the synthetic case.",
+    )
+    await writeFile(
+      join(root, "ACCT312/Guidance/unknown-availability.md"),
+      "Guidance without availability evidence.",
+    )
+    const capture = await captureSimulation(root, "ACCT312", "2026-10-09")
+    const path = join(root, capture.path)
+    const legacy = JSON.parse(await readFile(path, "utf8"))
+    expect(legacy.excluded).toContainEqual({
+      path: "ACCT312/Guidance/unknown-availability.md",
+      reason: "Unknown availability evidence; excluded from as-of snapshot",
+    })
+    delete legacy.restrictedGuidanceVersion
+    delete legacy.restrictedGuidance
+    const { hash: _old, ...base } = legacy
+    legacy.hash = createHash("sha256").update(JSON.stringify(base)).digest("hex")
+    await writeFile(path, JSON.stringify(legacy))
+
+    const task = await createSimulationTask(root, capture.id, {
+      kind: "assignment",
+      source: "ACCT312/Assignments/prompt.md",
+      mode: "draft",
+    })
+    await expect(readSimulationTask(root, task.id)).resolves.toMatchObject({
+      task: { assignment: { source: "ACCT312/Assignments/prompt.md" } },
+    })
   })
   it("captures nested availability and preserves module relationships through replay", async () => {
     const { root, known } = await fixture()

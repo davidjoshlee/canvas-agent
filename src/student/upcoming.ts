@@ -1,5 +1,6 @@
 import { parse as parseYaml } from "yaml"
 import type { SourceRecord, WorkspaceContext } from "../shared/types.js"
+import { sourceKind } from "../vault/source-kind.js"
 import { selectCourse } from "../vault/workspace.js"
 import { applyCalendarOverrides } from "./calendar.js"
 
@@ -63,12 +64,9 @@ export function collectUpcoming(
         )
       : course.sources
     for (const source of sources) {
-      const label = `${source.type} ${source.path}`
-      const kind = /announcement/i.test(label)
-        ? "announcement"
-        : /assignment/i.test(label)
-          ? "assignment"
-          : undefined
+      const classified = sourceKind(source)
+      const kind =
+        classified === "announcement" || classified === "assignment" ? classified : undefined
       if (!kind || (kind === "announcement" && !options.includeAnnouncements)) continue
       const key = `${course.code}\0${kind}\0${source.canvasId ?? source.path}`
       // An edited old copy remains available as explicit student context, but

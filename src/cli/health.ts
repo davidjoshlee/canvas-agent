@@ -2,6 +2,7 @@ import { access, lstat } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { inspectSyncIdentity } from "../auth/sync-identity.js"
+import { diagnosticFromLegacyNotice } from "../shared/diagnostics.js"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { ToolkitConfig, WorkspaceContext } from "../shared/types.js"
 import { inspectVaultHistory } from "../vault/history.js"
@@ -171,14 +172,17 @@ export async function inspectVaultHealth(
         status: "warning",
         message: `Allowlisted course ${id} has no mapped local folder`,
       })
-  for (const notice of context.notices.filter(
-    (item) => !/_meta|private metadata directory/i.test(item),
+  const structuredNotices = context.diagnostics?.length
+    ? context.diagnostics
+    : context.notices.map((notice) => diagnosticFromLegacyNotice(notice))
+  for (const notice of structuredNotices.filter(
+    (item) => item.code !== "workspace.private_metadata_skipped",
   )) {
-    const link = /symbolic link/i.test(notice)
+    const link = notice.code === "workspace.symlink_skipped"
     checks.push({
       name: link ? "symlink" : "workspace-notice",
       status: "warning",
-      message: notice,
+      message: notice.message,
     })
   }
   for (const course of context.courses) {
@@ -211,16 +215,9 @@ export async function inspectVaultHealth(
       }
     }
     for (const excluded of course.excluded)
-      if (/symbolic link/i.test(excluded.reason))
-        checks.push({
-          name: "symlink",
-          status: "warning",
-          message: `Skipped linked source: ${excluded.path}`,
-        })
-      else if (
-        /extraction sidecar is stale|extraction original is missing or unsafe/i.test(
-          excluded.reason,
-        )
+      if (
+        excluded.reasonCode === "source.stale_extraction" ||
+        excluded.reasonCode === "source.unsafe_extraction_original"
       )
         checks.push({
           name: "stale-extraction",

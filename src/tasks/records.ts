@@ -8,9 +8,9 @@ import { selectTaskGuidance } from "../guidance/selection.js"
 import { vaultPath } from "../shared/fs-safety.js"
 import type { CourseContext, TaskRecord } from "../shared/types.js"
 import { productDestination } from "../vault/destinations.js"
+import { assignmentDraftsDirectory } from "./artifact-layout.js"
 import { captureTaskDeliverable, DeliverableEvidenceSchema } from "./deliverable-evidence.js"
 import {
-  assignmentDestination,
   inWeekDates,
   isCourseReference,
   isPrepOrDraft,
@@ -18,6 +18,7 @@ import {
   mondayDate,
   relPath,
   resolvePrepPeriod,
+  savedWeekPrepLocation,
   selectLegacyPrepInputs,
   selectPrepInputs,
 } from "./recipes.js"
@@ -554,7 +555,7 @@ export async function readTask(vault: string, id: string): Promise<TaskRecord> {
       result.data.destination !==
       productDestination(
         result.data.course.root,
-        assignmentDestination(assignment.source),
+        assignmentDraftsDirectory(assignment.source),
         result.data.productNamespaceVersion,
       )
     )
@@ -591,10 +592,6 @@ export async function readTask(vault: string, id: string): Promise<TaskRecord> {
     if (path !== "AGENTS.md" && !path.startsWith(`${result.data.course.root}/`))
       throw new Error("Task source is outside its course")
   }
-  const targetWeekFolder =
-    period.kind === "week" && !result.data.destination.includes("/Other/Prep/")
-      ? result.data.destination.slice(0, result.data.destination.lastIndexOf("/Prep"))
-      : undefined
   if (period.kind === "week" && result.data.week !== period.value)
     throw new Error("Task week does not match its selected period")
   if (period.kind === "session" && result.data.week)
@@ -607,6 +604,12 @@ export async function readTask(vault: string, id: string): Promise<TaskRecord> {
     existingWork: [],
   }
   const currentPeriod = resolvePrepPeriod(reconstructedCourse, period)
+  const savedWeekLocation =
+    period.kind === "week" && !result.data.productNamespaceVersion
+      ? savedWeekPrepLocation(result.data.course.root, period.value, result.data.destination)
+      : undefined
+  const targetWeekFolder =
+    savedWeekLocation?.locationKind === "week-folder" ? savedWeekLocation.root : undefined
   if (
     period.kind === "session" &&
     result.data.destination !==
@@ -667,31 +670,7 @@ export async function readTask(vault: string, id: string): Promise<TaskRecord> {
     throw new Error("Task destination is outside its course")
   if (period.kind === "session") return result.data as TaskRecord
   if (result.data.productNamespaceVersion) return result.data as TaskRecord
-  const datedFallback = `${result.data.course.root}/Other/Prep/${period.value}`
-  const conventional = new RegExp(
-    `^${result.data.course.root}/Week \\d+ - ([A-Za-z]{3}) (\\d{1,2})/Prep$`,
-  ).exec(result.data.destination)
-  const months = [
-    "jan",
-    "feb",
-    "mar",
-    "apr",
-    "may",
-    "jun",
-    "jul",
-    "aug",
-    "sep",
-    "oct",
-    "nov",
-    "dec",
-  ]
-  if (
-    result.data.destination !== datedFallback &&
-    (!conventional ||
-      months.indexOf((conventional[1] ?? "").toLowerCase()) !==
-        Number(period.value.slice(5, 7)) - 1 ||
-      Number(conventional[2]) !== Number(period.value.slice(8, 10)))
-  )
+  if (!savedWeekLocation)
     throw new Error("Task destination does not match a supported prep location")
   return result.data as TaskRecord
 }

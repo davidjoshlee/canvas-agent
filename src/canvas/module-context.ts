@@ -1,5 +1,6 @@
 import { isAbsolute, resolve, sep } from "node:path"
 import type { CourseContext, SourceRecord } from "../shared/types.js"
+import { isLegacyTaskModuleSource } from "../vault/source-kind.js"
 
 const MAX_RELATED = 40
 
@@ -15,7 +16,7 @@ export function assignmentRelatedSources(
   const modules = course.sources.filter(
     (source) =>
       source.path.startsWith(root) &&
-      /module|session|milestone/i.test(source.type) &&
+      isLegacyTaskModuleSource(source) &&
       !/(?:^|\/)(?:prep|drafts?|proposed)(?:\/|$)/i.test(source.path),
   )
   const owners = modules.filter(

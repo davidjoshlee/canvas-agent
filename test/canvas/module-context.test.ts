@@ -85,6 +85,31 @@ it("does not infer module membership or a predecessor without persisted order", 
   expect(result.some((item) => item.canvasId === "100")).toBe(false)
   expect(result.some((item) => item.canvasId === "200")).toBe(true)
 })
+it("preserves saved module type aliases without adding path-only generic documents", () => {
+  const prompt = source("CS101/Assignments/prompt.md", "assignment")
+  const legacyOwner = source("CS101/Notes/session-1.md", "module-notes", {
+    relatedPaths: [prompt.path],
+  })
+  const pathOnly = source("CS101/Modules/Session 2.md", "document", {
+    relatedPaths: [prompt.path],
+  })
+  const course: CourseContext = {
+    code: "CS101",
+    title: "Synthetic",
+    root: "CS101",
+    sources: [prompt, legacyOwner, pathOnly],
+    guidance: [],
+    existingWork: [],
+    excluded: [],
+  }
+
+  expect(assignmentRelatedSources(course, prompt).map((item) => item.path)).toContain(
+    legacyOwner.path,
+  )
+  expect(assignmentRelatedSources(course, prompt).map((item) => item.path)).not.toContain(
+    pathOnly.path,
+  )
+})
 it("persists owning/preceding reading snapshots in a real assignment handoff without changing originals", async () => {
   const root = await mkdtemp(join(tmpdir(), "canvas-assignment-modules-"))
   try {

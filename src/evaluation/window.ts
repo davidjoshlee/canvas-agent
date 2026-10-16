@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path"
 import { z } from "zod"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { SourceRecord } from "../shared/types.js"
+import { isAssignmentSource, isTeachingModuleSource } from "../vault/source-kind.js"
 import { deriveSimulationCapture, replaySimulation } from "./captures.js"
 import { compareSimulationEvaluations } from "./comparison.js"
 import { createSimulationTask, inspectSimulationTask, readSimulationTask } from "./tasks.js"
@@ -94,10 +95,10 @@ function teachingWeek(cutoff: string): string {
   date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7))
   return date.toISOString().slice(0, 10)
 }
-const assignment = (source: SourceRecord) => /^assignments?(?:\.md)?$/i.test(source.type)
+const assignment = isAssignmentSource
 function moduleSource(sources: SourceRecord[], query?: string) {
   if (query === undefined) return undefined
-  const candidates = sources.filter((s) => /module|session|milestone/i.test(s.type))
+  const candidates = sources.filter(isTeachingModuleSource)
   const exact = candidates.filter((s) => s.path === query)
   const matches = exact.length ? exact : candidates.filter((s) => s.canvasId === query)
   if (matches.length !== 1)

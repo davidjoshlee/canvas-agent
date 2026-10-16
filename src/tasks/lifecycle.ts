@@ -5,6 +5,7 @@ import { captureLearningHistory } from "../feedback/history.js"
 import { publishExclusiveFile, vaultPath } from "../shared/fs-safety.js"
 import type { SourceRecord, TaskRecord } from "../shared/types.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
+import { artifactBaseName, assignmentFinalsDirectory, nextArtifactName } from "./artifact-layout.js"
 import { readVerifiedCompletedOutput } from "./completion.js"
 import { createAssignmentTask } from "./creation.js"
 import { verifyWorkbookFile } from "./draft-workbook.js"
@@ -120,8 +121,7 @@ export async function approveTask(
   if (task.assignment?.mode !== "draft")
     throw new Error("Only a completed assignment draft can be approved")
   const hash = sha(bytes)
-  const assignmentFolder = task.destination.slice(0, task.destination.lastIndexOf("/"))
-  const finalDirRel = `${assignmentFolder}/Finals`
+  const finalDirRel = assignmentFinalsDirectory(task.destination)
   const finalDir = await vaultPath(vault, finalDirRel, true)
   await mkdir(finalDir, { recursive: true, mode: 0o700 })
   await vaultPath(vault, finalDirRel)
@@ -165,14 +165,11 @@ export async function approveTask(
   }
 
   const existing = await readdir(finalDir)
-  const base = "01 Assignment Final.md"
-  let filename = base
-  let version = 2
-  while (
-    existing.includes(filename) ||
-    (workbookBytes && existing.includes(filename.replace(/\.md$/, ".xlsx")))
+  const filename = nextArtifactName(
+    artifactBaseName("assignment-final"),
+    existing,
+    Boolean(workbookBytes),
   )
-    filename = `${base.slice(0, -3)}.v${version++}.md`
   const finalRel = `${finalDirRel}/${filename}`
   const finalPath = await vaultPath(vault, finalRel, true)
   await publishExclusiveFile(finalPath, bytes)

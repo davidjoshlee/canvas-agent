@@ -310,6 +310,7 @@ async function inspectCourse(
         entries.splice(i, 1)
         excluded.push({
           path: entry.path,
+          reasonCode: "source.retired_canvas_owned",
           reason:
             "Retired unchanged Canvas-owned source; original retained outside active namespace",
         })
@@ -340,7 +341,11 @@ async function inspectCourse(
       title = stringValue(parsed.data.course_title) ?? headingTitle(parsed.content) ?? code
       safeIndex = { entry: index, parsed }
     } else if (parsed) {
-      excluded.push({ path: index.path, reason: "Restricted policy metadata; text omitted" })
+      excluded.push({
+        path: index.path,
+        reasonCode: "source.restricted_policy_metadata",
+        reason: "Restricted policy metadata; text omitted",
+      })
     }
   }
   if (safeIndex) sources.push(toSource(safeIndex.entry, safeIndex.parsed))
@@ -378,12 +383,17 @@ async function inspectCourse(
   for (const entry of entries) {
     if (entry.path === `${root}/_index.md`) continue
     if (/^(?:credentials?|secrets?|passwords?|tokens?)(?:\..*)?$/i.test(entry.name)) {
-      excluded.push({ path: entry.path, reason: "Credential-like file; text omitted" })
+      excluded.push({
+        path: entry.path,
+        reasonCode: "source.credential_like",
+        reason: "Credential-like file; text omitted",
+      })
       continue
     }
     if (isProposal(entry.path)) {
       excluded.push({
         path: entry.path,
+        reasonCode: "source.proposed_guidance",
         reason: "Proposed guidance is not active context; text omitted",
       })
       continue
@@ -392,7 +402,11 @@ async function inspectCourse(
       const parsed = await readDocument(entry, excluded)
       if (!parsed) continue
       if (isRestricted(parsed.data)) {
-        excluded.push({ path: entry.path, reason: "Restricted policy metadata; text omitted" })
+        excluded.push({
+          path: entry.path,
+          reasonCode: "source.restricted_policy_metadata",
+          reason: "Restricted policy metadata; text omitted",
+        })
         continue
       }
       guidance.push(entry.path)
@@ -403,7 +417,11 @@ async function inspectCourse(
       continue
     }
     if (!textExtensions.has(extension(entry.name))) {
-      excluded.push({ path: entry.path, reason: "Unsupported or binary file type; text not read" })
+      excluded.push({
+        path: entry.path,
+        reasonCode: "source.unsupported_file_type",
+        reason: "Unsupported or binary file type; text not read",
+      })
       continue
     }
     const isGuidance = isGuidancePath(entry.path)
@@ -417,6 +435,7 @@ async function inspectCourse(
     ) {
       excluded.push({
         path: entry.path,
+        reasonCode: "source.restricted_compatible_policy",
         reason:
           "Restricted compatible policy declaration; original and extraction variants omitted",
       })
@@ -429,13 +448,18 @@ async function inspectCourse(
         originalPath &&
         /(?:^|\/)(?:credentials?|secrets?|passwords?|tokens?)(?:\.[^/]*)?$/i.test(originalPath)
       ) {
-        excluded.push({ path: entry.path, reason: "Credential-like original; extraction omitted" })
+        excluded.push({
+          path: entry.path,
+          reasonCode: "source.credential_like_original",
+          reason: "Credential-like original; extraction omitted",
+        })
         continue
       }
       const relativeOriginal = originalPath && resolve(vault, originalPath)
       if (!originalPath || !originalHash || !relativeOriginal?.startsWith(absoluteRoot + sep)) {
         excluded.push({
           path: entry.path,
+          reasonCode: "source.invalid_extraction_provenance",
           reason: "Extraction sidecar has invalid original provenance; text omitted",
         })
         continue
@@ -447,7 +471,11 @@ async function inspectCourse(
           throw new Error("Extraction original exceeds the regular-file size limit")
         const original = await readFile(relativeOriginal)
         if (createHash("sha256").update(original).digest("hex") !== originalHash) {
-          excluded.push({ path: entry.path, reason: "Extraction sidecar is stale; text omitted" })
+          excluded.push({
+            path: entry.path,
+            reasonCode: "source.stale_extraction",
+            reason: "Extraction sidecar is stale; text omitted",
+          })
           continue
         }
         // A generated sidecar must not launder policy metadata from an original
@@ -464,6 +492,7 @@ async function inspectCourse(
           if (!originalParsed || isRestricted(originalParsed.data)) {
             excluded.push({
               path: entry.path,
+              reasonCode: "source.restricted_original_metadata",
               reason:
                 "Original document has malformed or restricted policy metadata; extraction omitted",
             })
@@ -473,12 +502,17 @@ async function inspectCourse(
       } catch {
         excluded.push({
           path: entry.path,
+          reasonCode: "source.unsafe_extraction_original",
           reason: "Extraction original is missing or unsafe; text omitted",
         })
         continue
       }
       if (isRestricted(parsed.data)) {
-        excluded.push({ path: entry.path, reason: "Restricted policy metadata; text omitted" })
+        excluded.push({
+          path: entry.path,
+          reasonCode: "source.restricted_policy_metadata",
+          reason: "Restricted policy metadata; text omitted",
+        })
         continue
       }
       sources.push({
@@ -492,7 +526,11 @@ async function inspectCourse(
       continue
     }
     if (isRestricted(parsed.data)) {
-      excluded.push({ path: entry.path, reason: "Restricted policy metadata; text omitted" })
+      excluded.push({
+        path: entry.path,
+        reasonCode: "source.restricted_policy_metadata",
+        reason: "Restricted policy metadata; text omitted",
+      })
       continue
     }
     const record = toSource(entry, parsed)
@@ -501,6 +539,7 @@ async function inspectCourse(
       if (!evidence.success) {
         excluded.push({
           path: entry.path,
+          reasonCode: "source.invalid_assignment_dates",
           reason: "Invalid assignment date evidence; inspect source metadata",
         })
         continue
@@ -735,22 +774,35 @@ async function readDocument(
     if (!info.isFile() || info.size > 5 * 1024 * 1024) {
       excluded.push({
         path: entry.path,
+        reasonCode: "source.file_not_regular_or_too_large",
         reason: "Not a regular text file or exceeds 5 MB text limit; text omitted",
       })
       return null
     }
     bytes = await readFile(entry.absolute)
   } catch {
-    excluded.push({ path: entry.path, reason: "Could not read file" })
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.read_failed",
+      reason: "Could not read file",
+    })
     return null
   }
   if (bytes.includes(0)) {
-    excluded.push({ path: entry.path, reason: "Binary content; text not read" })
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.binary_content",
+      reason: "Binary content; text not read",
+    })
     return null
   }
   const text = bytes.toString("utf8")
   if (!Buffer.from(text, "utf8").equals(bytes)) {
-    excluded.push({ path: entry.path, reason: "Invalid UTF-8; text not read" })
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.invalid_utf8",
+      reason: "Invalid UTF-8; text not read",
+    })
     return null
   }
   try {
@@ -799,7 +851,11 @@ async function readDocument(
       content: text.slice(match[0].length).trim(),
     }
   } catch {
-    excluded.push({ path: entry.path, reason: "Malformed frontmatter; text omitted" })
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.malformed_frontmatter",
+      reason: "Malformed frontmatter; text omitted",
+    })
     return null
   }
 }
