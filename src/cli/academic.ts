@@ -13,7 +13,7 @@ import { createAssignmentTask, createPrepTask } from "../tasks/authoring/creatio
 import { selectAssignmentPrompt } from "../tasks/authoring/recipes.js"
 import { vaultMutation } from "../vault/command-effects.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
-import { configWithEnv, render, summary, taskMarkdownPath } from "./output.js"
+import { configWithEnv, render, summary, taskCreationHandoff, taskMarkdownPath } from "./output.js"
 import { readTaskOutput } from "./task-output.js"
 
 export function registerAcademicCommands(program: Command): void {
@@ -76,9 +76,7 @@ function registerPrepCommand(program: Command): void {
       const taskFile = taskMarkdownPath(config, task.id)
       render(
         {
-          ...summary(task),
-          taskFile,
-          workingDirectory: resolve(config.vault.path, `_meta/tasks/${task.id}/work`),
+          ...taskCreationHandoff(config, task),
         },
         options.json,
         `Created prep task ${task.id} for ${task.course.code}, ${task.period?.kind ?? "week"} ${task.period?.value ?? task.week}.\nRead: ${taskFile}`,
@@ -105,22 +103,18 @@ function registerAssignmentCommands(program: Command): void {
     .option("--json", "emit JSON")
     .action(async (course, options) => {
       const config = await configWithEnv(program.opts().config)
-      const task = await createAssignmentTask(
-        config.vault.path,
-        course,
-        options.source,
-        options.mode,
-        options.work,
-        options.context,
-        undefined,
-        options.message,
-      )
+      const task = await createAssignmentTask(config.vault.path, {
+        courseQuery: course,
+        sourcePath: options.source,
+        mode: options.mode,
+        workPath: options.work,
+        contextPaths: options.context,
+        discussionMessage: options.message,
+      })
       const taskFile = taskMarkdownPath(config, task.id)
       render(
         {
-          ...summary(task),
-          taskFile,
-          workingDirectory: resolve(config.vault.path, `_meta/tasks/${task.id}/work`),
+          ...taskCreationHandoff(config, task),
         },
         options.json,
         `Created ${task.assignment?.mode} assignment task ${task.id} for ${task.course.code}.\nRead: ${taskFile}`,
@@ -146,25 +140,21 @@ function registerAssignmentCommands(program: Command): void {
     .option("--json", "emit JSON")
     .action(async (assignmentQuery, options) => {
       const config = await configWithEnv(program.opts().config)
-      const context = await inspectWorkspace(config.vault.path)
+      const context = await inspectWorkspace(config.vault.path, { course: options.course })
       const course = selectCourse(context, options.course)
       const prompt = selectAssignmentPrompt(course, String(assignmentQuery))
-      const taskRecord = await createAssignmentTask(
-        config.vault.path,
-        course.code,
-        prompt.path,
-        options.discuss !== undefined ? "discuss" : "draft",
-        options.work,
-        options.context,
-        undefined,
-        options.discuss,
-      )
+      const taskRecord = await createAssignmentTask(config.vault.path, {
+        courseQuery: course.code,
+        sourcePath: prompt.path,
+        mode: options.discuss !== undefined ? "discuss" : "draft",
+        workPath: options.work,
+        contextPaths: options.context,
+        discussionMessage: options.discuss,
+      })
       const taskFile = taskMarkdownPath(config, taskRecord.id)
       render(
         {
-          ...summary(taskRecord),
-          taskFile,
-          workingDirectory: resolve(config.vault.path, `_meta/tasks/${taskRecord.id}/work`),
+          ...taskCreationHandoff(config, taskRecord),
         },
         options.json,
         `Created ${taskRecord.assignment?.mode} task ${taskRecord.id} for ${course.code}: ${prompt.title}.\nRead: ${taskFile}`,

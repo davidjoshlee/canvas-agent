@@ -193,12 +193,11 @@ describe("private own-feedback parity", () => {
     const book = await readCoursePlaybook(f.vault, "CS101")
     expect(book.history.records).toHaveLength(2)
     expect(book.history.observations).toHaveLength(3)
-    const task = await createAssignmentTask(
-      f.vault,
-      "CS101",
-      "CS101/Canvas/Assignments/Case-50.md",
-      "outline",
-    )
+    const task = await createAssignmentTask(f.vault, {
+      courseQuery: "CS101",
+      sourcePath: "CS101/Canvas/Assignments/Case-50.md",
+      mode: "outline",
+    })
     expect(task.learningHistory?.observations).toEqual(book.history.observations)
     expect((await readTask(f.vault, task.id)).learningHistory?.hash).toBe(
       task.learningHistory?.hash,
@@ -299,12 +298,11 @@ describe("private own-feedback parity", () => {
       '---\navailable_at: "2026-10-05"\n---\nSubstantive synthetic framework reading, not personal feedback.',
     )
     const prep = await createPrepTask(f.vault, "CS101", "2026-10-05")
-    const assignment = await createAssignmentTask(
-      f.vault,
-      "CS101",
-      "CS101/Canvas/Assignments/Case-50.md",
-      "outline",
-    )
+    const assignment = await createAssignmentTask(f.vault, {
+      courseQuery: "CS101",
+      sourcePath: "CS101/Canvas/Assignments/Case-50.md",
+      mode: "outline",
+    })
     for (const task of [prep, assignment]) {
       expect(task.learningHistory?.records[0]?.data.comments[0]?.text).toContain(
         "PRIVATE_FEEDBACK_COMMENT",

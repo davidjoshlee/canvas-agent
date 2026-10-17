@@ -107,7 +107,11 @@ describe("separate-product writable course namespace", () => {
       original = "Explain this supplied synthetic framework."
     await writeFile(join(f.vault, source), original)
     await syncCourses(f.config, { preserveSchool: true })
-    const task = await createAssignmentTask(f.vault, "CS101", source, "draft")
+    const task = await createAssignmentTask(f.vault, {
+      courseQuery: "CS101",
+      sourcePath: source,
+      mode: "draft",
+    })
     expect(task.productNamespaceVersion).toBe(1)
     expect(task.destination).toBe("CS101/Canvas Agent/Generated/Assignments/Drafts")
     await expect(readTask(f.vault, task.id)).resolves.toEqual(task)
@@ -170,12 +174,11 @@ describe("separate-product writable course namespace", () => {
       /mappings are unsafe/,
     )
     await expect(
-      createAssignmentTask(
-        f.vault,
-        "CS101",
-        "CS101/Canvas Agent/Canvas/Assignments/Case-50.md",
-        "draft",
-      ),
+      createAssignmentTask(f.vault, {
+        courseQuery: "CS101",
+        sourcePath: "CS101/Canvas Agent/Canvas/Assignments/Case-50.md",
+        mode: "draft",
+      }),
     ).rejects.toThrow(/mappings are unsafe/)
   })
   it("preserves School originals/navigation and retains the namespace on later unflagged syncs", async () => {

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
@@ -61,6 +61,18 @@ afterEach(async () => {
 })
 
 describe("versioned School-style prep selection", () => {
+  it("ignores a symlink diagnostic in another course when completing prep", async () => {
+    const vault = await fixture()
+    const task = await createPrepTask(vault, "CS101", "2026-10-12")
+    await mkdir(join(vault, "OTHER101"), { recursive: true })
+    await symlink(join(vault, "CS101/first-reading.md"), join(vault, "OTHER101/linked.md"))
+    await expect(completeTask(vault, task.id, await candidate(vault, task))).resolves.toMatchObject(
+      {
+        task: { status: "completed" },
+      },
+    )
+  })
+
   it("uses the same selection in compiled ordinary and frozen completion/comparison/M1 flows", async () => {
     const vault = await fixture()
     const config = join(vault, "config.json")
@@ -113,12 +125,11 @@ describe("versioned School-style prep selection", () => {
   })
   it("preserves an older strict assignment snapshot when only additive parsed module-date metadata becomes available", async () => {
     const vault = await fixture(true)
-    const task = await createAssignmentTask(
-      vault,
-      "CS101",
-      "CS101/Assignments/prompt.md",
-      "outline",
-    )
+    const task = await createAssignmentTask(vault, {
+      courseQuery: "CS101",
+      sourcePath: "CS101/Assignments/prompt.md",
+      mode: "outline",
+    })
     task.sources = task.sources.map(({ moduleDates: _new, ...source }) => source)
     const path = join(vault, "_meta/tasks", task.id, "task.json")
     await writeFile(path, JSON.stringify(task))

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { expect, it } from "vitest"
 import type { TaskRecord } from "../../src/shared/types.js"
-import { harnessCalculations } from "../helpers/harness-calculations.js"
+import { harnessCalculationsFromFile } from "../helpers/harness-calculations.js"
 
 // Retain original host artifacts unchanged. New parser-v2 tasks require literal
 // question headings; this adaptation only reorganizes the retained answers and
@@ -92,13 +92,7 @@ it("replays the host-authored v3 synthesis and finished pricing deliverable thro
       expect(handoff.workflow.version).toBe(3)
       expect(handoff.guidance[0]?.text).toContain("explicitly permitted")
     }
-    const calculations = harnessCalculations<{ result: number; source: { path: string } }[]>([
-      "calculate",
-      "--task",
-      draft.id,
-      "--file",
-      join(fixtures, "calculations.json"),
-    ])
+    const calculations = harnessCalculationsFromFile(join(fixtures, "calculations.json"))
     expect(calculations.map((record) => record.result)).toEqual([20000, 1800, 300, 500, 20500])
     expect(calculations.every((record) => record.source.path === prompt)).toBe(true)
     for (const [name, task] of [
@@ -288,13 +282,7 @@ it("replays first-use custom guidance and host work across separate CLI processe
     expect(handoff.guidance.some((source) => source.canvasId === "50")).toBe(true)
     expect(JSON.stringify(handoff)).not.toContain("UNRELATED_RESTRICTED_GUIDANCE_BODY")
     expect(
-      harnessCalculations<{ result: number }[]>([
-        "calculate",
-        "--task",
-        task.id,
-        "--file",
-        join(fixtures, "calculations.json"),
-      ]).map((entry) => entry.result),
+      harnessCalculationsFromFile(join(fixtures, "calculations.json")).map((entry) => entry.result),
     ).toEqual([20000, 1800, 300, 500, 20500])
     const candidate = join(root, "custom-candidate.md")
     const text = withDetectedHeadings(

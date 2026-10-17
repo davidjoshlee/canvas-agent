@@ -319,7 +319,7 @@ export async function validateFeedbackObservations(
 /** Explicit scope and bounded private reader. Current pointer and archival bytes must agree. */
 export async function readOwnFeedback(vault: string, courseQuery: string, assignmentId: string) {
   id.parse(assignmentId)
-  const course = selectCourse(await inspectWorkspace(vault), courseQuery)
+  const course = selectCourse(await inspectWorkspace(vault, { course: courseQuery }), courseQuery)
   return readCachedFeedback(vault, course, assignmentId)
 }
 async function readCachedFeedback(
@@ -363,8 +363,11 @@ export async function readCoursePlaybook(
   vault: string,
   courseQuery: string,
   assignments: string[] = [],
+  selectedCourse?: { code: string; root: string; canvasId?: string },
 ) {
-  const course = selectCourse(await inspectWorkspace(vault), courseQuery)
+  const course =
+    selectedCourse ??
+    selectCourse(await inspectWorkspace(vault, { course: courseQuery }), courseQuery)
   if (!course.canvasId) throw new Error("Playbook course needs a known Canvas course ID")
   const selected = new Set(assignments.map((value) => id.parse(value)))
   if (selected.size > 500) throw new Error("Playbook selected assignment scope exceeds bounds")
@@ -445,10 +448,10 @@ export async function readCoursePlaybook(
 }
 export async function captureLearningHistory(
   vault: string,
-  course: { code: string; canvasId?: string },
+  course: { code: string; root: string; canvasId?: string },
 ) {
   if (!course.canvasId) return undefined
-  const { history } = await readCoursePlaybook(vault, course.code)
+  const { history } = await readCoursePlaybook(vault, course.code, [], course)
   return history.legacyPlaybooks?.length ||
     history.records.some(
       (record) =>
@@ -490,7 +493,10 @@ export async function verifyTaskLearningHistory(
   task: { course: { code: string; root: string }; learningHistory?: LearningHistory },
 ) {
   if (!task.learningHistory) return
-  const course = selectCourse(await inspectWorkspace(vault), task.course.code)
+  const course = selectCourse(
+    await inspectWorkspace(vault, { course: task.course.code }),
+    task.course.code,
+  )
   if (course.root !== task.course.root)
     throw new Error("Private learning history course root changed")
   await verifyLearningHistory(vault, task.learningHistory, course)

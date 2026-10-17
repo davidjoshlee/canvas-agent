@@ -115,7 +115,12 @@ it("rejects prep and assignment completion after companion-only changes, preserv
   )
   const tasks = [
     await createPrepTask(f.vault, "SYNTH501", "2026-10-12"),
-    await createAssignmentTask(f.vault, "SYNTH501", prompt, "outline", undefined, [f.relative]),
+    await createAssignmentTask(f.vault, {
+      courseQuery: "SYNTH501",
+      sourcePath: prompt,
+      mode: "outline",
+      contextPaths: [f.relative],
+    }),
   ]
   const before = await Promise.all(
     tasks.map((task) => readFile(join(f.vault, "_meta/tasks", task.id, "task.json"))),

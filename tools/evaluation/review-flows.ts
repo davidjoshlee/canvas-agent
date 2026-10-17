@@ -84,16 +84,14 @@ export function buildReviewDogfoodFlows(input: ReviewDogfoodInput): DogfoodFlow[
     const discussionId =
       prior?.data.discussionTaskId ??
       (
-        await createAssignmentTask(
-          vault,
-          revision.course.code,
-          revision.assignment?.source ?? "",
-          "discuss",
-          reviewed.data.output,
-          [],
-          undefined,
-          message,
-        )
+        await createAssignmentTask(vault, {
+          courseQuery: revision.course.code,
+          sourcePath: revision.assignment?.source ?? "",
+          mode: "discuss",
+          workPath: reviewed.data.output,
+          contextPaths: [],
+          discussionMessage: message,
+        })
       ).id
     const discussion = await readTask(vault, discussionId)
     if (
@@ -207,15 +205,6 @@ export function buildReviewDogfoodFlows(input: ReviewDogfoodInput): DogfoodFlow[
       ),
     )
   }
-  // Preserve the ten-slot journal format without reopening historical billing exports.
-  async function cost() {
-    return outcome(
-      "cost report",
-      "skipped",
-      "Usage and billing belong to the selected coding host",
-      { owner: "host" },
-    )
-  }
   return [
     {
       name: "co-edit",
@@ -257,17 +246,6 @@ export function buildReviewDogfoodFlows(input: ReviewDogfoodInput): DogfoodFlow[
       async run(_prior, journal) {
         return gaps(journal)
       },
-    },
-    {
-      name: "cost report",
-      async validate(result) {
-        const checked = await cost()
-        return (
-          checked.status === result.status &&
-          JSON.stringify(checked.data) === JSON.stringify(result.data)
-        )
-      },
-      run: cost,
     },
   ]
 }

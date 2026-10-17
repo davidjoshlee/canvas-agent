@@ -29,7 +29,14 @@ async function discussion(
   root: string,
   message = "How should I interpret `missing.pdf` in the prompt?",
 ) {
-  return createAssignmentTask(root, "MBA101", prompt, "discuss", existing, [], undefined, message)
+  return createAssignmentTask(root, {
+    courseQuery: "MBA101",
+    sourcePath: prompt,
+    mode: "discuss",
+    workPath: existing,
+    contextPaths: [],
+    discussionMessage: message,
+  })
 }
 async function candidate(
   root: string,
@@ -101,23 +108,26 @@ describe("source-bound assignment discussion", () => {
     const root = await fixture()
     for (const message of [undefined, " ", "x".repeat(12_001), "CANVAS_TOKEN=secret-value"])
       await expect(
-        createAssignmentTask(root, "MBA101", prompt, "discuss", undefined, [], undefined, message),
+        createAssignmentTask(root, {
+          courseQuery: "MBA101",
+          sourcePath: prompt,
+          mode: "discuss",
+          contextPaths: [],
+          discussionMessage: message,
+        }),
       ).rejects.toThrow()
     process.env.DISCUSSION_TEST_SECRET = "known-secret-value"
     await expect(discussion(root, "Question including known-secret-value")).rejects.toThrow(
       /known local credential/,
     )
     await expect(
-      createAssignmentTask(
-        root,
-        "MBA101",
-        prompt,
-        "draft",
-        undefined,
-        [],
-        undefined,
-        "Discuss this",
-      ),
+      createAssignmentTask(root, {
+        courseQuery: "MBA101",
+        sourcePath: prompt,
+        mode: "draft",
+        contextPaths: [],
+        discussionMessage: "Discuss this",
+      }),
     ).rejects.toThrow(/only in discussion/)
     await expect(readdir(join(root, "_meta/tasks"))).rejects.toMatchObject({ code: "ENOENT" })
   })

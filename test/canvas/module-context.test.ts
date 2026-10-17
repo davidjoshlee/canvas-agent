@@ -122,7 +122,11 @@ it("persists owning/preceding reading snapshots in a real assignment handoff wit
       )
     }
     const original = await readFile(join(root, prompt.path))
-    const task = await createAssignmentTask(root, "CS101", prompt.path, "outline")
+    const task = await createAssignmentTask(root, {
+      courseQuery: "CS101",
+      sourcePath: prompt.path,
+      mode: "outline",
+    })
     expect(task.sources.some((source) => source.path === "CS101/readings/theory.md")).toBe(true)
     expect(task.sources.some((source) => source.path === "CS101/readings/task.md")).toBe(true)
     expect(task.sources.some((source) => source.path === "CS101/readings/future.md")).toBe(false)

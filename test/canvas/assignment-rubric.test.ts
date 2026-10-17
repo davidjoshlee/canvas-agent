@@ -148,7 +148,11 @@ describe("complete rubric definition context", () => {
     const course = selectCourse(await inspectWorkspace(vault), "CS101"),
       prompt = course.sources.find((source) => source.canvasId === "50")
     if (!prompt) throw new Error("Synthetic prompt missing")
-    const task = await createAssignmentTask(vault, "CS101", prompt.path, "outline")
+    const task = await createAssignmentTask(vault, {
+      courseQuery: "CS101",
+      sourcePath: prompt.path,
+      mode: "outline",
+    })
     expect(task.questions).toEqual(["Which alternative should the firm choose?"])
     expect(task.sources[0]?.text).toContain("Maximum points: 10")
     expect(task.sources[0]?.text).toContain("Rating points: 0")

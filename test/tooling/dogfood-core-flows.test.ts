@@ -68,7 +68,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 describe("concrete first-half dogfood workflows", () => {
-  it("executes all ten real backends across external completion, human review and explicit approval", async () => {
+  it("executes current real backends across external completion, human review and explicit approval", async () => {
     const { root, config, journal, reading, prompt } = await fixture()
     const sourceBytes = await Promise.all(
       [reading, prompt].map((path) => readFile(join(root, path))),
@@ -85,7 +85,7 @@ describe("concrete first-half dogfood workflows", () => {
       ])
       const last = current.flows.at(-1)
       expect(last?.status).not.toBe("fail")
-      if (current.flows.length === 10) break
+      if (current.flows.length === 9) break
       const id = last?.data.taskId ?? ""
       expect(id).not.toBe("")
       if (last?.status === "pending-host") {
@@ -100,7 +100,7 @@ describe("concrete first-half dogfood workflows", () => {
         humanVerdicts[id] = "pass"
       }
     }
-    expect(current.flows).toHaveLength(10)
+    expect(current.flows).toHaveLength(9)
     expect(current.flows.map((result) => result.status)).toEqual([
       "skipped",
       "pass",
@@ -111,7 +111,6 @@ describe("concrete first-half dogfood workflows", () => {
       "pass",
       "pass",
       "pass",
-      "skipped",
     ])
     const draftId = current.flows[4]?.data.taskId ?? ""
     const draft = await readTask(root, draftId)
@@ -136,7 +135,7 @@ describe("concrete first-half dogfood workflows", () => {
       "Changed final artifact.",
     )
   })
-  it("preserves synthetic renewal evidence, reports real gap counts and delegates costs explicitly", async () => {
+  it("preserves synthetic renewal evidence and reports real gap counts", async () => {
     const { root, config, journal } = await fixture()
     const review = buildReviewDogfoodFlows({ config })
     const auth = flow(review, "token-renewal alert")
@@ -155,10 +154,7 @@ describe("concrete first-half dogfood workflows", () => {
     await expect(auth.run(alert, journal)).rejects.toThrow(/changed/)
     await writeFile(join(root, "CS101/empty.md"), "")
     expect((await flow(review, "gaps re-check").run(undefined, journal)).data.empty).toBe("1")
-    const cost = await flow(review, "cost report").run(undefined, journal)
-    expect(cost.status).toBe("skipped")
-    expect(cost.data.owner).toBe("host")
-    expect(cost.evidence).not.toContain("totalCost")
+    expect(review.map(({ name }) => name)).not.toContain("cost report")
   })
   it("keeps live sync opt-in, distinguishes offline skipping, and blocks unallowlisted scope", async () => {
     const { config, journal } = await fixture()
@@ -180,28 +176,6 @@ describe("concrete first-half dogfood workflows", () => {
     expect(() => buildCoreDogfoodFlows({ config, offline: true, syncAuthorized: true })).toThrow(
       /not both/,
     )
-  })
-  it("skips the legacy cost slot without reopening or revalidating saved exports", async () => {
-    const { root, config, journal } = await fixture()
-    const file = join(root, "old-export.json")
-    await writeFile(file, "Preserved export bytes")
-    const cost = flow(buildReviewDogfoodFlows({ config }), "cost report")
-    const prior = {
-      name: "cost report" as const,
-      status: "pass" as const,
-      evidence: "Historical export report",
-      nextSteps: "",
-      data: { exportFile: file, exportHash: "old-hash", totalCostUsd: "1.00" },
-    }
-    expect(await cost.validate(prior, journal)).toBe(false)
-    const skipped = await cost.run(prior, journal)
-    expect(skipped.status).toBe("skipped")
-    expect(skipped.data).toEqual({ owner: "host" })
-    expect(prior.data.totalCostUsd).toBe("1.00")
-    expect(await readFile(file, "utf8")).toBe("Preserved export bytes")
-    await rm(file)
-    expect(await cost.run(prior, journal)).toEqual(skipped)
-    expect(await cost.validate(skipped, journal)).toBe(true)
   })
   it("reuses scope-bound sweep sync evidence and refuses changed fingerprints", async () => {
     const { root, config, journal } = await fixture()

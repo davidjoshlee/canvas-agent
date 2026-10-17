@@ -33,12 +33,29 @@ const types: Record<string, string> = {
 const sha = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex")
 const ext = (name: string) => extname(name).toLowerCase()
 function xmlText(value: string): string {
-  return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
+  if (/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);)/i.test(value))
+    throw new Error("Unsupported XML entity")
+  return value.replace(/&(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/gi, (entity) => {
+    const token = entity.toLowerCase()
+    const named: Record<string, string> = {
+      "&amp;": "&",
+      "&lt;": "<",
+      "&gt;": ">",
+      "&quot;": '"',
+      "&apos;": "'",
+    }
+    if (named[token]) return named[token] ?? ""
+    const raw = token.slice(2, -1)
+    const point = raw.startsWith("x") ? Number.parseInt(raw.slice(1), 16) : Number(raw)
+    if (
+      !Number.isInteger(point) ||
+      (point < 32 && ![9, 10, 13].includes(point)) ||
+      point > 0x10ffff ||
+      (point >= 0xd800 && point <= 0xdfff)
+    )
+      throw new Error("Unsupported XML character reference")
+    return String.fromCodePoint(point)
+  })
 }
 function clean(text: string): string {
   return text
@@ -194,22 +211,54 @@ async function extractXlsx(bytes: Uint8Array): Promise<string> {
     if (!sheet) continue
     const xml = await zipEntryText(sheet)
     const rows: string[] = []
-    for (const row of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
-      const values: string[] = []
-      for (const cell of (row[1] ?? "").matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
-        const type = cell[1]?.match(/\bt="([^"]+)"/)?.[1]
+    let hasReadableCells = false
+    let rowOrdinal = 0
+    for (const row of xml.matchAll(/<row\b([^>]*)>([\s\S]*?)<\/row>/g)) {
+      rowOrdinal++
+      const rowNumber = (row[1] ?? "").match(/\br="(\d+)"/)?.[1] ?? String(rowOrdinal)
+      const cells: string[] = []
+      let cellOrdinal = 0
+      for (const cell of (row[2] ?? "").matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+        cellOrdinal++
+        const attributes = cell[1] ?? ""
+        const address = attributes.match(/\br="([A-Z]{1,3}\d+)"/)?.[1]
+        const label = address ?? `row ${rowNumber}, cell ${cellOrdinal}`
+        const type = attributes.match(/\bt="([^"]+)"/)?.[1]
         const body = cell[2] ?? ""
-        let value = body.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? ""
-        if (type === "s") value = shared[Number.parseInt(value, 10)] ?? ""
-        else if (type === "inlineStr")
+        const formulaElement = body.match(/<f\b([^>]*?)(?:\/>|>([\s\S]*?)<\/f>)/)
+        const formulaAttributes = formulaElement?.[1] ?? ""
+        const rawFormula = formulaElement?.[2]
+        const sharedIndex = formulaAttributes.match(/\bsi="(\d+)"/)?.[1]
+        const formula =
+          formulaElement === null
+            ? undefined
+            : rawFormula
+              ? `=${xmlText(rawFormula)}`
+              : formulaAttributes.match(/\bt="shared"/)
+                ? `shared formula${sharedIndex === undefined ? "" : ` (index ${sharedIndex})`}; not expanded`
+                : "formula present; expression unavailable"
+        const rawValue = body.match(/<v(?:\s[^>]*)?>([\s\S]*?)<\/v>/)?.[1]
+        let value = ""
+        if (rawValue !== undefined) {
+          value = type === "s" ? (shared[Number.parseInt(rawValue, 10)] ?? "") : xmlText(rawValue)
+        } else if (type === "inlineStr") {
           value = Array.from(body.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g), (m) =>
             xmlText(m[1] ?? ""),
           ).join("")
-        if (value) values.push(xmlText(value))
+        }
+        const displayValue = value.replace(/[\t\r\n]+/g, " ")
+        cells.push(
+          formula === undefined
+            ? `${label}: ${displayValue || "[blank]"}`
+            : `${label}: ${formula}${rawValue === undefined ? " [no cached value]" : ` [cached value: ${displayValue || "[blank]"}]`}`,
+        )
       }
-      if (values.length) rows.push(values.join(" | "))
+      if (cells.length) {
+        if (cells.some((cell) => !cell.endsWith(": [blank]"))) hasReadableCells = true
+        rows.push(`Row ${rowNumber}: ${cells.join(" | ")}`)
+      }
     }
-    if (rows.length) {
+    if (hasReadableCells) {
       readableSheets++
       out.push(`## ${metadata?.name ?? `Sheet ${i + 1}`}\n${rows.join("\n")}`)
     }
@@ -470,7 +519,9 @@ export async function ingestFile(
   const root = resolve(vault)
   await assertNoSymlinks(root)
   const { selectCourse } = await import("../vault/workspace.js")
-  const context = await import("../vault/workspace.js").then((m) => m.inspectWorkspace(root))
+  const context = await import("../vault/workspace.js").then((m) =>
+    m.inspectWorkspace(root, { course: courseQuery }),
+  )
   if (context.diagnostics?.some((item) => item.code === "workspace.course_mappings_unavailable"))
     throw new Error("Course mappings are unsafe; inspect them before ingesting files")
   const course = selectCourse(context, courseQuery)

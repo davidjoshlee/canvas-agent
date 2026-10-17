@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
-import { harnessCalculations } from "../helpers/harness-calculations.js"
+import { harnessCalculationsFromFile } from "../helpers/harness-calculations.js"
 
 const roots: string[] = []
 const fixtures = resolve("test/fixtures/host-numeric")
@@ -53,13 +53,7 @@ it("replays host co-edit revision and explicit synthetic local approval with dra
     "--context",
     reading,
   ])
-  harnessCalculations([
-    "calculate",
-    "--task",
-    parent.id,
-    "--file",
-    join(fixtures, "calculations.json"),
-  ])
+  harnessCalculationsFromFile(join(fixtures, "calculations.json"))
   const parentFile = join(root, "parent.md")
   await writeFile(
     parentFile,
@@ -93,13 +87,7 @@ it("replays host co-edit revision and explicit synthetic local approval with dra
   expect(recipe.sources.find((source: { path: string }) => source.path === prior.output).text).toBe(
     parentBytes[0]?.toString(),
   )
-  const numbers = harnessCalculations([
-    "calculate",
-    "--task",
-    revision.id,
-    "--file",
-    join(fixtures, "calculations.json"),
-  ])
+  const numbers = harnessCalculationsFromFile(join(fixtures, "calculations.json"))
   expect(numbers.map((row: { result: number }) => row.result)).toEqual([
     30000, 18000, 20, 4000, 400,
   ])
@@ -196,13 +184,9 @@ it.each(["primary", "luna"] as const)(
       "Discussion points",
       "Sources",
     ])
-    const calculations = harnessCalculations([
-      "calculate",
-      "--task",
-      created.id,
-      "--file",
+    const calculations = harnessCalculationsFromFile(
       join(fixtures, host === "luna" ? "luna-prep-calculations.json" : "calculations.json"),
-    ])
+    )
     expect(calculations.map((row: { result: number }) => row.result)).toEqual(
       host === "luna" ? [12000, 20, 200, 4000, 12000, 400] : [30000, 18000, 20, 4000, 400],
     )
@@ -295,13 +279,7 @@ it("replays a source-based review of flawed work without rewriting or approving 
   expect(recipe.sources.find((source: { path: string }) => source.path === work).text).toBe(
     originalWork.toString(),
   )
-  const numbers = harnessCalculations([
-    "calculate",
-    "--task",
-    created.id,
-    "--file",
-    join(fixtures, "review-calculations.json"),
-  ])
+  const numbers = harnessCalculationsFromFile(join(fixtures, "review-calculations.json"))
   expect(numbers.map((row: { result: number }) => row.result)).toEqual([1000, 4000])
   const text = (await readFile(join(fixtures, "review-candidate.md"), "utf8")).replace(
     "{{TASK_ID}}",
@@ -393,18 +371,7 @@ it.each(["ordinary", "frozen"] as const)(
     expect(
       recipe.sources.find((source: { path: string }) => source.path === reading).text,
     ).toContain("## Part 1")
-    const calculation = harnessCalculations(
-      frozen
-        ? [
-            "simulate",
-            "task",
-            "calculate",
-            created.id,
-            "--file",
-            join(fixtures, "calculations.json"),
-          ]
-        : ["calculate", "--task", created.id, "--file", join(fixtures, "calculations.json")],
-    )
+    const calculation = harnessCalculationsFromFile(join(fixtures, "calculations.json"))
     expect(calculation.map((row: { result: number }) => row.result)).toEqual([
       30000, 18000, 20, 4000, 400,
     ])

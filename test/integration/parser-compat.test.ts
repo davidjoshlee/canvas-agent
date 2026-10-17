@@ -37,17 +37,23 @@ async function oldCapture(root: string, task: TaskRecord, recipe: 1 | 2 = 1) {
   delete old.guidanceSelectionVersion
   delete old.assignmentStructureVersion
   delete old.answerEvidenceVersion
-  const req = resolveRequirements(old.kind, old.assignment?.mode, old.sources, old.guidance, recipe)
+  const req = resolveRequirements({
+    kind: old.kind,
+    mode: old.assignment?.mode,
+    sources: old.sources,
+    guidance: old.guidance,
+    parserVersion: recipe,
+  })
   old.questions = req.questions
   delete old.hostExecutionVersion
-  old.workflow = workflowForRequirements(
-    old.kind,
-    old.assignment?.mode,
-    req.sections,
-    req.questions,
-    req.guidanceInstructions,
-    2,
-  )
+  old.workflow = workflowForRequirements({
+    kind: old.kind,
+    mode: old.assignment?.mode,
+    sections: req.sections,
+    questions: req.questions,
+    guidanceInstructions: req.guidanceInstructions,
+    version: 2,
+  })
   old.requirements = old.workflow.requiredSections
   await writeFile(taskPath(root, old.id), JSON.stringify(old))
   return old
@@ -68,7 +74,11 @@ afterEach(async () => {
 describe("saved parser recipe compatibility", () => {
   it("retains an explicit v2 draft workflow without silently injecting v3 outcomes", async () => {
     const root = await fixture()
-    const task = await createAssignmentTask(root, "MBA101", prompt, "draft")
+    const task = await createAssignmentTask(root, {
+      courseQuery: "MBA101",
+      sourcePath: prompt,
+      mode: "draft",
+    })
     expect(task.workflow?.version).toBe(3)
     delete task.groupScopeVersion
     delete task.deliverable
@@ -76,22 +86,22 @@ describe("saved parser recipe compatibility", () => {
     delete task.deliverableScopeVersion
     delete task.guidanceSelectionVersion
     delete task.assignmentStructureVersion
-    const req = resolveRequirements(
-      task.kind,
-      task.assignment?.mode,
-      task.sources,
-      task.guidance,
-      2,
-    )
+    const req = resolveRequirements({
+      kind: task.kind,
+      mode: task.assignment?.mode,
+      sources: task.sources,
+      guidance: task.guidance,
+      parserVersion: 2,
+    })
     delete task.hostExecutionVersion
-    task.workflow = workflowForRequirements(
-      task.kind,
-      task.assignment?.mode,
-      req.sections,
-      req.questions,
-      req.guidanceInstructions,
-      2,
-    )
+    task.workflow = workflowForRequirements({
+      kind: task.kind,
+      mode: task.assignment?.mode,
+      sections: req.sections,
+      questions: req.questions,
+      guidanceInstructions: req.guidanceInstructions,
+      version: 2,
+    })
     const bytes = JSON.stringify(task)
     const handoffPath = join(root, "_meta/tasks", task.id, "TASK.md")
     const handoff = (await readFile(handoffPath, "utf8")).replace(
@@ -159,7 +169,14 @@ describe("saved parser recipe compatibility", () => {
   })
   it("tolerates legacy title/date annotations but still checks exact source bodies and hashes", async () => {
     const root = await fixture(),
-      old = await oldCapture(root, await createAssignmentTask(root, "MBA101", prompt, "outline"))
+      old = await oldCapture(
+        root,
+        await createAssignmentTask(root, {
+          courseQuery: "MBA101",
+          sourcePath: prompt,
+          mode: "outline",
+        }),
+      )
     const oldSource = old.sources[0]
     if (!oldSource) throw new Error("Missing fixture source")
     old.sources[0] = { ...oldSource, title: "00 Prompt", dates: [] }
@@ -169,7 +186,11 @@ describe("saved parser recipe compatibility", () => {
     })
     const altered = await oldCapture(
       root,
-      await createAssignmentTask(root, "MBA101", prompt, "outline"),
+      await createAssignmentTask(root, {
+        courseQuery: "MBA101",
+        sourcePath: prompt,
+        mode: "outline",
+      }),
     )
     const alteredSource = altered.sources[0]
     if (!alteredSource) throw new Error("Missing fixture source")

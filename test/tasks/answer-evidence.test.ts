@@ -13,10 +13,7 @@ import { captureSimulation } from "../../src/simulation/captures.js"
 import { createSimulationTask, readSimulationTask } from "../../src/simulation/tasks.js"
 import { checkCandidate, completeTask } from "../../src/tasks/artifacts/completion.js"
 import { workflowForRequirements } from "../../src/tasks/authoring/workflows.js"
-import {
-  prepareAnswerEvidence,
-  validateAnswerEvidence,
-} from "../../src/tasks/evidence/answer-evidence.js"
+import { prepareAnswerEvidence } from "../../src/tasks/evidence/answer-evidence.js"
 import { TaskRecordSchema } from "../../src/tasks/store.js"
 
 const workspace = vi.hoisted(() => ({ inspectWorkspace: vi.fn(), selectCourse: vi.fn() }))
@@ -98,6 +95,32 @@ afterEach(async () => {
 })
 
 describe("versioned prep answer evidence", () => {
+  it("distinguishes prose code from source citations and permits registered artifact paths", async () => {
+    await setup()
+    const task = taskWith()
+    const authored = candidate(
+      task,
+      `Commitment changes bargaining leverage by making promises credible. \`${path}\`\n\nThe calculations are \`revenue / units\`, \`revenue/units\`, and \`revenue / 1.2\`; the analysis is in \`analysis/model.py\`.\n\n\`\`\`text\n\`other/course/source.md\`\n\`\`\``,
+    )
+    expect(() => checkCandidate(authored, task.id, task, [], ["analysis/model.py"])).not.toThrow()
+    expect(() => checkCandidate(authored, task.id, task)).toThrow(/exact task source path/)
+    const unknownCitation = authored.replace("`analysis/model.py`", "`other/course/source.md`")
+    expect(() => checkCandidate(unknownCitation, task.id, task, [], ["analysis/model.py"])).toThrow(
+      /exact task source path/,
+    )
+    const unknownSpacedCitation = authored.replace(
+      "`analysis/model.py`",
+      "`Other Course/Week 03 - Oct 12/source.md`",
+    )
+    expect(() =>
+      checkCandidate(unknownSpacedCitation, task.id, task, [], ["analysis/model.py"]),
+    ).toThrow(/exact task source path/)
+    const artifactOnlySources = authored.replace(`- \`${path}\``, "- `analysis/model.py`")
+    expect(() =>
+      checkCandidate(artifactOnlySources, task.id, task, [], ["analysis/model.py"]),
+    ).toThrow(/Sources section must cite exact task source paths/)
+  })
+
   it("also applies the prep evidence flag to detected imperative requirements without question marks", async () => {
     await setup()
     const task = taskWith(1)
@@ -172,19 +195,20 @@ describe("versioned prep answer evidence", () => {
   it("requires vocabulary from selected sources and strips exact citation paths", () => {
     const irrelevant = { ...source, text: "unrelated vocabulary only" }
     expect(
-      validateAnswerEvidence(question, `alpha beta gamma delta epsilon zeta \`${path}\``, [
-        irrelevant,
-      ]).valid,
+      prepareAnswerEvidence([irrelevant])(
+        question,
+        `alpha beta gamma delta epsilon zeta \`${path}\``,
+      ).valid,
     ).toBe(false)
     expect(
-      validateAnswerEvidence(question, `alpha beta gamma delta epsilon zeta \`${path}\``, [source])
+      prepareAnswerEvidence([source])(question, `alpha beta gamma delta epsilon zeta \`${path}\``)
         .answerTerms,
     ).toBe(6)
   })
 
   it("matches public token lengths/punctuation and rejects source bounds before tokenizing", () => {
     expect(
-      validateAnswerEvidence(question, `AI ML x2 alpha-beta isn't row1 \`${path}\``, [source])
+      prepareAnswerEvidence([source])(question, `AI ML x2 alpha-beta isn't row1 \`${path}\``)
         .answerTerms,
     ).toBe(3)
     expect(() => prepareAnswerEvidence(Array.from({ length: 1001 }, () => source))).toThrow(
@@ -203,15 +227,14 @@ describe("versioned prep answer evidence", () => {
     const old = { ...fresh }
     delete old.hostExecutionVersion
     delete old.answerEvidenceVersion
-    old.workflow = workflowForRequirements(
-      "prep",
-      undefined,
-      old.requirements,
-      old.questions ?? [],
-      [],
-      3,
-      old.deliverable,
-    )
+    old.workflow = workflowForRequirements({
+      kind: "prep",
+      sections: old.requirements,
+      questions: old.questions ?? [],
+      guidanceInstructions: [],
+      version: 3,
+      deliverable: old.deliverable,
+    })
     const record = join(vault, "_meta/tasks", old.id, "task.json")
     await writeFile(record, JSON.stringify(old))
     const handoff = join(vault, "_meta/tasks", old.id, "TASK.md")
@@ -245,19 +268,23 @@ describe("versioned prep answer evidence", () => {
     expect(TaskRecordSchema.safeParse({ ...prep, parserVersion: 1 }).success).toBe(false)
   })
 
-  it("persists the flag on ordinary and frozen prep recipes and rejects tampering on read", async () => {
+  it("leaves new ordinary and frozen prep recipes free of the historical vocabulary gate", async () => {
     await setup()
     const ordinary = await createPrepTask(vault, course.code, "2026-10-12")
-    expect(ordinary.answerEvidenceVersion).toBe(1)
-    expect((await readTask(vault, ordinary.id)).answerEvidenceVersion).toBe(1)
-    const ordinaryPath = join(vault, "_meta/tasks", ordinary.id, "task.json")
-    const ordinarySaved = JSON.parse(await readFile(ordinaryPath, "utf8")) as Record<
-      string,
-      unknown
-    >
-    delete ordinarySaved.answerEvidenceVersion
-    await writeFile(ordinaryPath, JSON.stringify(ordinarySaved))
-    await expect(readTask(vault, ordinary.id)).rejects.toThrow()
+    expect(ordinary.answerEvidenceVersion).toBeUndefined()
+    expect((await readTask(vault, ordinary.id)).answerEvidenceVersion).toBeUndefined()
+    const ordinaryCandidate = `Task: ${ordinary.id}\n\n${ordinary.requirements
+      .map((heading) =>
+        heading === "Sources"
+          ? `## ${heading}\n\n\`${path}\``
+          : heading === "Preparation questions"
+            ? `## ${heading}\n\n### ${question}\nIt lets negotiators make believable commitments. \`${path}\``
+            : `## ${heading}\n\nSynthetic preparation content.`,
+      )
+      .join("\n\n")}\n`
+    const ordinaryPath = join(vault, "ordinary-candidate.md")
+    await writeFile(ordinaryPath, ordinaryCandidate)
+    await expect(completeTask(vault, ordinary.id, ordinaryPath)).resolves.toBeDefined()
 
     const capture = await captureSimulation(vault, course.code, "2026-10-12")
     const frozen = await createSimulationTask(vault, capture.id, {
@@ -265,12 +292,8 @@ describe("versioned prep answer evidence", () => {
       week: "2026-10-12",
     })
     const frozenRecord = await readSimulationTask(vault, frozen.id)
-    expect(frozenRecord.answerEvidenceVersion).toBe(1)
-    expect(frozenRecord.task.answerEvidenceVersion).toBe(1)
-    const frozenPath = join(vault, "_meta/simulations/tasks", frozen.id, "record.json")
-    const frozenSaved = JSON.parse(await readFile(frozenPath, "utf8")) as Record<string, unknown>
-    delete frozenSaved.answerEvidenceVersion
-    await writeFile(frozenPath, JSON.stringify(frozenSaved))
-    await expect(readSimulationTask(vault, frozen.id)).rejects.toThrow()
+    expect(frozenRecord.answerEvidenceVersion).toBeUndefined()
+    expect(frozenRecord.task.answerEvidenceVersion).toBeUndefined()
+    expect(await readSimulationTask(vault, frozen.id)).toEqual(frozenRecord)
   })
 })

@@ -1,10 +1,14 @@
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
+import { constants } from "node:fs"
 import {
+  access,
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   stat,
   symlink,
@@ -12,12 +16,13 @@ import {
   writeFile,
 } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { delimiter, isAbsolute, join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
 import {
   disableVaultHistory,
   enableVaultHistory,
   exportVaultHistory,
+  inspectVaultHistory,
   listVaultHistory,
   showVaultHistory,
   snapshotVaultHistory,
@@ -98,6 +103,93 @@ it("keeps unchanged snapshots stable and exports earlier text/binary/deleted fil
   expect(await readFile(join(root, "restored.bin"))).toEqual(Buffer.from([0, 1, 255]))
   if (process.platform !== "win32") expect((await stat(store)).mode & 0o777).toBe(0o700)
 })
+
+it("streams an inventory above 64 MiB and restores each binary file byte for byte", async () => {
+  const { root, vault, store } = await fixture()
+  const first = Buffer.alloc(33 * 1024 * 1024, 0x31)
+  const second = Buffer.alloc(33 * 1024 * 1024, 0xfe)
+  await writeFile(join(vault, "SYNTH101", "first.bin"), first)
+  await writeFile(join(vault, "SYNTH101", "second.bin"), second)
+
+  const saved = await enableVaultHistory(vault, store)
+  expect(saved.changed).toBe(true)
+  expect(saved.files).toBe(3)
+  const restoredFirst = join(root, "restored-first.bin")
+  const restoredSecond = join(root, "restored-second.bin")
+  await exportVaultHistory(vault, saved.commit ?? "", "SYNTH101/first.bin", restoredFirst)
+  await exportVaultHistory(vault, saved.commit ?? "", "SYNTH101/second.bin", restoredSecond)
+  expect(Buffer.compare(await readFile(restoredFirst), first)).toBe(0)
+  expect(Buffer.compare(await readFile(restoredSecond), second)).toBe(0)
+})
+
+it("detects credential patterns split across streaming read chunks without advancing history", async () => {
+  const { vault, store } = await fixture()
+  const initial = await enableVaultHistory(vault, store)
+  const boundary = Buffer.alloc(256 * 1024 - 8, 0x2e)
+  const secret = Buffer.concat([boundary, Buffer.from("sk-12345678901234567890")])
+  await writeFile(join(vault, "SYNTH101", "split-secret.bin"), secret)
+  await expect(snapshotVaultHistory(vault)).rejects.toThrow("credential-like content")
+  expect((await listVaultHistory(vault)).commits[0]?.id).toBe(initial.commit)
+})
+
+it("retains credential prefixes across arbitrarily long whitespace while scanning chunks", async () => {
+  const { vault, store } = await fixture()
+  const initial = await enableVaultHistory(vault, store)
+  const prefix = Buffer.alloc(256 * 1024 - 300, 0x2e)
+  const secret = Buffer.concat([
+    prefix,
+    Buffer.from("password:"),
+    Buffer.alloc(700, 0x20),
+    Buffer.from("synthetic-value"),
+  ])
+  await writeFile(join(vault, "SYNTH101", "long-space-secret.bin"), secret)
+  await expect(snapshotVaultHistory(vault)).rejects.toThrow("credential-like content")
+  expect((await listVaultHistory(vault)).commits[0]?.id).toBe(initial.commit)
+})
+
+it.skipIf(process.platform === "win32")(
+  "aborts a streamed publication when a source changes after the inventory check",
+  async () => {
+    const { root, vault, store } = await fixture()
+    const source = join(vault, "SYNTH101", "changing.bin")
+    await writeFile(source, Buffer.alloc(2 * 1024 * 1024, 0x41))
+    const initial = await enableVaultHistory(vault, store)
+    await writeFile(source, Buffer.alloc(2 * 1024 * 1024, 0x42))
+
+    let realGit: string | undefined
+    for (const directory of (process.env.PATH ?? "").split(delimiter).filter(isAbsolute)) {
+      try {
+        await access(join(directory, "git"), constants.X_OK)
+        realGit = await realpath(join(directory, "git"))
+        break
+      } catch {
+        /* try next actual PATH entry */
+      }
+    }
+    expect(realGit).toBeDefined()
+    const shimDirectory = join(root, "shim")
+    await mkdir(shimDirectory)
+    const shim = join(shimDirectory, "git")
+    await writeFile(
+      shim,
+      `#!/usr/bin/env node\nconst fs = require("node:fs");\nconst { spawnSync } = require("node:child_process");\nconst args = process.argv.slice(2);\nif (args.includes("fast-import")) fs.writeFileSync(${JSON.stringify(source)}, Buffer.alloc(2 * 1024 * 1024, 0x43));\nconst result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: "inherit", env: process.env });\nprocess.exit(result.status ?? 1);\n`,
+      { mode: 0o700 },
+    )
+    await chmod(shim, 0o700)
+    const previousPath = process.env.PATH
+    process.env.PATH = `${shimDirectory}${delimiter}${previousPath ?? ""}`
+    try {
+      await expect(snapshotVaultHistory(vault)).rejects.toThrow(/Git operation failed: fast-import/)
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH
+      else process.env.PATH = previousPath
+    }
+    expect(await readFile(join(store, "refs/heads/canvas-history"), "utf8")).toBe(
+      `${initial.commit}\n`,
+    )
+    expect(await inspectVaultHistory(vault)).toMatchObject({ status: "unsafe" })
+  },
+)
 
 it("preserves retained history when disabled and re-enables only the same owned store", async () => {
   const { root, vault, store } = await fixture()

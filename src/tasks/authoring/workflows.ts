@@ -104,18 +104,67 @@ const HARNESS_QUANTITATIVE_INSTRUCTION =
   "Use the coding harness and its tools to execute calculations, create required spreadsheets or other artifacts, and verify the results against supplied source inputs. Preserve reproducible code, assumptions and meaningful results with the work. The CLI saves task context and validates artifact bindings; it does not perform the assignment's calculations or spreadsheet authoring."
 
 /** Versioned task outcomes; old saved workflows keep their original instructions. */
-export function workflowForRequirements(
-  kind: "prep" | "assignment",
-  mode: AssignmentMode | undefined,
-  sections: string[],
-  questions: string[],
-  guidanceInstructions: string[] = [],
-  version: 2 | 3 = 3,
-  deliverable?: DeliverableEvidence,
-  assignmentStructureVersion?: 1,
-  answerEvidenceVersion?: 1,
-  hostExecutionVersion?: 1,
-): AcademicWorkflow {
+export interface WorkflowRecipeOptions {
+  kind: "prep" | "assignment"
+  mode?: AssignmentMode
+  sections: string[]
+  questions: string[]
+  guidanceInstructions?: string[]
+  version?: 2 | 3
+  deliverable?: DeliverableEvidence
+  assignmentStructureVersion?: 1
+  answerEvidenceVersion?: 1
+  hostExecutionVersion?: 1
+}
+
+/** Construct the current workflow recipe shared by live and frozen authoring. */
+export function currentWorkflowRecipe(
+  options: Omit<WorkflowRecipeOptions, "version" | "answerEvidenceVersion">,
+): WorkflowRecipeOptions {
+  return {
+    ...options,
+    version: 3,
+    hostExecutionVersion: 1,
+  }
+}
+
+/** Decode the saved workflow flags that control historical instruction bytes. */
+export function savedWorkflowRecipe(
+  options: Omit<
+    WorkflowRecipeOptions,
+    "version" | "assignmentStructureVersion" | "answerEvidenceVersion" | "hostExecutionVersion"
+  >,
+  flags: {
+    workflowVersion?: 2 | 3
+    assignmentStructureVersion?: 1
+    answerEvidenceVersion?: 1
+    hostExecutionVersion?: 1
+  },
+): WorkflowRecipeOptions {
+  return {
+    ...options,
+    version: flags.workflowVersion ?? 2,
+    ...(flags.assignmentStructureVersion
+      ? { assignmentStructureVersion: flags.assignmentStructureVersion }
+      : {}),
+    ...(flags.answerEvidenceVersion ? { answerEvidenceVersion: flags.answerEvidenceVersion } : {}),
+    ...(flags.hostExecutionVersion ? { hostExecutionVersion: flags.hostExecutionVersion } : {}),
+  }
+}
+
+export function workflowForRequirements(options: WorkflowRecipeOptions): AcademicWorkflow {
+  const {
+    kind,
+    mode,
+    sections,
+    questions,
+    guidanceInstructions = [],
+    version = 3,
+    deliverable,
+    assignmentStructureVersion,
+    answerEvidenceVersion,
+    hostExecutionVersion,
+  } = options
   if (version !== 2 && version !== 3) throw new Error("Unsupported task workflow version")
   const base = workflowFor(kind, mode)
   const gapSection =

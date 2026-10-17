@@ -64,7 +64,11 @@ async function candidate(root: string, task: TaskRecord, includeItems: boolean) 
 
 it("binds imperative deliverables in ordinary tasks, exposes them through compiled CLI and rejects omissions/tampering", async () => {
   const root = await fixture()
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft")
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+  })
   expect(task.deliverable).toMatchObject({
     version: 1,
     kind: "requirements",
@@ -137,7 +141,11 @@ it("versions imperative-question cues and rubric boundaries while preserving an 
       2,
     ),
   ).toEqual({ kind: "none" })
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft")
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+  })
   expect(task.deliverableParserVersion).toBe(3)
   await expect(completeTask(root, task.id, await candidate(root, task, false))).rejects.toThrow(
     /subheading/,
@@ -146,7 +154,11 @@ it("versions imperative-question cues and rubric boundaries while preserving an 
     completeTask(root, task.id, await candidate(root, task, true)),
   ).resolves.toHaveProperty("output")
   // A coherent earlier detector recipe stays empty and byte-identical on read.
-  const old = await createAssignmentTask(root, "CS101", prompt, "outline")
+  const old = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "outline",
+  })
   delete old.deliverableParserVersion
   old.deliverable = captureTaskDeliverable(
     old.kind,
@@ -155,25 +167,25 @@ it("versions imperative-question cues and rubric boundaries while preserving an 
     old.guidance,
     old.deliverableScopeVersion,
   )
-  const requirements = resolveRequirements(
-    old.kind,
-    old.assignment?.mode,
-    old.sources,
-    old.guidance,
-    2,
-    old.deliverable,
-  )
+  const requirements = resolveRequirements({
+    kind: old.kind,
+    mode: old.assignment?.mode,
+    sources: old.sources,
+    guidance: old.guidance,
+    parserVersion: 2,
+    deliverable: old.deliverable,
+  })
   old.questions = requirements.questions
   delete old.hostExecutionVersion
-  old.workflow = workflowForRequirements(
-    old.kind,
-    old.assignment?.mode,
-    old.requirements,
-    old.questions,
-    requirements.guidanceInstructions,
-    3,
-    old.deliverable,
-  )
+  old.workflow = workflowForRequirements({
+    kind: old.kind,
+    mode: old.assignment?.mode,
+    sections: old.requirements,
+    questions: old.questions,
+    guidanceInstructions: requirements.guidanceInstructions,
+    version: 3,
+    deliverable: old.deliverable,
+  })
   const path = join(root, "_meta/tasks", old.id, "task.json")
   const bytes = JSON.stringify(old)
   await writeFile(path, bytes)
@@ -222,26 +234,26 @@ it("freezes the new imperative-question recipe without live enrichment or rewrit
     record.task.guidance,
     record.task.deliverableScopeVersion,
   )
-  const requirements = resolveRequirements(
-    record.task.kind,
-    record.task.assignment?.mode,
-    record.task.sources,
-    record.task.guidance,
-    2,
-    record.task.deliverable,
-  )
+  const requirements = resolveRequirements({
+    kind: record.task.kind,
+    mode: record.task.assignment?.mode,
+    sources: record.task.sources,
+    guidance: record.task.guidance,
+    parserVersion: 2,
+    deliverable: record.task.deliverable,
+  })
   record.task.questions = requirements.questions
   delete record.task.hostExecutionVersion
   delete record.hostExecutionVersion
-  record.task.workflow = workflowForRequirements(
-    record.task.kind,
-    record.task.assignment?.mode,
-    record.task.requirements,
-    requirements.questions,
-    requirements.guidanceInstructions,
-    3,
-    record.task.deliverable,
-  )
+  record.task.workflow = workflowForRequirements({
+    kind: record.task.kind,
+    mode: record.task.assignment?.mode,
+    sections: record.task.requirements,
+    questions: requirements.questions,
+    guidanceInstructions: requirements.guidanceInstructions,
+    version: 3,
+    deliverable: record.task.deliverable,
+  })
   const bytes = JSON.stringify(record)
   await writeFile(path, bytes)
   expect((await readSimulationTask(root, created.id)).task.deliverable).toEqual({
@@ -319,7 +331,12 @@ it("detects deliverables in explicitly selected case material regardless of its 
     join(root, attachment),
     "Required: 1. Analyze the supplied case evidence. 2. Explain what remains unknown.",
   )
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft", undefined, [attachment])
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+    contextPaths: [attachment],
+  })
   expect(task.deliverable).toMatchObject({
     kind: "requirements",
     sourcePath: attachment,
@@ -333,19 +350,23 @@ it("detects deliverables in explicitly selected case material regardless of its 
 
 it("keeps a coherent earlier v3 recipe unenriched and preserves mode boundaries", async () => {
   const root = await fixture()
-  const old = await createAssignmentTask(root, "CS101", prompt, "draft")
+  const old = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+  })
   delete old.deliverable
   delete old.deliverableParserVersion
   delete old.deliverableScopeVersion
   delete old.hostExecutionVersion
-  old.workflow = workflowForRequirements(
-    "assignment",
-    "draft",
-    old.requirements,
-    old.questions ?? [],
-    [],
-    3,
-  )
+  old.workflow = workflowForRequirements({
+    kind: "assignment",
+    mode: "draft",
+    sections: old.requirements,
+    questions: old.questions ?? [],
+    guidanceInstructions: [],
+    version: 3,
+  })
   const path = join(root, "_meta/tasks", old.id, "task.json")
   const bytes = JSON.stringify(old)
   await writeFile(path, bytes)
@@ -354,20 +375,21 @@ it("keeps a coherent earlier v3 recipe unenriched and preserves mode boundaries"
   await expect(
     completeTask(root, old.id, await candidate(root, old, false)),
   ).resolves.toHaveProperty("output")
-  const outline = await createAssignmentTask(root, "CS101", prompt, "outline")
+  const outline = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "outline",
+  })
   expect(outline.workflow?.instructions.join(" ")).toContain(
     "Map each item to the planned response",
   )
-  const discuss = await createAssignmentTask(
-    root,
-    "CS101",
-    prompt,
-    "discuss",
-    undefined,
-    [],
-    undefined,
-    "What does baseline mean?",
-  )
+  const discuss = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "discuss",
+    contextPaths: [],
+    discussionMessage: "What does baseline mean?",
+  })
   expect(discuss.deliverable).toEqual({ version: 1, kind: "none", suppressed: false })
 })
 
@@ -387,7 +409,12 @@ async function multipartFixture() {
 
 it("scopes an attached case from the unique prompt part and preserves previously unscoped evidence", async () => {
   const { root, attachment } = await multipartFixture()
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft", undefined, [attachment])
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+    contextPaths: [attachment],
+  })
   expect(task.deliverableScopeVersion).toBe(1)
   expect(task.deliverable).toMatchObject({
     scope: "PART II",
@@ -410,7 +437,12 @@ it("scopes an attached case from the unique prompt part and preserves previously
   ).resolves.toHaveProperty("output")
   // Synthetic earlier deliverable-v1 record: it captured every part, without
   // the later scope recipe. Reading it must not retroactively narrow its inputs.
-  const old = await createAssignmentTask(root, "CS101", prompt, "outline", undefined, [attachment])
+  const old = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "outline",
+    contextPaths: [attachment],
+  })
   delete old.deliverableScopeVersion
   old.deliverable = captureTaskDeliverable(
     old.kind,
@@ -418,25 +450,25 @@ it("scopes an attached case from the unique prompt part and preserves previously
     old.sources,
     old.guidance,
   )
-  const requirements = resolveRequirements(
-    old.kind,
-    old.assignment?.mode,
-    old.sources,
-    old.guidance,
-    2,
-    old.deliverable,
-  )
+  const requirements = resolveRequirements({
+    kind: old.kind,
+    mode: old.assignment?.mode,
+    sources: old.sources,
+    guidance: old.guidance,
+    parserVersion: 2,
+    deliverable: old.deliverable,
+  })
   old.questions = requirements.questions
   delete old.hostExecutionVersion
-  old.workflow = workflowForRequirements(
-    old.kind,
-    old.assignment?.mode,
-    old.requirements,
-    old.questions,
-    requirements.guidanceInstructions,
-    3,
-    old.deliverable,
-  )
+  old.workflow = workflowForRequirements({
+    kind: old.kind,
+    mode: old.assignment?.mode,
+    sections: old.requirements,
+    questions: old.questions,
+    guidanceInstructions: requirements.guidanceInstructions,
+    version: 3,
+    deliverable: old.deliverable,
+  })
   const oldPath = join(root, "_meta/tasks", old.id, "task.json")
   const bytes = JSON.stringify(old)
   await writeFile(oldPath, bytes)
@@ -474,16 +506,31 @@ it("pins frozen part scope to the captured prompt rather than a later live edit"
 it("never narrows multiple named parts to the first or guesses missing/numeric scopes", async () => {
   const { root, attachment } = await multipartFixture()
   await writeFile(join(root, prompt), "Complete PART I and PART II.")
-  const task = await createAssignmentTask(root, "CS101", prompt, "outline", undefined, [attachment])
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "outline",
+    contextPaths: [attachment],
+  })
   expect(task.deliverable).not.toHaveProperty("scope")
   expect(task.deliverable?.kind !== "none" && task.deliverable?.items).toHaveLength(3)
   await writeFile(join(root, prompt), "Complete PART III.")
   await expect(
-    createAssignmentTask(root, "CS101", prompt, "draft", undefined, [attachment]),
+    createAssignmentTask(root, {
+      courseQuery: "CS101",
+      sourcePath: prompt,
+      mode: "draft",
+      contextPaths: [attachment],
+    }),
   ).rejects.toThrow(/named part has no detected deliverable/)
   await writeFile(join(root, prompt), "Complete Part 2.")
   await expect(
-    createAssignmentTask(root, "CS101", prompt, "draft", undefined, [attachment]),
+    createAssignmentTask(root, {
+      courseQuery: "CS101",
+      sourcePath: prompt,
+      mode: "draft",
+      contextPaths: [attachment],
+    }),
   ).rejects.toThrow(/named part has no detected deliverable/)
 })
 
@@ -495,7 +542,12 @@ it("scopes explicit numeric parts in fresh ordinary/frozen recipes while preserv
     "Required:\nPART 1:\n1. Explain sunk costs.\n## Part 2\n(a) Calculate baseline.\n(b) State uncertainty.\nPART 3 (due Thursday):\n1. Recommend a test."
   await writeFile(join(root, prompt), promptText)
   await writeFile(join(root, attachment), `---\navailable_at: 2026-10-05\n---\n${caseText}`)
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft", undefined, [attachment])
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+    contextPaths: [attachment],
+  })
   expect(task.deliverableParserVersion).toBe(3)
   expect(task.deliverable).toMatchObject({
     scope: "PART 2",
@@ -511,9 +563,12 @@ it("scopes explicit numeric parts in fresh ordinary/frozen recipes while preserv
   await expect(
     completeTask(root, task.id, await candidate(root, task, true)),
   ).resolves.toHaveProperty("output")
-  const earlier = await createAssignmentTask(root, "CS101", prompt, "outline", undefined, [
-    attachment,
-  ])
+  const earlier = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "outline",
+    contextPaths: [attachment],
+  })
   earlier.deliverableParserVersion = 2
   delete earlier.deliverableScopeVersion
   earlier.deliverable = captureTaskDeliverable(
@@ -524,25 +579,25 @@ it("scopes explicit numeric parts in fresh ordinary/frozen recipes while preserv
     undefined,
     2,
   )
-  const oldRequirements = resolveRequirements(
-    earlier.kind,
-    earlier.assignment?.mode,
-    earlier.sources,
-    earlier.guidance,
-    2,
-    earlier.deliverable,
-  )
+  const oldRequirements = resolveRequirements({
+    kind: earlier.kind,
+    mode: earlier.assignment?.mode,
+    sources: earlier.sources,
+    guidance: earlier.guidance,
+    parserVersion: 2,
+    deliverable: earlier.deliverable,
+  })
   earlier.questions = oldRequirements.questions
   delete earlier.hostExecutionVersion
-  earlier.workflow = workflowForRequirements(
-    earlier.kind,
-    earlier.assignment?.mode,
-    earlier.requirements,
-    earlier.questions,
-    oldRequirements.guidanceInstructions,
-    3,
-    earlier.deliverable,
-  )
+  earlier.workflow = workflowForRequirements({
+    kind: earlier.kind,
+    mode: earlier.assignment?.mode,
+    sections: earlier.requirements,
+    questions: earlier.questions,
+    guidanceInstructions: oldRequirements.guidanceInstructions,
+    version: 3,
+    deliverable: earlier.deliverable,
+  })
   const earlierPath = join(root, "_meta/tasks", earlier.id, "task.json")
   const earlierBytes = JSON.stringify(earlier)
   await writeFile(earlierPath, earlierBytes)
@@ -590,7 +645,12 @@ it("does not treat numeric prose references as section boundaries or guess missi
   ]) {
     await writeFile(join(root, attachment), text)
     await expect(
-      createAssignmentTask(root, "CS101", prompt, "draft", undefined, [attachment]),
+      createAssignmentTask(root, {
+        courseQuery: "CS101",
+        sourcePath: prompt,
+        mode: "draft",
+        contextPaths: [attachment],
+      }),
     ).rejects.toThrow(/named part has no detected deliverable/)
   }
   await writeFile(
@@ -598,14 +658,24 @@ it("does not treat numeric prose references as section boundaries or guess missi
     "Required: PART 2: 1. Explain costs. PART 2: 1. Recommend a test.",
   )
   await expect(
-    createAssignmentTask(root, "CS101", prompt, "draft", undefined, [attachment]),
+    createAssignmentTask(root, {
+      courseQuery: "CS101",
+      sourcePath: prompt,
+      mode: "draft",
+      contextPaths: [attachment],
+    }),
   ).rejects.toThrow(/boundaries are ambiguous/)
   await writeFile(
     join(root, attachment),
     "Required: PART 1: 1. Explain costs. PART 2: 1. Recommend a test.",
   )
   await writeFile(join(root, prompt), "Complete Part 1 and Part 2.")
-  const task = await createAssignmentTask(root, "CS101", prompt, "outline", undefined, [attachment])
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "outline",
+    contextPaths: [attachment],
+  })
   expect(task.deliverable).not.toHaveProperty("scope")
   expect(task.deliverable).toMatchObject({
     items: [

@@ -196,8 +196,122 @@ async function readPendingTaskPaths(root: string, notices: NoticeCollector) {
   return pendingTasks
 }
 
-/** Read a School Agent style workspace without changing it or following links. */
-export async function inspectWorkspace(vault: string): Promise<WorkspaceContext> {
+type WorkspaceOptions = { course?: string; includePendingTasks?: boolean }
+
+type CourseIdentity = {
+  code: string
+  root: string
+  title: string
+  canvasId?: string
+  canvasCode?: string
+  mapping?: { id: string; name: string; code?: string; syncNamespace?: "Canvas Agent" }
+}
+
+async function discoverCourseIdentity(
+  vault: string,
+  root: string,
+  name: string,
+  mapping?: CourseIdentity["mapping"],
+): Promise<CourseIdentity> {
+  if (mapping) {
+    const identity: CourseIdentity = {
+      code: name,
+      root: name,
+      title: mapping.name,
+      canvasId: mapping.id,
+      mapping,
+    }
+    if (mapping.code) identity.canvasCode = mapping.code
+    return identity
+  }
+  const relativeRoot = relative(vault, join(vault, name)).split(sep).join("/")
+  let title = name
+  let canvasId: string | undefined
+  let canvasCode: string | undefined
+  const indexPath = join(root, name, "_index.md")
+  try {
+    await assertNoSymlinks(indexPath)
+    const stat = await lstat(indexPath)
+    if (stat.isFile() && stat.size <= 256_000) {
+      const entry = {
+        path: `${relativeRoot}/_index.md`,
+        absolute: indexPath,
+        name: "_index.md",
+        parent: name,
+      }
+      const parsed = await readDocument(entry, [])
+      if (parsed && !isRestricted(parsed.data))
+        title = stringValue(parsed.data.course_title) ?? headingTitle(parsed.content) ?? title
+    }
+  } catch {
+    /* Unavailable metadata contributes no aliases. */
+  }
+  const homePath = join(root, name, "00 Home.md")
+  try {
+    await assertNoSymlinks(homePath)
+    const stat = await lstat(homePath)
+    if (stat.isFile() && stat.size <= 256_000) {
+      const entry = {
+        path: `${relativeRoot}/00 Home.md`,
+        absolute: homePath,
+        name: "00 Home.md",
+        parent: name,
+      }
+      const parsed = await readDocument(entry, [])
+      if (parsed && !isRestricted(parsed.data)) {
+        const home = toSource(entry, parsed)
+        canvasId = home.canvasUrl?.match(/\/courses\/(\d+)\/?(?:[?#].*)?$/)?.[1]
+        canvasCode = home.text
+          .match(/^\s*(?:\*\*Course:\*\*|Course code:)\s*([^\r\n]+)/m)?.[1]
+          ?.trim()
+        if (title === name) title = headingTitle(home.text) ?? title
+      }
+    }
+  } catch {
+    /* Unavailable or restricted metadata contributes no aliases. */
+  }
+  return {
+    code: name,
+    root: name,
+    title,
+    ...(canvasId ? { canvasId } : {}),
+    ...(canvasCode ? { canvasCode } : {}),
+  }
+}
+
+function resolveCourseAlias<T extends { canvasId?: string }>(
+  items: T[],
+  query: string,
+  aliases: (item: T) => string[],
+  label: (item: T) => string,
+): T {
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) throw new Error("Course query must not be empty")
+  const exact = items.filter((item) =>
+    aliases(item).some((value) => value.toLocaleLowerCase() === needle),
+  )
+  const matches = exact.length
+    ? exact
+    : /^\d+$/.test(needle)
+      ? []
+      : items.filter((item) =>
+          aliases(item)
+            .filter((value) => value !== item.canvasId)
+            .some((value) => value.toLocaleLowerCase().includes(needle)),
+        )
+  if (!matches.length) throw new Error(`No course matches "${query}"`)
+  if (matches.length > 1)
+    throw new Error(`Course query "${query}" is ambiguous: ${matches.map(label).join(", ")}`)
+  const selected = matches[0]
+  if (!selected) throw new Error(`No course matches "${query}"`)
+  return selected
+}
+
+/** Read one course on demand, or the complete workspace for legacy callers. */
+export async function inspectWorkspace(
+  vault: string,
+  options: WorkspaceOptions = {},
+): Promise<WorkspaceContext> {
   const root = resolve(vault)
   await assertNoSymlinks(root)
   const rootStat = await lstat(root).catch(() => null)
@@ -207,8 +321,38 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
 
   const notices: NoticeCollector = { messages: [], diagnostics: [] }
   const mapped = await readCourseMappings(root, notices)
-  const courses = await readWorkspaceCourses(root, mapped, notices)
-  const pendingTasks = await readPendingTaskPaths(root, notices)
+  let courses: CourseContext[]
+  if (options.course !== undefined) {
+    const children = await readdir(root, { withFileTypes: true })
+    const names = children
+      .filter((child) => !child.isSymbolicLink() && child.isDirectory())
+      .map((child) => child.name)
+      .filter((name) => courseCodePattern.test(name) || mapped.has(name))
+      .sort()
+    const candidates = await Promise.all(
+      names.map((name) => discoverCourseIdentity(root, root, name, mapped.get(name))),
+    )
+    const selected = resolveCourseAlias(
+      candidates,
+      options.course,
+      courseAliases,
+      (course) => course.code,
+    )
+    const mapping = selected.mapping
+    const ownership = mapping?.syncNamespace ? await readPreservedOwnership(root) : undefined
+    const course = await inspectCourse(root, selected.root, notices, ownership)
+    if (mapping) {
+      course.canvasId = mapping.id
+      course.canvasCode = mapping.code
+      course.title = mapping.name
+      if (mapping.syncNamespace) course.syncNamespace = mapping.syncNamespace
+    }
+    courses = [course]
+  } else {
+    courses = await readWorkspaceCourses(root, mapped, notices)
+  }
+  const includePendingTasks = options.includePendingTasks ?? options.course === undefined
+  const pendingTasks = includePendingTasks ? await readPendingTaskPaths(root, notices) : []
   return {
     version: 1,
     vault: root,
@@ -220,34 +364,12 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
 }
 
 export function selectCourse(context: WorkspaceContext, query: string): CourseContext {
-  const needle = query.trim().toLocaleLowerCase()
-  if (!needle) throw new Error("Course query must not be empty")
-  const matches = context.courses.filter((course) =>
-    courseAliases(course).some((value) => value.toLocaleLowerCase() === needle),
-  )
-  const partial =
-    matches.length > 0
-      ? matches
-      : /^\d+$/.test(needle)
-        ? []
-        : context.courses.filter((course) =>
-            // Numeric Canvas IDs are exact identities, never substring matches.
-            courseAliases(course)
-              .filter((value) => value !== course.canvasId)
-              .some((value) => value.toLocaleLowerCase().includes(needle)),
-          )
-  if (partial.length === 0) throw new Error(`No course matches "${query}"`)
-  if (partial.length > 1) {
-    throw new Error(
-      `Course query "${query}" is ambiguous: ${partial.map((course) => course.code).join(", ")}`,
-    )
-  }
-  const course = partial[0]
-  if (!course) throw new Error(`No course matches "${query}"`)
-  return course
+  return resolveCourseAlias(context.courses, query, courseAliases, (course) => course.code)
 }
 
-function courseAliases(course: CourseContext): string[] {
+function courseAliases(
+  course: Pick<CourseContext, "code" | "root" | "title" | "canvasId" | "canvasCode">,
+): string[] {
   const title =
     course.canvasCode && course.title.startsWith(`${course.canvasCode} - `)
       ? course.title.slice(course.canvasCode.length + 3)

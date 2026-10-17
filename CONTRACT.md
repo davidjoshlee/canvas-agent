@@ -31,8 +31,11 @@ providers, enforce academic policy or certify correctness.
 - Revisions preserve earlier artifacts and explicit edits; approval requires
   student direction and saves a versioned local Final.
 - The coding harness owns reasoning, calculations, artifact creation and substantive
-  review. New tasks do not execute arithmetic or generate workbooks. Older saved
-  calculation records and workbook recipes retain compatibility readers.
+  review. New prep tasks have no lexical word gate; previously saved flagged
+  workflows keep their captured requirements. New tasks do not execute arithmetic,
+  recalculate XLSX formulas or generate workbooks. Spreadsheet checks identify
+  coordinates and formulas for host review. Older calculation records and workbook
+  recipes retain compatibility readers.
 - Existing persisted task recipes remain readable and authoritative. Removing
   an import command does not authorize rewriting old records or course files.
 
@@ -48,6 +51,7 @@ providers, enforce academic policy or certify correctness.
   or verifying billing.
 - Private external Git history is opt-in and local-only. Backup failure must not
   change the primary command outcome or silently repair/delete a held store.
+  History scans stream bounded files, with 50 MiB per file and 1 GiB aggregate.
 - Reading copies are explicitly one-way. They are not another authoritative vault.
 
 ## Product boundaries

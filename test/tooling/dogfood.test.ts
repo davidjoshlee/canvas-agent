@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -47,7 +48,7 @@ function flows(
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
-describe("resumable ten-flow dogfood core", () => {
+describe("versioned resumable dogfood core", () => {
   it("discovers scoped checkpoints without private evidence, lock mutation or implied running jobs", async () => {
     const { root, journal, directory } = await fixture()
     const concrete = flows([])
@@ -109,9 +110,10 @@ describe("resumable ten-flow dogfood core", () => {
     expect(calls).toEqual([...dogfoodFlowNames])
     expect(result.flows.every((flow) => flow.status === "pass")).toBe(true)
     const initial = await readFile(join(directory, "000000.json"), "utf8")
-    expect((await readdir(directory)).length).toBe(11)
+    expect(result.version).toBe(2)
+    expect((await readdir(directory)).length).toBe(10)
     expect(await runDogfood(root, journal.id, target, concrete)).toEqual(result)
-    expect(calls.length).toBe(10)
+    expect(calls.length).toBe(9)
     expect(validated).toEqual([...dogfoodFlowNames])
     expect(await readFile(join(directory, "000000.json"), "utf8")).toBe(initial)
   })
@@ -139,7 +141,7 @@ describe("resumable ten-flow dogfood core", () => {
       }
       expect((await runDogfood(root, journal.id, target, concrete)).flows).toHaveLength(4)
       finished = true
-      expect((await runDogfood(root, journal.id, target, concrete)).flows).toHaveLength(10)
+      expect((await runDogfood(root, journal.id, target, concrete)).flows).toHaveLength(9)
       expect(calls.filter((name) => name === "sync")).toHaveLength(1)
       expect(calls.filter((name) => name === "prep brief")).toHaveLength(2)
     },
@@ -196,8 +198,63 @@ describe("resumable ten-flow dogfood core", () => {
     await symlink(outside, path)
     await expect(readDogfood(root, other.id)).rejects.toThrow(/symbolic links/i)
     await expect(runDogfood(root, journal.id, target, flows([]).slice(1))).rejects.toThrow(
-      /ten ordered/,
+      /nine ordered/,
     )
+  })
+
+  it("reads and resumes version 1 journals with their legacy cost checkpoint", async () => {
+    const { root, journal, directory } = await fixture()
+    const old = { ...journal, version: 1 }
+    const payload = JSON.stringify(old)
+    await writeFile(
+      join(directory, "000000.json"),
+      JSON.stringify({ payload, hash: createHash("sha256").update(payload).digest("hex") }),
+    )
+    const concrete = flows([])
+    const resumed = await runDogfood(root, journal.id, target, concrete)
+    expect(resumed.version).toBe(1)
+    expect(resumed.flows).toHaveLength(10)
+    expect(resumed.flows.at(-1)).toMatchObject({
+      name: "cost report",
+      status: "skipped",
+      data: { owner: "host" },
+    })
+    const oldCostPath = join(directory, "000010.json")
+    const exportPath = join(root, "historical-export.json")
+    await writeFile(exportPath, "Preserved historical export bytes")
+    const historical = {
+      ...resumed,
+      flows: [
+        ...resumed.flows.slice(0, -1),
+        {
+          name: "cost report" as const,
+          status: "pass" as const,
+          evidence: "Historical export report",
+          nextSteps: "",
+          data: { exportFile: exportPath, exportHash: "old-hash", totalCostUsd: "1.00" },
+        },
+      ],
+    }
+    const historicalPayload = JSON.stringify(historical)
+    await writeFile(
+      oldCostPath,
+      JSON.stringify({
+        payload: historicalPayload,
+        hash: createHash("sha256").update(historicalPayload).digest("hex"),
+      }),
+    )
+    const historicalCostCheckpoint = await readFile(oldCostPath)
+    expect((await readDogfood(root, journal.id)).flows.at(-1)?.data.totalCostUsd).toBe("1.00")
+    const updated = await runDogfood(root, journal.id, target, concrete)
+    expect(updated.id).toBe(journal.id)
+    expect(updated.flows.at(-1)).toMatchObject({
+      name: "cost report",
+      status: "skipped",
+      data: { owner: "host" },
+    })
+    expect(await readFile(oldCostPath)).toEqual(historicalCostCheckpoint)
+    expect(await readFile(exportPath, "utf8")).toBe("Preserved historical export bytes")
+    expect((await readDogfood(root, journal.id)).id).toBe(journal.id)
   })
 })
 

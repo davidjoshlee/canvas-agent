@@ -724,20 +724,32 @@ export function hasPrepMaterial(course: CourseContext, sources: SourceRecord[]):
   )
 }
 
+export interface SelectAssignmentInputsOptions {
+  course: CourseContext
+  sourcePath: string
+  workPath?: string
+  contextPaths?: string[]
+  revisionSource?: SourceRecord
+  guidanceSelectionVersion?: 1
+}
+
 export async function selectAssignmentInputs(
   vault: string,
-  course: CourseContext,
-  sourcePath: string,
-  workPath?: string,
-  contextPaths: string[] = [],
-  revisionSource?: SourceRecord,
-  guidanceSelectionVersion?: 1,
+  options: SelectAssignmentInputsOptions,
 ): Promise<{
   sources: SourceRecord[]
   guidance: SourceRecord[]
   context: string[]
   excluded: CourseContext["excluded"]
 }> {
+  const {
+    course,
+    sourcePath,
+    workPath,
+    contextPaths = [],
+    revisionSource,
+    guidanceSelectionVersion,
+  } = options
   const prompt = await explicitSource(course, vault, sourcePath)
   const uniqueContext = [...new Set(contextPaths.map(relPath))].filter(
     (path) => path !== prompt.path && path !== workPath,
@@ -863,17 +875,18 @@ export async function deriveCurrentTaskInputs(
   if (task.kind === "assignment") {
     const assignment = task.assignment
     if (!assignment) throw new Error("Assignment task metadata is missing")
-    return selectAssignmentInputs(
-      vault,
+    return selectAssignmentInputs(vault, {
       course,
-      assignment.source,
-      assignment.work,
-      assignment.context,
-      task.parentTaskId
-        ? task.sources.find((source) => source.path === assignment.work)
-        : undefined,
-      task.guidanceSelectionVersion,
-    )
+      sourcePath: assignment.source,
+      ...(assignment.work ? { workPath: assignment.work } : {}),
+      contextPaths: assignment.context,
+      ...(task.parentTaskId
+        ? { revisionSource: task.sources.find((source) => source.path === assignment.work) }
+        : {}),
+      ...(task.guidanceSelectionVersion
+        ? { guidanceSelectionVersion: task.guidanceSelectionVersion }
+        : {}),
+    })
   }
   const period =
     task.period ?? (task.week ? { kind: "week" as const, value: task.week } : undefined)

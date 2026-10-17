@@ -41,7 +41,3 @@ export function prepareAnswerEvidence(sources: SourceRecord[]) {
     }
   }
 }
-
-export function validateAnswerEvidence(question: string, answer: string, sources: SourceRecord[]) {
-  return prepareAnswerEvidence(sources)(question, answer)
-}

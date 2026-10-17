@@ -176,7 +176,12 @@ it("carries ingested HTML numbered requirements into a source-bound assignment w
     if (!ingested.text) throw new Error("Expected structured extraction")
     const text = await readFile(ingested.text, "utf8")
     const path = ingested.text.replace(`${vault}/`, "")
-    const task = await createAssignmentTask(vault, "CS101", prompt, "outline", undefined, [path])
+    const task = await createAssignmentTask(vault, {
+      courseQuery: "CS101",
+      sourcePath: prompt,
+      mode: "outline",
+      contextPaths: [path],
+    })
     expect(task.deliverable).toMatchObject({
       sourcePath: path,
       items: [{ text: "Explain the framework." }, { text: "Compare the evidence." }],
@@ -281,17 +286,17 @@ describe("bounded document extraction", () => {
         '<workbook><sheets><sheet name="Results &amp; checks" sheetId="7" r:id="rB"/><sheet name="Assumptions" sheetId="3" r:id="rA"/></sheets></workbook>',
       "xl/_rels/workbook.xml.rels":
         '<Relationships><Relationship Id="rA" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rB" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="/xl/worksheets/sheet2.xml"/></Relationships>',
-      "xl/worksheets/sheet1.xml": "<row><c><v>10</v></c></row>",
-      "xl/worksheets/sheet2.xml": "<row><c><v>42</v></c></row>",
+      "xl/worksheets/sheet1.xml": '<row r="1"><c r="A1"><v>10</v></c></row>',
+      "xl/worksheets/sheet2.xml": '<row r="1"><c r="A1"><v>42</v></c></row>',
     }
     const bytes = await archive(files)
     expect((await extractText({ bytes, filename: "named.xlsx" })).text).toBe(
-      "## Results & checks\n42\n\n## Assumptions\n10",
+      "## Results & checks\nRow 1: A1: 42\n\n## Assumptions\nRow 1: A1: 10",
     )
     const { "xl/_rels/workbook.xml.rels": _rels, ...missing } = files
     const unbound = await extractText({ bytes: await archive(missing), filename: "unbound.xlsx" })
     expect(unbound.text).toBe(
-      "## Workbook tabs without worksheet mapping\n- Results & checks\n- Assumptions\n\n## Sheet 1\n10\n\n## Sheet 2\n42",
+      "## Workbook tabs without worksheet mapping\n- Results & checks\n- Assumptions\n\n## Sheet 1\nRow 1: A1: 10\n\n## Sheet 2\nRow 1: A1: 42",
     )
     expect(unbound.notice).toBeUndefined()
     expect(
@@ -320,6 +325,28 @@ describe("bounded document extraction", () => {
       expect(result.notice).toMatch(/workbook/i)
       expect(JSON.stringify(result)).not.toContain("DO_NOT_ECHO")
     }
+  })
+  it("preserves XLSX cell gaps, formulas without cached values, escaped text, and worksheet identity", async () => {
+    const common = {
+      "xl/workbook.xml":
+        '<workbook><sheets><sheet name="Forecast" sheetId="1" r:id="r1"/><sheet name="Actuals" sheetId="2" r:id="r2"/></sheets></workbook>',
+      "xl/_rels/workbook.xml.rels":
+        '<Relationships><Relationship Id="r1" Type="x/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="r2" Type="x/worksheet" Target="worksheets/sheet2.xml"/></Relationships>',
+      "xl/sharedStrings.xml": "<sst><si><t>Revenue &amp; margin</t></si></sst>",
+    }
+    const bytes = await archive({
+      ...common,
+      "xl/worksheets/sheet1.xml":
+        '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1"/><c r="C1"><v>100</v></c></row><row r="2"><c r="B2"><f>SUM(A1:C1)&amp;1</f></c></row><row r="3"><c r="A3"><f t="shared" si="0"/></c><c r="B3"><f t="shared" si="0"/><v>100</v></c></row></sheetData></worksheet>',
+      "xl/worksheets/sheet2.xml":
+        '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Left&#9;middle&#10;right&#13;end &amp; margin</t></is></c><c r="B1"><v>100</v></c></row></sheetData></worksheet>',
+    })
+    const text = (await extractText({ bytes, filename: "coordinates.xlsx" })).text ?? ""
+    expect(text).toContain(
+      "## Forecast\nRow 1: A1: Revenue & margin | B1: [blank] | C1: 100\nRow 2: B2: =SUM(A1:C1)&1 [no cached value]\nRow 3: A3: shared formula (index 0); not expanded [no cached value] | B3: shared formula (index 0); not expanded [cached value: 100]",
+    )
+    expect(text).toContain("## Actuals\nRow 1: A1: Left middle right end & margin | B1: 100")
+    expect(text).not.toContain("B2: 1")
   })
   it("recognizes Office MIME types without filename extensions and reports legacy containers without inventing text", async () => {
     const fixtures = [

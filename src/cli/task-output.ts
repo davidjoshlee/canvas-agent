@@ -1,5 +1,4 @@
 import { readSavedSimulationOutput } from "../simulation/tasks.js"
-import { inspectTaskBundle } from "../tasks/artifacts/bundles.js"
 import { checkArtifactPrivacy, readSavedCompletedOutput } from "../tasks/artifacts/completion.js"
 import { type TaskScope, taskLocations } from "../tasks/artifacts/locations.js"
 
@@ -28,7 +27,7 @@ export async function readTaskOutput(config: string, vault: string, id: string, 
     state: scope === "ordinary" ? "completed" : "completed-pending-human",
     outputHash: task.outputHash ?? frozen?.record.completion.outputHash,
     outputIntegrityVerified: true,
-    ...(scope === "ordinary" ? { bundle: (await inspectTaskBundle(vault, task.id)) ?? null } : {}),
+    ...(scope === "ordinary" ? { bundle: saved?.bundle ?? null } : {}),
     text,
     sourceCurrentnessVerified: false,
     academicCorrectnessVerified: false,

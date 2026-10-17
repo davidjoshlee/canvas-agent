@@ -234,7 +234,7 @@ export async function proposeGuidance(
   course: CourseContext,
   options: { feedbackAssignments?: string[] } = {},
 ): Promise<GuidanceProposal> {
-  const freshContext = await inspectWorkspace(vault)
+  const freshContext = await inspectWorkspace(vault, { course: course.code })
   const selectedCourse = freshContext.courses.find(
     (candidate) => candidate.code === course.code && candidate.root === course.root,
   )
@@ -446,7 +446,7 @@ export async function saveGuidanceProposal(
   if (!candidate.trim()) throw new Error("Candidate is empty")
   const metadataPath = await safeVaultPath(vault, `_meta/guidance-proposals/${id}/proposal.json`)
   const metadata = await readGuidanceProposalRecord(vault, id)
-  const workspace = await inspectWorkspace(vault)
+  const workspace = await inspectWorkspace(vault, { course: metadata.course })
   const course = workspace.courses.find((row) => row.code === metadata.course)
   if (!course) throw new Error("Proposal course no longer exists in the workspace")
   if (metadata.proposalFeedbackVersion) {

@@ -324,7 +324,7 @@ export async function inspectDogfoodSweep(vault: string, query: string, id: stri
       nextSteps: last?.nextSteps ?? "",
       flowsRecorded: run.flows.length,
       recordedComplete:
-        run.flows.length === 10 &&
+        run.flows.length === (run.version === 1 ? 10 : 9) &&
         run.flows.every((flow) => ["pass", "skipped"].includes(flow.status)),
     })
   }

@@ -224,3 +224,18 @@ export async function bundleFileLocations(vault: string, id: string, record: Bun
     }),
   )
 }
+
+export async function verifiedBundleSummary(vault: string, id: string, record: BundleRecord) {
+  return {
+    taskId: id,
+    path: bundleRecordPath(id),
+    hash: record.hash,
+    manifestHash: record.manifestHash,
+    primary: record.primary,
+    files: await bundleFileLocations(vault, id, record),
+    executions: record.executions ?? [],
+    checks: record.checks ?? [],
+    integrity: "verified" as const,
+    reportedBy: "coding-harness" as const,
+  }
+}

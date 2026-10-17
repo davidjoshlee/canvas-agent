@@ -33,7 +33,11 @@ it("creates one bound starter, captures it in subsequent tasks, and never replac
   })
   const file = join(root, result.paths[0] ?? "")
   expect(await readFile(file, "utf8")).toContain("not instructor policy or permission")
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft")
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+  })
   expect(task.guidance.map((source) => source.path)).toContain(result.paths[0])
   await writeFile(file, "Student-owned goals and voice; preserve exactly.\n")
   expect(await initializeAssignmentGuidance(root, "CS101", prompt)).toMatchObject({

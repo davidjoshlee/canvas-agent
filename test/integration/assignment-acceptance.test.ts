@@ -88,20 +88,25 @@ describe("compiled assignment handoffs", () => {
       const shown = cli(["task", "show", handoff.id, "--config", config, "--json"])
       expect(shown.status).toBe(0)
       const task = JSON.parse(shown.stdout)
-      const requirements = resolveRequirements("assignment", mode, task.sources, task.guidance)
+      const requirements = resolveRequirements({
+        kind: "assignment",
+        mode: mode,
+        sources: task.sources,
+        guidance: task.guidance,
+      })
       expect(task.workflow).toEqual(
-        workflowForRequirements(
-          "assignment",
-          mode,
-          requirements.sections,
-          requirements.questions,
-          requirements.guidanceInstructions,
-          3,
-          task.deliverable,
-          task.assignmentStructureVersion,
-          task.answerEvidenceVersion,
-          task.hostExecutionVersion,
-        ),
+        workflowForRequirements({
+          kind: "assignment",
+          mode: mode,
+          sections: requirements.sections,
+          questions: requirements.questions,
+          guidanceInstructions: requirements.guidanceInstructions,
+          version: 3,
+          deliverable: task.deliverable,
+          assignmentStructureVersion: task.assignmentStructureVersion,
+          answerEvidenceVersion: task.answerEvidenceVersion,
+          hostExecutionVersion: task.hostExecutionVersion,
+        }),
       )
       expect(task.sources.map((source: { path: string }) => source.path)).toEqual(
         expect.arrayContaining([prompt, context, work]),

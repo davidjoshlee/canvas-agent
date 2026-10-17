@@ -53,19 +53,20 @@ function block(text, file, open = start, close = end) {
 function renderWorkflowBlock(mode, full) {
   const kind = mode === "prep" ? "prep" : "assignment"
   const assignmentMode = mode === "prep" ? undefined : mode
-  const requirements = resolveRequirements(kind, assignmentMode, [], [])
-  const workflow = workflowForRequirements(
+  const requirements = resolveRequirements({
     kind,
-    assignmentMode,
-    requirements.sections,
-    [],
-    [],
-    3,
-    undefined,
-    undefined,
-    undefined,
-    1,
-  )
+    mode: assignmentMode,
+    sources: [],
+    guidance: [],
+  })
+  const workflow = workflowForRequirements({
+    kind,
+    mode: assignmentMode,
+    sections: requirements.sections,
+    questions: [],
+    version: 3,
+    hostExecutionVersion: 1,
+  })
   return [
     `<!-- canvas-agent-workflow:${mode}:start -->`,
     `### ${mode === "prep" ? "Prep" : `Assignment ${mode}`} outcome`,

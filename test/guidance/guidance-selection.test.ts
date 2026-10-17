@@ -132,7 +132,11 @@ async function candidate(root: string, task: TaskRecord) {
 
 it("selects only common and matching assignment guidance, keeping another assignment's suppression out", async () => {
   const root = await fixture()
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft")
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+  })
   expect(task.guidanceSelectionVersion).toBe(1)
   expect(task.guidance.map((source) => source.path)).toEqual([commonGuide, ownGuide])
   expect(task.guidance.find((source) => source.path === ownGuide)).toMatchObject({
@@ -158,9 +162,18 @@ it("selects only common and matching assignment guidance, keeping another assign
 it("refuses explicit wrong-task guidance, conflicting identities and modified captured identities", async () => {
   const root = await fixture()
   await expect(
-    createAssignmentTask(root, "CS101", prompt, "draft", undefined, [otherGuide]),
+    createAssignmentTask(root, {
+      courseQuery: "CS101",
+      sourcePath: prompt,
+      mode: "draft",
+      contextPaths: [otherGuide],
+    }),
   ).rejects.toThrow(/bound to another assignment/)
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft")
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+  })
   const path = join(root, "_meta/tasks", task.id, "task.json")
   const changed = JSON.parse(await readFile(path, "utf8"))
   const guide = changed.guidance.find((source: { path: string }) => source.path === ownGuide)
@@ -216,7 +229,11 @@ it("does not bypass an excluded matching assignment policy while unrelated restr
       "type: guidance\nai_policy: prohibited",
     ),
   )
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft")
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+  })
   expect(task.guidance.map((source) => source.path)).not.toContain(otherGuide)
   await writeFile(
     join(root, ownGuide),
@@ -225,9 +242,9 @@ it("does not bypass an excluded matching assignment policy while unrelated restr
       "Restricted matching guide; never replace policy with a permissive placeholder.",
     ).replace("type: guidance", "type: guidance\nai_policy: prohibited"),
   )
-  await expect(createAssignmentTask(root, "CS101", prompt, "draft")).rejects.toThrow(
-    /excluded by policy/,
-  )
+  await expect(
+    createAssignmentTask(root, { courseQuery: "CS101", sourcePath: prompt, mode: "draft" }),
+  ).rejects.toThrow(/excluded by policy/)
   await expect(completeTask(root, task.id, await candidate(root, task))).rejects.toThrow(
     /excluded by policy/,
   )
@@ -253,7 +270,11 @@ it("stops prep and course proposals on excluded common guidance instead of treat
 
 it("preserves an earlier unversioned selection recipe rather than retroactively dropping its guidance", async () => {
   const root = await fixture()
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft")
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+  })
   // A coherent old-selection fixture must capture the old fields/instructions,
   // including the former suppression from another assignment; it is not a
   // statement that this earlier selection is academically correct.
@@ -274,25 +295,25 @@ it("preserves an earlier unversioned selection recipe rather than retroactively 
     task.guidance,
     task.deliverableScopeVersion,
   )
-  const req = resolveRequirements(
-    task.kind,
-    task.assignment?.mode,
-    task.sources,
-    task.guidance,
-    2,
-    task.deliverable,
-  )
+  const req = resolveRequirements({
+    kind: task.kind,
+    mode: task.assignment?.mode,
+    sources: task.sources,
+    guidance: task.guidance,
+    parserVersion: 2,
+    deliverable: task.deliverable,
+  })
   task.questions = req.questions
   delete task.hostExecutionVersion
-  task.workflow = workflowForRequirements(
-    task.kind,
-    task.assignment?.mode,
-    task.requirements,
-    req.questions,
-    req.guidanceInstructions,
-    3,
-    task.deliverable,
-  )
+  task.workflow = workflowForRequirements({
+    kind: task.kind,
+    mode: task.assignment?.mode,
+    sections: task.requirements,
+    questions: req.questions,
+    guidanceInstructions: req.guidanceInstructions,
+    version: 3,
+    deliverable: task.deliverable,
+  })
   const path = join(root, "_meta/tasks", task.id, "task.json")
   const bytes = JSON.stringify(task)
   await writeFile(path, bytes)
@@ -509,7 +530,11 @@ it("honors a matching assignment's declared headings without inheriting prep str
     join(root, commonGuide),
     "## Brief structure\n- Prep overview\n- Prep concepts\n## Permission\nSynthetic course explicitly permits AI assistance.\n",
   )
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft")
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+  })
   expect(task.assignmentStructureVersion).toBe(1)
   expect(task.requirements).toEqual(["Analysis", "Computations", "Limitations", "Sources"])
   expect(task.workflow?.instructions.join(" ")).toContain("clearly label missing evidence or scope")
@@ -523,7 +548,11 @@ it("honors a matching assignment's declared headings without inheriting prep str
   )
   const prep = await createPrepTask(root, "CS101", "2026-10-05")
   expect(prep.requirements).toEqual(["Prep overview", "Prep concepts", "Sources"])
-  const outline = await createAssignmentTask(root, "CS101", prompt, "outline")
+  const outline = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "outline",
+  })
   expect(outline.assignmentStructureVersion).toBeUndefined()
   expect(outline.requirements).toContain("Outline")
 })
@@ -560,31 +589,35 @@ it("pins frozen custom structure to captured guide text despite later live edits
 it("refuses conflicting declarations and keeps an older default-structure draft recipe unchanged", async () => {
   const root = await fixture()
   await writeFile(join(root, ownGuide), body("50", customFormat))
-  const task = await createAssignmentTask(root, "CS101", prompt, "draft")
+  const task = await createAssignmentTask(root, {
+    courseQuery: "CS101",
+    sourcePath: prompt,
+    mode: "draft",
+  })
   // Synthetic pre-structure recipe with the same captured guide; no real task
   // is edited, redirected or certified as historically well-selected.
   delete task.assignmentStructureVersion
   const { resolveRequirements } = await import("../../src/tasks/authoring/requirements.js")
   const { workflowForRequirements } = await import("../../src/tasks/authoring/workflows.js")
-  const old = resolveRequirements(
-    task.kind,
-    task.assignment?.mode,
-    task.sources,
-    task.guidance,
-    2,
-    task.deliverable,
-  )
+  const old = resolveRequirements({
+    kind: task.kind,
+    mode: task.assignment?.mode,
+    sources: task.sources,
+    guidance: task.guidance,
+    parserVersion: 2,
+    deliverable: task.deliverable,
+  })
   task.requirements = old.sections
   delete task.hostExecutionVersion
-  task.workflow = workflowForRequirements(
-    task.kind,
-    task.assignment?.mode,
-    old.sections,
-    old.questions,
-    old.guidanceInstructions,
-    3,
-    task.deliverable,
-  )
+  task.workflow = workflowForRequirements({
+    kind: task.kind,
+    mode: task.assignment?.mode,
+    sections: old.sections,
+    questions: old.questions,
+    guidanceInstructions: old.guidanceInstructions,
+    version: 3,
+    deliverable: task.deliverable,
+  })
   const path = join(root, "_meta/tasks", task.id, "task.json")
   const bytes = JSON.stringify(task)
   await writeFile(path, bytes)
@@ -595,7 +628,7 @@ it("refuses conflicting declarations and keeps an older default-structure draft 
     join(root, "CS101/guidance/assignment-50.md"),
     "## Brief structure\n- Conflicting structure\n",
   )
-  await expect(createAssignmentTask(root, "CS101", prompt, "draft")).rejects.toThrow(
-    /conflicting output structures/,
-  )
+  await expect(
+    createAssignmentTask(root, { courseQuery: "CS101", sourcePath: prompt, mode: "draft" }),
+  ).rejects.toThrow(/conflicting output structures/)
 })

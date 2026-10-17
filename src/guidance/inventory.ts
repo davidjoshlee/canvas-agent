@@ -47,7 +47,7 @@ export async function showGuidanceProposal(vault: string, id: string) {
 
 export async function listGuidanceProposals(vault: string, query: string) {
   const root = await rootPath(vault)
-  const course = selectCourse(await inspectWorkspace(root), query)
+  const course = selectCourse(await inspectWorkspace(root, { course: query }), query)
   const directory = join(root, "_meta/guidance-proposals")
   await assertNoSymlinks(directory, true)
   const entries = await readdir(directory, { withFileTypes: true }).catch((error: unknown) => {

@@ -163,38 +163,3 @@ export function renderPortableDocument(input: PortableDocumentInput): PortableDo
     throw new Error("Portable context exceeds the 1 MB limit")
   return { markdown, context }
 }
-
-/** Module roots must contain only a title followed by typed item lines, so no
- * inline metadata/comments can be appended without breaking School retrieval.
- */
-export function portableModuleBody(
-  title: string,
-  items: Array<{ type: string; title: string; canvasId?: string; pageUrl?: string }>,
-): string {
-  if (!title.trim() || /[\r\n\0]/.test(title) || title.length > 4096 || items.length > 5000)
-    throw new Error("Portable module title/items exceed safe bounds")
-  const lines = items.map((item) => {
-    if (
-      !/^[A-Za-z]+$/.test(item.type) ||
-      !item.title.trim() ||
-      /[\r\n\0]/.test(item.title) ||
-      item.title.length > 4096
-    )
-      throw new Error("Portable module items need safe typed single-line titles")
-    const identity = item.canvasId ?? item.pageUrl
-    if (
-      identity !== undefined &&
-      (!identity || /[\s()\0]/.test(identity) || identity.length > 4096)
-    )
-      throw new Error("Portable module item identity must be a bounded token")
-    return `- ${item.type}: ${item.title}${identity === undefined ? "" : ` (${item.canvasId === undefined ? "page_url" : "canvas_id"}: ${identity})`}`
-  })
-  return `${[title, ...lines].join("\n")}\n`
-}
-
-/** Rehydrate only hash-matching facts. Never merge these into policy metadata. */
-export function readPortableContext(markdown: string, raw: unknown): PortableContext {
-  const context = PortableContextSchema.parse(raw)
-  if (sha(markdown) !== context.hash) throw new Error("Portable document context is stale")
-  return context
-}

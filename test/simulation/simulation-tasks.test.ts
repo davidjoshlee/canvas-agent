@@ -116,22 +116,22 @@ describe("fixed snapshot generation handoffs", () => {
     delete old.task.workbookVersion
     delete old.groupScopeVersion
     delete old.task.groupScopeVersion
-    const requirements = resolveRequirements(
-      old.task.kind,
-      old.task.assignment.mode,
-      old.task.sources,
-      old.task.guidance,
-    )
+    const requirements = resolveRequirements({
+      kind: old.task.kind,
+      mode: old.task.assignment.mode,
+      sources: old.task.sources,
+      guidance: old.task.guidance,
+    })
     delete old.task.hostExecutionVersion
     delete old.hostExecutionVersion
-    old.task.workflow = workflowForRequirements(
-      old.task.kind,
-      old.task.assignment.mode,
-      requirements.sections,
-      requirements.questions,
-      requirements.guidanceInstructions,
-      2,
-    )
+    old.task.workflow = workflowForRequirements({
+      kind: old.task.kind,
+      mode: old.task.assignment.mode,
+      sections: requirements.sections,
+      questions: requirements.questions,
+      guidanceInstructions: requirements.guidanceInstructions,
+      version: 2,
+    })
     const handoffPath = join(root, "_meta/simulations/tasks", created.id, "TASK.md")
     const removed = new Set(
       newInstructions.filter(
@@ -327,22 +327,22 @@ describe("fixed snapshot generation handoffs", () => {
     delete old.task.groupScopeVersion
     old.task.sources = old.task.sources.filter((item: { path: string }) => item.path === source)
     old.task.assignment.context = []
-    const requirements = resolveRequirements(
-      old.task.kind,
-      old.task.assignment.mode,
-      old.task.sources,
-      old.task.guidance,
-    )
+    const requirements = resolveRequirements({
+      kind: old.task.kind,
+      mode: old.task.assignment.mode,
+      sources: old.task.sources,
+      guidance: old.task.guidance,
+    })
     delete old.task.hostExecutionVersion
     delete old.hostExecutionVersion
-    old.task.workflow = workflowForRequirements(
-      old.task.kind,
-      old.task.assignment.mode,
-      requirements.sections,
-      requirements.questions,
-      requirements.guidanceInstructions,
-      2,
-    )
+    old.task.workflow = workflowForRequirements({
+      kind: old.task.kind,
+      mode: old.task.assignment.mode,
+      sections: requirements.sections,
+      questions: requirements.questions,
+      guidanceInstructions: requirements.guidanceInstructions,
+      version: 2,
+    })
     old.task.notices = old.task.notices.filter(
       (notice: string) => !notice.startsWith("Selection recipe v2"),
     )

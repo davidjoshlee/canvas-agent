@@ -125,7 +125,7 @@ export async function executeDogfoodSweep(
         activeTaskId: last?.data.taskId ?? null,
         nextSteps: last?.nextSteps ?? "",
         recordedComplete:
-          result.flows.length === 10 &&
+          result.flows.length === (result.version === 1 ? 10 : 9) &&
           result.flows.every((flow) => ["pass", "skipped"].includes(flow.status)),
       })
     } catch {

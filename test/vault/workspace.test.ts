@@ -375,4 +375,38 @@ describe("workspace inventory", () => {
       reason: "Credential-like file; text omitted",
     })
   })
+
+  it("uses selectCourse alias semantics for scoped discovery and parses quoted Canvas URLs", async () => {
+    const root = await fixture()
+    await put(
+      root,
+      "ACCT340/00 Home.md",
+      "---\ncanvas_url: 'https://canvas.example.edu/courses/99'\n---\n# F26-ACCT-340-01 - Accounting",
+    )
+    await put(root, "ACCT340/notes.md", "Useful notes")
+    await put(root, "FINC320/00 Home.md", "# Finance")
+    await put(root, "FINC320/unreadable.md", "---\nai_policy: prohibited\n---\nsecret")
+
+    for (const query of ["99", "Accounting", "F26-ACCT-340-01"]) {
+      const scoped = await inspectWorkspace(root, { course: query })
+      const course = selectCourse(scoped, query)
+      expect(course.root).toBe("ACCT340")
+      expect(scoped.courses).toHaveLength(1)
+      expect(scoped.notices.some((notice) => notice.includes("FINC320"))).toBe(false)
+    }
+    expect(selectCourse(await inspectWorkspace(root), "Accounting").root).toBe(
+      selectCourse(await inspectWorkspace(root, { course: "Accounting" }), "Accounting").root,
+    )
+  })
+
+  it("rejects ambiguous scoped Canvas IDs", async () => {
+    const root = await fixture()
+    for (const code of ["ACCT340", "ACCT341"])
+      await put(
+        root,
+        `${code}/00 Home.md`,
+        "---\ncanvas_url: 'https://canvas.example.edu/courses/99'\n---\n# Accounting",
+      )
+    await expect(inspectWorkspace(root, { course: "99" })).rejects.toThrow(/ambiguous/)
+  })
 })

@@ -1,8 +1,10 @@
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
+import type { Stats } from "node:fs"
 import { constants } from "node:fs"
 import { lstat, mkdir, open, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import type { Writable } from "node:stream"
 import { z } from "zod"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 
@@ -15,7 +17,9 @@ const State = z
   .strict()
 const objectId = /^[a-f0-9]{40}$/
 const fileLimit = 50 * 1024 * 1024
-const totalLimit = 64 * 1024 * 1024
+// Leaves room for the largest supported task bundle, working files and Finals.
+const totalLimit = 1024 * 1024 * 1024
+const chunkSize = 256 * 1024
 const within = (parent: string, child: string) => {
   const path = relative(parent, child)
   return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`))
@@ -110,7 +114,9 @@ export async function hasVaultHistory(vault: string) {
   }
 }
 
-function git(directory: string, args: string[], input?: Buffer, limit = fileLimit + 1024) {
+type GitInput = Buffer | ((stdin: Writable) => Promise<void>)
+
+function git(directory: string, args: string[], input?: GitInput, limit = fileLimit + 1024) {
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
     SystemRoot: process.env.SystemRoot,
@@ -119,6 +125,62 @@ function git(directory: string, args: string[], input?: Buffer, limit = fileLimi
     GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
     GIT_TERMINAL_PROMPT: "0",
     GIT_NO_LAZY_FETCH: "1",
+  }
+  if (input && !Buffer.isBuffer(input)) {
+    return new Promise<Buffer>((accept, reject) => {
+      const child = spawn(
+        "git",
+        [
+          "--no-replace-objects",
+          `--git-dir=${directory}`,
+          "-c",
+          `core.hooksPath=${join(directory, "disabled-hooks")}`,
+          "-c",
+          "gc.auto=0",
+          "-c",
+          "commit.gpgSign=false",
+          ...args,
+        ],
+        { env, stdio: ["pipe", "pipe", "ignore"] },
+      )
+      const output: Buffer[] = []
+      let outputSize = 0
+      let settled = false
+      const finish = (error?: Error) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        if (error) reject(error)
+        else accept(Buffer.concat(output, outputSize))
+      }
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL")
+        finish(new Error(`Local history Git operation failed: ${args[0]}`))
+      }, 20_000)
+      child.stdout.on("data", (chunk: Buffer) => {
+        outputSize += chunk.length
+        if (outputSize > limit) {
+          child.kill("SIGKILL")
+          finish(new Error(`Local history Git operation failed: ${args[0]}`))
+        } else output.push(chunk)
+      })
+      child.on("error", () => finish(new Error(`Local history Git operation failed: ${args[0]}`)))
+      child.on("close", (code) => {
+        if (code !== 0) finish(new Error(`Local history Git operation failed: ${args[0]}`))
+        else finish()
+      })
+      child.stdin.on("error", () => {})
+      void (async () => {
+        try {
+          await input(child.stdin)
+          child.stdin.end()
+        } catch {
+          // Let Git observe EOF and remove its temporary ref lock before returning.
+          // SIGKILL here could leave the store requiring manual inspection.
+          child.stdin.end()
+        }
+      })()
+    })
   }
   return new Promise<Buffer>((accept, reject) => {
     const child = execFile(
@@ -210,8 +272,78 @@ function safePath(path: string) {
   return path
 }
 
+type InventoryFile = {
+  path: string
+  mode: string
+  size: number
+  oid: string
+  dev: number
+  ino: number
+  mtimeMs: number
+  ctimeMs: number
+}
+
+const credentialPattern =
+  /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._~-]{16,}|(?:api[_-]?key|access[_-]?token|client[_-]?secret|canvas[_-]?token|password)\s*[:=]\s*\S+)/i
+
+function sameInventory(a: InventoryFile[], b: InventoryFile[]) {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+function credentialWindow(overlap: string, bytes: Buffer) {
+  const normalized = `${overlap}${bytes.toString("latin1")}`.replace(/\s+/g, " ")
+  return { matches: credentialPattern.test(normalized), overlap: normalized.slice(-256) }
+}
+
+async function scanFile(path: string, relativePath: string): Promise<InventoryFile> {
+  await assertNoSymlinks(path)
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  try {
+    const before = await file.stat()
+    if (!before.isFile() || before.size > fileLimit)
+      throw new Error("Local history file exceeds bounds (50 MB) or is not regular")
+    const hash = createHash("sha1").update(`blob ${before.size}\0`)
+    let total = 0
+    let overlap = ""
+    const buffer = Buffer.allocUnsafe(chunkSize)
+    while (true) {
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, total)
+      if (!bytesRead) break
+      total += bytesRead
+      hash.update(buffer.subarray(0, bytesRead))
+      const scanned = credentialWindow(overlap, buffer.subarray(0, bytesRead))
+      if (scanned.matches)
+        throw new Error("Local history refuses credential-like content; no snapshot was saved")
+      overlap = scanned.overlap
+    }
+    const after = await file.stat()
+    if (
+      total !== before.size ||
+      after.size !== before.size ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.mode !== before.mode ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs
+    )
+      throw new Error("Local history source changed while reading")
+    return {
+      path: relativePath,
+      mode: before.mode & 0o111 ? "100755" : "100644",
+      size: total,
+      oid: hash.digest("hex"),
+      dev: before.dev,
+      ino: before.ino,
+      mtimeMs: before.mtimeMs,
+      ctimeMs: before.ctimeMs,
+    }
+  } finally {
+    await file.close()
+  }
+}
+
 async function inventory(root: string) {
-  const files: { path: string; bytes: Buffer; mode: string; oid: string }[] = []
+  const files: InventoryFile[] = []
   let total = 0,
     entries = 0
   async function walk(directory: string, prefix = "", depth = 0) {
@@ -233,21 +365,11 @@ async function inventory(root: string) {
         )
       if (item.isDirectory()) await walk(join(directory, item.name), path, depth + 1)
       else {
-        const file = await boundedFile(join(directory, item.name), fileLimit)
-        total += file.bytes.length
+        const file = await scanFile(join(directory, item.name), path)
+        total += file.size
         if (total > totalLimit)
-          throw new Error("Local history inventory exceeds the 64 MB aggregate bound")
-        if (
-          /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._~-]{16,}|(?:api[_-]?key|access[_-]?token|client[_-]?secret|canvas[_-]?token|password)\s*[:=]\s*\S+)/i.test(
-            file.bytes.toString("latin1"),
-          )
-        )
-          throw new Error("Local history refuses credential-like content; no snapshot was saved")
-        const oid = createHash("sha1")
-          .update(`blob ${file.bytes.length}\0`)
-          .update(file.bytes)
-          .digest("hex")
-        files.push({ path, ...file, oid })
+          throw new Error("Local history inventory exceeds the 1 GiB aggregate bound")
+        files.push(file)
       }
     }
   }
@@ -298,29 +420,115 @@ async function snapshot(state: z.infer<typeof State>) {
   if (previous && JSON.stringify(await tree(state, previous)) === JSON.stringify(shape))
     return { enabled: true, changed: false, commit: previous, files: files.length }
   const repeated = await inventory(state.vault)
-  if (
-    JSON.stringify(repeated.map(({ path, mode, oid }) => ({ path, mode, oid }))) !==
-    JSON.stringify(shape)
-  )
+  if (!sameInventory(repeated, files))
     throw new Error("Vault changed during history capture; retry without modifying saved history")
   const message = "canvas-agent: local vault snapshot\n"
-  const parts: Buffer[] = [
-    Buffer.from(
-      `feature done\ncommit ${ref}\ncommitter canvas-agent <canvas-agent@local> ${Math.floor(Date.now() / 1000)} +0000\ndata ${Buffer.byteLength(message)}\n${message}${previous ? `from ${previous}\n` : ""}deleteall\n`,
-    ),
-  ]
-  for (const file of files)
-    parts.push(
-      Buffer.from(`M ${file.mode} inline ${quotedPath(file.path)}\ndata ${file.bytes.length}\n`),
-      file.bytes,
-      Buffer.from("\n"),
-    )
-  parts.push(Buffer.from("\ndone\n"))
-  await git(state.directory, ["fast-import", "--quiet"], Buffer.concat(parts), 64 * 1024)
+  await git(
+    state.directory,
+    ["fast-import", "--quiet"],
+    async (stdin) => {
+      const write = async (bytes: Buffer) => {
+        if (!stdin.write(bytes))
+          await new Promise<void>((accept, reject) => {
+            const cleanup = () => {
+              stdin.removeListener("drain", drained)
+              stdin.removeListener("error", failed)
+            }
+            const drained = () => {
+              cleanup()
+              accept()
+            }
+            const failed = (error: Error) => {
+              cleanup()
+              reject(error)
+            }
+            stdin.once("drain", drained)
+            stdin.once("error", failed)
+          })
+      }
+      await write(
+        Buffer.from(
+          `feature done\ncommit ${ref}\ncommitter canvas-agent <canvas-agent@local> ${Math.floor(Date.now() / 1000)} +0000\ndata ${Buffer.byteLength(message)}\n${message}${previous ? `from ${previous}\n` : ""}deleteall\n`,
+        ),
+      )
+      for (const expected of files) {
+        await write(
+          Buffer.from(
+            `M ${expected.mode} inline ${quotedPath(expected.path)}\ndata ${expected.size}\n`,
+          ),
+        )
+        const path = join(state.vault, ...expected.path.split("/"))
+        await assertNoSymlinks(path)
+        const file = await open(
+          path,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        )
+        try {
+          const before = await file.stat()
+          if (!matchesStat(before, expected))
+            throw new Error(
+              "Vault changed during history capture; retry without modifying saved history",
+            )
+          const hash = createHash("sha1").update(`blob ${expected.size}\0`)
+          let total = 0
+          let overlap = ""
+          const buffer = Buffer.allocUnsafe(chunkSize)
+          while (total < expected.size) {
+            const { bytesRead } = await file.read(
+              buffer,
+              0,
+              Math.min(buffer.length, expected.size - total),
+              total,
+            )
+            if (!bytesRead)
+              throw new Error(
+                "Vault changed during history capture; retry without modifying saved history",
+              )
+            const bytes = buffer.subarray(0, bytesRead)
+            total += bytesRead
+            hash.update(bytes)
+            const scanned = credentialWindow(overlap, bytes)
+            if (scanned.matches)
+              throw new Error(
+                "Local history refuses credential-like content; no snapshot was saved",
+              )
+            overlap = scanned.overlap
+            await write(bytes)
+          }
+          const after = await file.stat()
+          if (!matchesStat(after, expected) || hash.digest("hex") !== expected.oid)
+            throw new Error(
+              "Vault changed during history capture; retry without modifying saved history",
+            )
+        } finally {
+          await file.close()
+        }
+        await write(Buffer.from("\n"))
+      }
+      if (!sameInventory(await inventory(state.vault), files))
+        throw new Error(
+          "Vault changed during history publication; retry without modifying saved history",
+        )
+      await write(Buffer.from("\ndone\n"))
+    },
+    64 * 1024,
+  )
   const commit = await head(state)
   if (!commit || JSON.stringify(await tree(state, commit)) !== JSON.stringify(shape))
     throw new Error("Local history snapshot verification failed; preserve the store for inspection")
   return { enabled: true, changed: true, commit, files: files.length }
+}
+
+function matchesStat(stat: Stats, file: InventoryFile) {
+  return (
+    stat.isFile() &&
+    stat.size === file.size &&
+    stat.dev === file.dev &&
+    stat.ino === file.ino &&
+    Boolean(stat.mode & 0o111) === (file.mode === "100755") &&
+    stat.mtimeMs === file.mtimeMs &&
+    stat.ctimeMs === file.ctimeMs
+  )
 }
 
 export async function enableVaultHistory(vault: string, directory: string) {

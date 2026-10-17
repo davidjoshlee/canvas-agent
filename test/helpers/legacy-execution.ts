@@ -28,12 +28,12 @@ export async function markLegacyTask(vault: string, id: string, frozen = false) 
   task.workflow.instructions = task.workflow.instructions.filter(
     (value: string) => !value.startsWith("The coding harness owns reasoning"),
   )
-  const legacyCalculationInstruction = workflowForRequirements(
-    "assignment",
-    "draft",
-    [],
-    [],
-  ).instructions.find((value) => value.startsWith("For derived quantitative values"))
+  const legacyCalculationInstruction = workflowForRequirements({
+    kind: "assignment",
+    mode: "draft",
+    sections: [],
+    questions: [],
+  }).instructions.find((value) => value.startsWith("For derived quantitative values"))
   task.workflow.instructions = task.workflow.instructions.map((value: string) =>
     value.startsWith("Use the coding harness and its tools to execute calculations")
       ? legacyCalculationInstruction

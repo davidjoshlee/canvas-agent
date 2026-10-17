@@ -69,7 +69,11 @@ describe("assignment task workflows", () => {
     prompt.text = "Group category: 7\nPrompt requirements"
     prompt.hash = hash(prompt.text)
     await writeFile(join(vault, prompt.path), prompt.text)
-    const task = await createAssignmentTask(vault, course.code, prompt.path, "draft")
+    const task = await createAssignmentTask(vault, {
+      courseQuery: course.code,
+      sourcePath: prompt.path,
+      mode: "draft",
+    })
     expect(task.groupScopeVersion).toBe(1)
     expect(task.assignment?.groupCategoryId).toBe("7")
     expect(task.workflow?.instructions.join(" ")).toContain(
@@ -91,14 +95,13 @@ describe("assignment task workflows", () => {
     "persists the complete %s workflow",
     async (mode) => {
       await setup()
-      const task = await createAssignmentTask(
-        vault,
-        "GSB-101",
-        "GSB-101/Assignments/prompt.md",
-        mode,
-        mode === "review" ? "GSB-101/Drafts/my draft.md" : undefined,
-        ["GSB-101/Guidance/AI.md"],
-      )
+      const task = await createAssignmentTask(vault, {
+        courseQuery: "GSB-101",
+        sourcePath: "GSB-101/Assignments/prompt.md",
+        mode: mode,
+        workPath: mode === "review" ? "GSB-101/Drafts/my draft.md" : undefined,
+        contextPaths: ["GSB-101/Guidance/AI.md"],
+      })
       expect(task.kind).toBe("assignment")
       expect(task.assignment?.mode).toBe(mode)
       expect(task.destination).toBe("GSB-101/Assignments/Drafts")
@@ -118,26 +121,37 @@ describe("assignment task workflows", () => {
   it("requires selected work for review and rejects cross-course, restricted, or unapproved inputs", async () => {
     await setup()
     await expect(
-      createAssignmentTask(vault, "GSB-101", "GSB-101/Assignments/prompt.md", "review"),
+      createAssignmentTask(vault, {
+        courseQuery: "GSB-101",
+        sourcePath: "GSB-101/Assignments/prompt.md",
+        mode: "review",
+      }),
     ).rejects.toThrow(/requires --work/)
     await expect(
-      createAssignmentTask(vault, "GSB-101", "OTHER/Assignments/prompt.md", "outline"),
+      createAssignmentTask(vault, {
+        courseQuery: "GSB-101",
+        sourcePath: "OTHER/Assignments/prompt.md",
+        mode: "outline",
+      }),
     ).rejects.toThrow()
     course.excluded.push({
       path: "GSB-101/Assignments/restricted.md",
       reason: "Restricted policy metadata",
     })
     await expect(
-      createAssignmentTask(vault, "GSB-101", "GSB-101/Assignments/restricted.md", "outline"),
+      createAssignmentTask(vault, {
+        courseQuery: "GSB-101",
+        sourcePath: "GSB-101/Assignments/restricted.md",
+        mode: "outline",
+      }),
     ).rejects.toThrow(/restricted|approved/i)
     await expect(
-      createAssignmentTask(
-        vault,
-        "GSB-101",
-        "GSB-101/Assignments/prompt.md",
-        "review",
-        "GSB-101/Guidance/AI.md",
-      ),
+      createAssignmentTask(vault, {
+        courseQuery: "GSB-101",
+        sourcePath: "GSB-101/Assignments/prompt.md",
+        mode: "review",
+        workPath: "GSB-101/Guidance/AI.md",
+      }),
     ).rejects.toThrow(/existing-work/)
   })
 
@@ -172,12 +186,11 @@ describe("assignment task workflows", () => {
       record("GSB-101/Resources/unrelated.md", unrelated),
     )
     course.guidance.push("GSB-101/Guidance/AI-extra.md")
-    const task = await createAssignmentTask(
-      vault,
-      "GSB-101",
-      "GSB-101/Assignments/prompt.md",
-      "outline",
-    )
+    const task = await createAssignmentTask(vault, {
+      courseQuery: "GSB-101",
+      sourcePath: "GSB-101/Assignments/prompt.md",
+      mode: "outline",
+    })
     expect(task.sources.map((item) => item.path)).toEqual([
       "GSB-101/Assignments/prompt.md",
       "GSB-101/Resources/Files/Detailed syllabus.pdf.md",
@@ -192,16 +205,19 @@ describe("assignment task workflows", () => {
     await setup()
     await writeFile(join(vault, "GSB-101", "Assignments", "prompt.md"), "changed")
     await expect(
-      createAssignmentTask(vault, "GSB-101", "GSB-101/Assignments/prompt.md", "outline"),
+      createAssignmentTask(vault, {
+        courseQuery: "GSB-101",
+        sourcePath: "GSB-101/Assignments/prompt.md",
+        mode: "outline",
+      }),
     ).rejects.toThrow(/changed/)
     await setup()
-    const task = await createAssignmentTask(
-      vault,
-      "GSB-101",
-      "GSB-101/Assignments/prompt.md",
-      "review",
-      "GSB-101/Drafts/my draft.md",
-    )
+    const task = await createAssignmentTask(vault, {
+      courseQuery: "GSB-101",
+      sourcePath: "GSB-101/Assignments/prompt.md",
+      mode: "review",
+      workPath: "GSB-101/Drafts/my draft.md",
+    })
     await writeFile(join(vault, "GSB-101", "Drafts", "my draft.md"), "changed")
     const candidatePath = join(vault, "candidate.md")
     await writeFile(
@@ -213,12 +229,11 @@ describe("assignment task workflows", () => {
 
   it("saves completion beside the prompt without overwriting existing work and rejects workflow edits", async () => {
     await setup()
-    const task = await createAssignmentTask(
-      vault,
-      "GSB-101",
-      "GSB-101/Assignments/prompt.md",
-      "outline",
-    )
+    const task = await createAssignmentTask(vault, {
+      courseQuery: "GSB-101",
+      sourcePath: "GSB-101/Assignments/prompt.md",
+      mode: "outline",
+    })
     const destination = join(vault, task.destination)
     await mkdir(destination, { recursive: true })
     await writeFile(join(destination, "01 Assignment Outline.md"), "student-owned file")
@@ -251,14 +266,12 @@ describe("assignment task workflows", () => {
 
   it("rejects edited source and guidance snapshots at completion", async () => {
     await setup()
-    const task = await createAssignmentTask(
-      vault,
-      "GSB-101",
-      "GSB-101/Assignments/prompt.md",
-      "outline",
-      undefined,
-      ["GSB-101/Guidance/AI.md"],
-    )
+    const task = await createAssignmentTask(vault, {
+      courseQuery: "GSB-101",
+      sourcePath: "GSB-101/Assignments/prompt.md",
+      mode: "outline",
+      contextPaths: ["GSB-101/Guidance/AI.md"],
+    })
     const candidatePath = join(vault, "candidate.md")
     await writeFile(
       candidatePath,
@@ -279,12 +292,11 @@ describe("assignment task workflows", () => {
     await expect(completeTask(vault, task.id, candidatePath)).rejects.toThrow(/stale|snapshot/i)
 
     await setup()
-    const second = await createAssignmentTask(
-      vault,
-      "GSB-101",
-      "GSB-101/Assignments/prompt.md",
-      "outline",
-    )
+    const second = await createAssignmentTask(vault, {
+      courseQuery: "GSB-101",
+      sourcePath: "GSB-101/Assignments/prompt.md",
+      mode: "outline",
+    })
     await writeFile(join(vault, "GSB-101", "Guidance", "AI.md"), "Changed policy")
     const candidate2 = join(vault, "candidate.md")
     await writeFile(

@@ -91,6 +91,10 @@ saved artifact's structure and evidence; it is not a grade or proof of academic
 correctness. Report missing sources and unsupported formats rather than filling
 gaps by guessing.
 
+XLSX source extraction records sheet names, cell coordinates, formulas and cached
+values. It does not recalculate formulas; use your coding harness to calculate
+and verify spreadsheet results.
+
 ## Using an agent
 
 In this repository, an agent can read [AGENTS.md](AGENTS.md). For other supported

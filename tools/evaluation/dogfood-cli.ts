@@ -27,7 +27,7 @@ function emit(journal: DogfoodJournal, json: boolean) {
   const failed = journal.flows.some((flow) => flow.status === "fail")
   const last = journal.flows.at(-1)
   const complete =
-    journal.flows.length === 10 &&
+    journal.flows.length === (journal.version === 1 ? 10 : 9) &&
     journal.flows.every((flow) => ["pass", "skipped"].includes(flow.status))
   const value = {
     ...journal,

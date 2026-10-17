@@ -235,7 +235,10 @@ export async function captureSimulation(
     : new Date(asOf).valueOf() > new Date(capturedAt).valueOf()
   if (futureCutoff) throw new Error("--as-of cannot be in the future")
   const vault = resolve(vaultPath)
-  const course: CourseContext = selectCourse(await inspectWorkspace(vault), query)
+  const course: CourseContext = selectCourse(
+    await inspectWorkspace(vault, { course: query }),
+    query,
+  )
   const sources: SimulationSource[] = []
   const guidance: SimulationSource[] = []
   const excluded: SimulationSnapshot["excluded"] = savedExclusions(course.excluded)

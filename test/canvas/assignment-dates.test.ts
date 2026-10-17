@@ -140,7 +140,11 @@ describe("assignment effective and alternate date evidence", () => {
     if (!prompt) throw new Error("Missing synthetic prompt")
     expect(prompt.dates).not.toContain("2026-11-25")
     expect(await readFile(join(vault, prompt.path), "utf8")).not.toContain("PRIVATE_SECTION")
-    const task = await createAssignmentTask(vault, "CS101", prompt.path, "outline")
+    const task = await createAssignmentTask(vault, {
+      courseQuery: "CS101",
+      sourcePath: prompt.path,
+      mode: "outline",
+    })
     expect(task.sources[0]?.assignmentDates).toEqual(prompt.assignmentDates)
     const snapshot = await captureSimulation(vault, "CS101", "2026-10-09")
     const evaluation = await createSimulationTask(vault, snapshot.id, {

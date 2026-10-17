@@ -3,8 +3,6 @@ import { describe, expect, it } from "vitest"
 import { parse } from "yaml"
 import {
   type PortableDocumentInput,
-  portableModuleBody,
-  readPortableContext,
   renderPortableDocument,
 } from "../../src/documents/portable-document.js"
 
@@ -35,13 +33,7 @@ describe("portable document serializer", () => {
     expect(metadata.title).toBeUndefined()
     expect(metadata.related_paths).toBeUndefined()
     expect(metadata.content_hash).toBe(createHash("sha256").update(body).digest("hex"))
-    expect(readPortableContext(document.markdown, document.context)).toEqual(document.context)
-    expect(() =>
-      readPortableContext(`${document.markdown}\nEdited body.`, document.context),
-    ).toThrow(/stale/)
-    expect(() =>
-      readPortableContext(document.markdown, { ...document.context, ai_policy: "allowed" }),
-    ).toThrow()
+    expect(document.context.hash).toBe(createHash("sha256").update(document.markdown).digest("hex"))
   })
 
   it("never invents eligibility and refuses credential URLs, unsafe provenance, malformed bounds", () => {
@@ -79,21 +71,11 @@ describe("portable document serializer", () => {
     expect(() => renderPortableDocument({ ...input, body: "unsafe\0text" })).toThrow()
   })
 
-  it("renders module roots as typed single-line items without hiding metadata in content", () => {
-    const body = portableModuleBody("Session 2", [
-      { type: "Assignment", title: "Synthetic task", canvasId: "50" },
-      { type: "Page", title: "Reading", pageUrl: "reading" },
-      { type: "File", title: "Case", canvasId: "88" },
-    ])
-    expect(body).toBe(
-      "Session 2\n- Assignment: Synthetic task (canvas_id: 50)\n- Page: Reading (page_url: reading)\n- File: Case (canvas_id: 88)\n",
-    )
+  it("renders module roots with separately stored context", () => {
+    const body =
+      "Session 2\n- Assignment: Synthetic task (canvas_id: 50)\n- Page: Reading (page_url: reading)\n- File: Case (canvas_id: 88)\n"
     const document = renderPortableDocument({ ...input, kind: "module", body, modulePosition: 2 })
     expect(document.context.modulePosition).toBe(2)
     expect(document.markdown).not.toContain("modulePosition")
-    expect(() => portableModuleBody("Bad\nTitle", [])).toThrow()
-    expect(() =>
-      portableModuleBody("Session", [{ type: "File", title: "Case", canvasId: "88)\nInjected" }]),
-    ).toThrow()
   })
 })
