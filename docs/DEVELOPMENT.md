@@ -49,7 +49,7 @@ failure journals in its owned temporary fixture.
 ## Agent instructions
 
 Edit the shared core only in plugins/canvas-agent/references/cli.md; edit workflow
-definitions in src/tasks/workflows.ts. Run npm run context:sync, followed by
+definitions in src/tasks/authoring/workflows.ts. Run npm run context:sync, followed by
 npm run context:check. Keep skills small and link to conditional operational
 detail, not repeated history or removed commands.
 

@@ -122,6 +122,8 @@ describe("fixed snapshot generation handoffs", () => {
       old.task.sources,
       old.task.guidance,
     )
+    delete old.task.hostExecutionVersion
+    delete old.hostExecutionVersion
     old.task.workflow = workflowForRequirements(
       old.task.kind,
       old.task.assignment.mode,
@@ -331,6 +333,8 @@ describe("fixed snapshot generation handoffs", () => {
       old.task.sources,
       old.task.guidance,
     )
+    delete old.task.hostExecutionVersion
+    delete old.hostExecutionVersion
     old.task.workflow = workflowForRequirements(
       old.task.kind,
       old.task.assignment.mode,
@@ -362,7 +366,7 @@ describe("fixed snapshot generation handoffs", () => {
     delete changed.workflowVersion
     await writeFile(path, JSON.stringify(changed))
     await expect(readSimulationTask(root, handoff.id)).rejects.toThrow(
-      /authoritative snapshot|group scope/,
+      /authoritative snapshot|group scope|Harness execution/,
     )
     changed.workflowVersion = 3
     delete changed.selectionVersion

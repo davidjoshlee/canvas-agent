@@ -283,6 +283,7 @@ it("preserves an earlier unversioned selection recipe rather than retroactively 
     task.deliverable,
   )
   task.questions = req.questions
+  delete task.hostExecutionVersion
   task.workflow = workflowForRequirements(
     task.kind,
     task.assignment?.mode,
@@ -574,6 +575,7 @@ it("refuses conflicting declarations and keeps an older default-structure draft 
     task.deliverable,
   )
   task.requirements = old.sections
+  delete task.hostExecutionVersion
   task.workflow = workflowForRequirements(
     task.kind,
     task.assignment?.mode,

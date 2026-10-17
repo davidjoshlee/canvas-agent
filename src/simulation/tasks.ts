@@ -24,7 +24,7 @@ import {
   draftWorkbookBytes,
   verifyWorkbookFile,
   workbookFromDraft,
-} from "../tasks/calculations/draft-workbook.js"
+} from "../tasks/compatibility/draft-workbook.js"
 import { captureTaskDeliverable } from "../tasks/evidence/deliverable-evidence.js"
 import { replaySimulation } from "./captures.js"
 import { readSimulationWorkbooksForRecord } from "./workbook-inventory.js"
@@ -52,6 +52,7 @@ const recordSchema = z
     answerEvidenceVersion: z.literal(1).optional(),
     workflowVersion: z.literal(3).optional(),
     workbookVersion: z.literal(1).optional(),
+    hostExecutionVersion: z.literal(1).optional(),
     groupScopeVersion: z.literal(1).optional(),
     deliverableVersion: z.literal(1).optional(),
     deliverableScopeVersion: z.literal(1).optional(),
@@ -151,6 +152,7 @@ type SimulationRecipe = Pick<
   | "selectionVersion"
   | "workflowVersion"
   | "workbookVersion"
+  | "hostExecutionVersion"
   | "prepSelectionVersion"
   | "prepStructureVersion"
   | "groupScopeVersion"
@@ -304,6 +306,7 @@ function buildFrozenTask(
   const {
     workflowVersion,
     workbookVersion,
+    hostExecutionVersion,
     prepSelectionVersion,
     prepStructureVersion,
     groupScopeVersion,
@@ -329,6 +332,7 @@ function buildFrozenTask(
     ...(prepStructureVersion ? { prepStructureVersion } : {}),
     ...(answerEvidenceVersion ? { answerEvidenceVersion } : {}),
     ...(workbookVersion ? { workbookVersion } : {}),
+    ...(hostExecutionVersion ? { hostExecutionVersion } : {}),
     ...(groupScopeVersion ? { groupScopeVersion } : {}),
     id,
     status: "pending",
@@ -368,6 +372,7 @@ function buildFrozenTask(
       deliverable,
       assignmentStructureVersion,
       answerEvidenceVersion,
+      hostExecutionVersion,
     ),
     notices: frozenTaskNotices(recipe, options.kind, replay.limitation),
   }
@@ -393,6 +398,7 @@ async function derive(
     selectionVersion,
     workflowVersion,
     workbookVersion,
+    hostExecutionVersion,
     prepSelectionVersion,
     prepStructureVersion,
     groupScopeVersion,
@@ -403,6 +409,8 @@ async function derive(
     deliverableParserVersion,
     answerEvidenceVersion,
   } = recipe
+  if (hostExecutionVersion && (workbookVersion || workflowVersion !== 3))
+    throw new Error("Harness execution requires workflow v3 without an automatic workbook recipe")
   if (groupScopeVersion && (options.kind !== "assignment" || workflowVersion !== 3))
     throw new Error("Frozen group scope requires the current assignment workflow")
   if (workbookVersion && (options.kind !== "assignment" || options.mode !== "draft"))
@@ -455,6 +463,7 @@ async function derive(
     ...(answerEvidenceVersion ? { answerEvidenceVersion } : {}),
     ...(workflowVersion ? { workflowVersion } : {}),
     ...(workbookVersion ? { workbookVersion } : {}),
+    ...(hostExecutionVersion ? { hostExecutionVersion } : {}),
     ...(groupScopeVersion ? { groupScopeVersion } : {}),
     ...(deliverableVersion ? { deliverableVersion } : {}),
     ...(deliverableScopeVersion ? { deliverableScopeVersion } : {}),
@@ -479,7 +488,7 @@ export async function createSimulationTask(vault: string, simulationId: string, 
     {
       selectionVersion: 2,
       workflowVersion: 3,
-      workbookVersion: options.kind === "assignment" && options.mode === "draft" ? 1 : undefined,
+      hostExecutionVersion: 1,
       prepSelectionVersion: options.kind === "prep" ? 2 : undefined,
       prepStructureVersion: options.kind === "prep" ? 1 : undefined,
       groupScopeVersion: options.kind === "assignment" ? 1 : undefined,
@@ -569,6 +578,7 @@ export async function readSimulationTask(
       selectionVersion: record.selectionVersion,
       workflowVersion: record.workflowVersion,
       workbookVersion: record.workbookVersion,
+      hostExecutionVersion: record.hostExecutionVersion,
       prepSelectionVersion: record.prepSelectionVersion,
       prepStructureVersion: record.prepStructureVersion,
       groupScopeVersion: record.groupScopeVersion,

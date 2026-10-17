@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest"
 import {
   draftWorkbookBytes,
   workbookFromDraft,
-} from "../../src/tasks/calculations/draft-workbook.js"
-import { matchesLegacyWorkbook } from "../../src/tasks/tools.js"
+} from "../../src/tasks/compatibility/draft-workbook.js"
+import { matchesLegacyWorkbook } from "../../src/tasks/compatibility/workbook.js"
 
 describe("automatic draft workbook extraction", () => {
   it("fixes every ZIP timestamp and narrowly preserves old directory-date renderings", async () => {

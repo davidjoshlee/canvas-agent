@@ -2,9 +2,9 @@ import { spawnSync } from "node:child_process"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import JSZip from "jszip"
 import { expect, it } from "vitest"
 import type { TaskRecord } from "../../src/shared/types.js"
+import { harnessCalculations } from "../helpers/harness-calculations.js"
 
 // Retain original host artifacts unchanged. New parser-v2 tasks require literal
 // question headings; this adaptation only reorganizes the retained answers and
@@ -92,7 +92,7 @@ it("replays the host-authored v3 synthesis and finished pricing deliverable thro
       expect(handoff.workflow.version).toBe(3)
       expect(handoff.guidance[0]?.text).toContain("explicitly permitted")
     }
-    const calculations = cli<{ result: number; source: { path: string } }[]>([
+    const calculations = harnessCalculations<{ result: number; source: { path: string } }[]>([
       "calculate",
       "--task",
       draft.id,
@@ -126,23 +126,7 @@ it("replays the host-authored v3 synthesis and finished pricing deliverable thro
         snapshots: { current: boolean; changed: string[]; missing: string[] }
       }>(["inspect", task.id])
       expect(inspected.snapshots).toEqual({ current: true, changed: [], missing: [] })
-      if (name === "draft") {
-        const workbook = completed.task.workbook
-        if (!workbook) throw new Error("Host draft's table companion is missing")
-        const zip = await JSZip.loadAsync(await readFile(join(vault, workbook.path)))
-        const xml = await zip.file("xl/worksheets/sheet1.xml")?.async("string")
-        expect(xml).toBeDefined()
-        for (const [row, value] of [
-          [2, 20000],
-          [3, 1800],
-          [4, -300],
-          [5, -1000],
-          [6, 500],
-          [7, 20500],
-        ])
-          expect(xml).toContain(`<c r="B${row}"><v>${value}</v></c>`)
-        expect(xml).not.toContain("<f>")
-      }
+      expect(completed.task.workbook).toBeUndefined()
     }
     for (const [path, bytes] of originals) expect(await readFile(join(vault, path))).toEqual(bytes)
   } finally {
@@ -304,7 +288,7 @@ it("replays first-use custom guidance and host work across separate CLI processe
     expect(handoff.guidance.some((source) => source.canvasId === "50")).toBe(true)
     expect(JSON.stringify(handoff)).not.toContain("UNRELATED_RESTRICTED_GUIDANCE_BODY")
     expect(
-      cli<{ result: number }[]>([
+      harnessCalculations<{ result: number }[]>([
         "calculate",
         "--task",
         task.id,
@@ -327,7 +311,7 @@ it("replays first-use custom guidance and host work across separate CLI processe
       candidate,
     ])
     const output = await readFile(join(vault, completed.output))
-    const workbook = await readFile(join(vault, completed.task.workbook.path))
+    expect(completed.task.workbook).toBeUndefined()
     const recordPath = join(vault, "_meta/tasks", task.id, "task.json")
     const record = await readFile(recordPath)
     // Each cli() starts a fresh process; recovery comes from the saved recipe/output,
@@ -337,15 +321,9 @@ it("replays first-use custom guidance and host work across separate CLI processe
     expect(await readFile(recordPath)).toEqual(record)
     expect(await readFile(join(vault, completed.output))).toEqual(output)
     expect(output.toString("utf8")).toBe(text)
-    expect(await readFile(join(vault, completed.task.workbook.path))).toEqual(workbook)
     expect(cli<{ snapshots: { current: boolean } }>(["inspect", task.id]).snapshots.current).toBe(
       true,
     )
-    const zip = await JSZip.loadAsync(workbook)
-    const xml = await zip.file("xl/worksheets/sheet1.xml")?.async("string")
-    expect(xml).toContain('<c r="B6"><v>500</v></c>')
-    expect(xml).toContain('<c r="B7"><v>20500</v></c>')
-    expect(xml).not.toContain("<f>")
     for (const [path, bytes] of originals) expect(await readFile(join(vault, path))).toEqual(bytes)
     expect(await readFile(join(vault, guide), "utf8")).toBe(guideText)
     expect(await readFile(join(vault, unrelated), "utf8")).toBe(restricted)

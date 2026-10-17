@@ -8,7 +8,7 @@ import {
   createWorkbook,
   matchesLegacyWorkbook,
   parseWorkbookInput,
-} from "../tasks/calculations/workbook.js"
+} from "../tasks/compatibility/workbook.js"
 
 const hash = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex")
 const digest = z.string().regex(/^[a-f0-9]{64}$/)

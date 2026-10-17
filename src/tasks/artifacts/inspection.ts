@@ -151,6 +151,7 @@ export function automaticWorkbookEvidence(task: TaskRecord) {
   if (task.kind !== "assignment" || task.assignment?.mode !== "draft")
     return { scope, state: "not-applicable" as const, workbook: null }
   if (task.status !== "completed") return { scope, state: "pending" as const, workbook: null }
+  if (task.hostExecutionVersion) return { scope, state: "harness-owned" as const, workbook: null }
   if (!task.workbookVersion) return { scope, state: "uncaptured-legacy" as const, workbook: null }
   return {
     scope,

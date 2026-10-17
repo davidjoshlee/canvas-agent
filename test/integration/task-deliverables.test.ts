@@ -164,6 +164,7 @@ it("versions imperative-question cues and rubric boundaries while preserving an 
     old.deliverable,
   )
   old.questions = requirements.questions
+  delete old.hostExecutionVersion
   old.workflow = workflowForRequirements(
     old.kind,
     old.assignment?.mode,
@@ -230,6 +231,8 @@ it("freezes the new imperative-question recipe without live enrichment or rewrit
     record.task.deliverable,
   )
   record.task.questions = requirements.questions
+  delete record.task.hostExecutionVersion
+  delete record.hostExecutionVersion
   record.task.workflow = workflowForRequirements(
     record.task.kind,
     record.task.assignment?.mode,
@@ -334,6 +337,7 @@ it("keeps a coherent earlier v3 recipe unenriched and preserves mode boundaries"
   delete old.deliverable
   delete old.deliverableParserVersion
   delete old.deliverableScopeVersion
+  delete old.hostExecutionVersion
   old.workflow = workflowForRequirements(
     "assignment",
     "draft",
@@ -423,6 +427,7 @@ it("scopes an attached case from the unique prompt part and preserves previously
     old.deliverable,
   )
   old.questions = requirements.questions
+  delete old.hostExecutionVersion
   old.workflow = workflowForRequirements(
     old.kind,
     old.assignment?.mode,
@@ -528,6 +533,7 @@ it("scopes explicit numeric parts in fresh ordinary/frozen recipes while preserv
     earlier.deliverable,
   )
   earlier.questions = oldRequirements.questions
+  delete earlier.hostExecutionVersion
   earlier.workflow = workflowForRequirements(
     earlier.kind,
     earlier.assignment?.mode,

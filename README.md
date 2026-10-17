@@ -11,7 +11,8 @@ Canvas → your local course vault → saved task → your coding agent → revi
 ```
 
 Canvas Agent is the bridge and the memory; your coding agent does the writing.
-The CLI has no model and never submits work to Canvas.
+The CLI has no model and never submits work to Canvas. Your coding harness handles
+reasoning, calculations, spreadsheets and substantive review using its own tools.
 
 ## What it does
 

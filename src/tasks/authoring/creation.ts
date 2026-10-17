@@ -187,6 +187,7 @@ function buildPrepWorkflow(selected: SourceRecord[], guidance: SourceRecord[]) {
     deliverable,
     undefined,
     1,
+    1,
   )
   return { deliverable, prepStructureVersion, resolved, workflow }
 }
@@ -226,6 +227,8 @@ function buildAssignmentWorkflow(
     3,
     deliverable,
     mode === "draft" ? 1 : undefined,
+    undefined,
+    1,
   )
   if (revision)
     workflow.instructions.push(
@@ -329,6 +332,7 @@ export async function createPrepTask(
     parserVersion: 2,
     id: randomUUID(),
     kind: "prep",
+    hostExecutionVersion: 1,
     guidanceSelectionVersion: 1,
     prepSelectionVersion: 2,
     ...(prepStructureVersion ? { prepStructureVersion } : {}),
@@ -390,7 +394,7 @@ export async function createAssignmentTask(
     guidanceSelectionVersion: 1,
     ...(mode === "draft" ? { assignmentStructureVersion: 1 as const } : {}),
     groupScopeVersion: 1,
-    ...(mode === "draft" ? { workbookVersion: 1 as const } : {}),
+    hostExecutionVersion: 1,
     status: "pending",
     createdAt: new Date().toISOString(),
     course: { code: course.code, title: course.title, root: course.root },

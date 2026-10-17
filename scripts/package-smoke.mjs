@@ -247,7 +247,7 @@ try {
   }
   commands.push("installed instruction topic without config")
   const topic = JSON.parse(
-    run(bin, ["instructions", "--topic", "calculate", "--config", config, "--json"], workspace),
+    run(bin, ["instructions", "--topic", "assignment", "--config", config, "--json"], workspace),
   )
   assert.equal(topic.lookup.completeReference, false)
   assert(topic.lookup.excerpts.length > 0)
@@ -256,7 +256,7 @@ try {
   const lines = (await readFile(reference.path, "utf8")).split("\n")
   for (const excerpt of topic.lookup.excerpts) {
     assert.equal(lines.slice(excerpt.startLine - 1, excerpt.endLine).join("\n"), excerpt.text)
-    assert(excerpt.text.toLowerCase().includes("calculate"))
+    assert(excerpt.text.toLowerCase().includes("assignment"))
   }
   commands.push("installed instruction unknown topic refusal")
   run(bin, ["instructions", "--topic", "NO_SUCH_SYNTHETIC_TOPIC", "--json"], workspace, 1)
@@ -266,15 +266,15 @@ try {
     JSON.parse(await readFile(join(installed, "package.json"), "utf8")).version,
   )
   for (const args of [
-    ["calculate", "--help"],
-    ["simulate", "task", "calculate", "--help"],
+    ["calculate"],
+    ["check-numbers"],
+    ["workbook"],
+    ["simulate", "task", "calculate"],
+    ["simulate", "task", "check-numbers"],
+    ["simulate", "task", "workbook"],
   ]) {
-    commands.push(`${args.slice(0, -1).join(" ")} help`)
-    const help = run(bin, args, workspace)
-    assert(help.includes("subtract") && help.includes("multiply") && help.includes("divide"))
-    const example = help.match(/Batch file: (\{[^\n]+\})/)?.[1]
-    assert(example)
-    assert.deepEqual(JSON.parse(example), { operations: [{ operation: "sum", values: [1, 2] }] })
+    commands.push(`retired execution command: ${args.join(" ")}`)
+    run(bin, args, workspace, 1)
   }
   const vault = join(workspace, "vault")
   function cli(args, status = 0) {
@@ -486,6 +486,8 @@ try {
     assert.equal(shown.locations.pathsExistenceVerified, false)
     const record = frozen ? shown.task : shown
     assert(record.sources.length > 0)
+    assert.equal(record.hostExecutionVersion, 1)
+    assert.equal(record.workbookVersion, undefined)
     assert(
       record.sources.some((entry) => {
         const original = originals.get(entry.path)
@@ -506,7 +508,7 @@ try {
                 : "Synthetic structural fixture only, not student coursework."
             }${index === 1 && record.deliverable?.kind !== "none" && record.deliverable?.items ? `\n\n${record.deliverable.items.map((item) => `### ${item.text}\nPENDING — requires missing numerical inputs or empirical evidence in this synthetic fixture. \`${record.deliverable.sourcePath}\``).join("\n\n")}` : ""}`,
         ),
-        ...(record.workbookVersion
+        ...(record.assignment?.mode === "draft"
           ? ["### Synthetic cash schedule\n| Label | Value |\n| --- | --- |\n| Cash | $1,200 |"]
           : []),
       ].join("\n\n"),
@@ -557,19 +559,7 @@ try {
   assert.equal(recoveredPrep.briefStatus, "missing")
   assert.equal(recoveredPrep.taskFile, undefined)
   assert.deepEqual(await readFile(join(prepDirectory, "task.json")), prepRecord)
-  cli(["calculate", "--task", prep.id, "--operation", "divide", "--values", "400,600"])
   await complete(prep)
-  const numericCandidate = join(workspace, "numeric-review-candidate.md")
-  await writeFile(
-    numericCandidate,
-    `${await readFile(join(workspace, `${prep.id}.md`), "utf8")}\nUnverified synthetic numerical claim: 987654321.\nWeek of 2026-10-12. Approximately 66.7%.\n`,
-  )
-  const numericReview = cli(["check-numbers", prep.id, "--file", numericCandidate])
-  assert(numericReview.flagged.some((entry) => entry.value === 987654321))
-  assert(numericReview.ignoredDateLabels.some((entry) => entry.date === "2026-10-12"))
-  assert(numericReview.flagged.some((entry) => entry.classification === "rounded-recorded-result"))
-  assert.equal(numericReview.numericCorrectnessVerified, false)
-  assert.equal(numericReview.executionAuthenticated, false)
   await assert.rejects(stat(join(prepDirectory, "TASK.md")), { code: "ENOENT" })
   assert((await readFile(retainedPrepBrief, "utf8")).includes(prep.id))
   assert(
@@ -596,21 +586,14 @@ try {
   ])
   const completedDraft = await complete(draft)
   const draftGate = cli(["gate", "review", draft.id])
-  assert.equal(draftGate.automaticWorkbook.state, "verified")
-  assert.equal(draftGate.automaticWorkbook.workbook.hash, completedDraft.task.workbook.hash)
+  assert.equal(draftGate.automaticWorkbook.state, "harness-owned")
+  assert.equal(completedDraft.task.workbook, undefined)
   const draftComparison = cli(["compare", draft.id, draft.id])
-  assert.equal(draftComparison.automaticWorkbooks.change, "same-bytes")
+  assert.equal(draftComparison.automaticWorkbooks.change, "unknown")
   const revision = cli(["revise", draft.id, "--feedback", "Synthetic verification feedback."])
   await complete(revision)
   const approved = cli(["approve", draft.id])
-  assert.equal(approved.workbook.path, approved.output.replace(/\.md$/, ".xlsx"))
-  assert.equal(approved.workbook.hash, completedDraft.task.workbook.hash)
-  assert.equal(
-    createHash("sha256")
-      .update(await readFile(join(vault, approved.output.replace(/\.md$/, ".xlsx"))))
-      .digest("hex"),
-    completedDraft.task.workbook.hash,
-  )
+  assert.equal(approved.workbook, undefined)
   const snapshot = cli(["simulate", "capture", "CS101", "--as-of", "2026-10-09"])
   const earlier = cli(["simulate", "derive", snapshot.id, "--as-of", "2026-10-05"])
   assert.equal(earlier.derivedFrom.id, snapshot.id)
@@ -640,16 +623,6 @@ try {
     "--week",
     "2026-10-05",
   ])
-  cli([
-    "simulate",
-    "task",
-    "calculate",
-    evaluation.id,
-    "--operation",
-    "divide",
-    "--values",
-    "400,600",
-  ])
   await complete(evaluation, true)
   const frozenRecipePath = join(vault, "_meta/simulations/tasks", evaluation.id, "record.json")
   const frozenRecipeBefore = await readFile(frozenRecipePath)
@@ -670,26 +643,6 @@ try {
     ),
   )
   assert.deepEqual(await readFile(frozenRecipePath), frozenRecipeBefore)
-  const frozenNumericCandidate = join(workspace, "frozen-numeric-review-candidate.md")
-  await writeFile(
-    frozenNumericCandidate,
-    `${await readFile(join(workspace, `${evaluation.id}.md`), "utf8")}\nUnverified synthetic numerical claim: 987654321.\nWeek of 2026-10-12. Approximately 66.7%.\n`,
-  )
-  const frozenNumericReview = cli([
-    "simulate",
-    "task",
-    "check-numbers",
-    evaluation.id,
-    "--file",
-    frozenNumericCandidate,
-  ])
-  assert(frozenNumericReview.flagged.some((entry) => entry.value === 987654321))
-  assert(frozenNumericReview.ignoredDateLabels.some((entry) => entry.date === "2026-10-12"))
-  assert(
-    frozenNumericReview.flagged.some((entry) => entry.classification === "rounded-recorded-result"),
-  )
-  assert.equal(frozenNumericReview.numericCorrectnessVerified, false)
-  assert.deepEqual(await readFile(frozenRecipePath), frozenRecipeBefore)
   const frozenDraft = cli([
     "simulate",
     "task",
@@ -706,8 +659,8 @@ try {
   ])
   const completedFrozen = await complete(frozenDraft, true)
   const workbooks = cli(["simulate", "task", "workbooks", frozenDraft.id])
-  assert.equal(workbooks.records.length, 1)
-  assert.equal(workbooks.records[0].automatic.candidateHash, completedFrozen.outputHash)
+  assert.equal(workbooks.records.length, 0)
+  assert.equal(completedFrozen.workbook, undefined)
   // Isolated fixture ownership only: exercise the installed binary with a
   // persistent namespace while retaining all earlier root-level task outputs.
   const oldDraftBytes = await readFile(join(vault, completedDraft.output))
@@ -997,9 +950,9 @@ try {
         developmentEvaluationExcluded: true,
         savedCaptureDiscoveryTested: true,
         savedFrozenTaskDiscoveryTested: true,
-        numericPresenceReviewTested: true,
+        harnessExecutionBoundaryTested: true,
         originalsUnchanged: true,
-        automaticDraftAndFrozenWorkbooksTested: true,
+        noAutomaticDraftOrFrozenWorkbooksTested: true,
         derivedFixedCutoffTested: true,
         preservedNamespaceHomeworkTested: true,
         relatedDraftContinuityTested: true,

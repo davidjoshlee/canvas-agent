@@ -26,8 +26,9 @@ providers, enforce academic policy or certify correctness.
   it versions the output and never grades, approves or submits automatically.
 - Revisions preserve earlier artifacts and explicit edits; approval requires
   student direction and saves a versioned local Final.
-- Calculations are bounded fixed operations, not arbitrary code. Workbook values
-  and numeric checks are evidence for review, not proof of grounded inputs.
+- The coding harness owns reasoning, calculations, artifact creation and substantive
+  review. New tasks do not execute arithmetic or generate workbooks. Older saved
+  calculation records and workbook recipes retain compatibility readers.
 - Existing persisted task recipes remain readable and authoritative. Removing
   an import command does not authorize rewriting old records or course files.
 
@@ -59,6 +60,6 @@ cli, and synthetic tests under matching test/<feature> directories. Optional
 feature-owned command registrars may live with their implementation. The executable
 entry remains src/cli.ts → dist/cli.js. No domain runs I/O at import time.
 Update shared CLI instructions only in plugins/canvas-agent/references/cli.md
-and workflows in src/tasks/workflows.ts, then run context:sync and context:check.
+and workflows in src/tasks/authoring/workflows.ts, then run context:sync and context:check.
 Build from a clean generated dist and verify both source tests and the installed
 package. Do not package historical test reports or experiment tooling.

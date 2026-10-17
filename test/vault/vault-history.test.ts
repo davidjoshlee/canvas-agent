@@ -304,7 +304,15 @@ it("keeps unconfigured command failures and config-free discovery free of histor
   await writeFile(join(vault, "SYNTH101", "new.md"), "Not captured by a documentation read.")
   const discovered = spawnSync(
     process.execPath,
-    [resolve("dist/cli.js"), "instructions", "--topic", "calculate", "--config", invalid, "--json"],
+    [
+      resolve("dist/cli.js"),
+      "instructions",
+      "--topic",
+      "assignment",
+      "--config",
+      invalid,
+      "--json",
+    ],
     { encoding: "utf8", timeout: 15_000 },
   )
   expect(discovered.status, discovered.stderr).toBe(0)

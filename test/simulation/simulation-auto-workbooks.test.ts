@@ -8,21 +8,21 @@ import { afterEach, describe, expect, it } from "vitest"
 import { captureSimulation } from "../../src/simulation/captures.js"
 import {
   completeSimulationTask,
-  createSimulationTask,
   inspectSimulationTask,
   readSimulationTask,
 } from "../../src/simulation/tasks.js"
-import {
-  createSimulationWorkbook,
-  readSimulationWorkbooks,
-} from "../../src/simulation/workbooks.js"
-import { draftWorkbookBytes } from "../../src/tasks/calculations/draft-workbook.js"
+import { readSimulationWorkbooks } from "../../src/simulation/workbooks.js"
+import { draftWorkbookBytes } from "../../src/tasks/compatibility/draft-workbook.js"
 import {
   compareSimulationEvaluations,
   readSimulationComparison,
 } from "../../tools/evaluation/comparison.js"
 import { comparisonM1Bundle } from "../../tools/evaluation/m1.js"
 import { evaluationCliArgs } from "../helpers/evaluation-cli.js"
+import {
+  createLegacySimulationTask,
+  createSimulationWorkbook,
+} from "../helpers/legacy-execution.js"
 
 const roots: string[] = []
 const tables =
@@ -37,7 +37,7 @@ async function fixture(extra = tables) {
     "---\ntype: assignment\navailable_at: 2026-10-05\n---\nExplain the synthetic pricing framework."
   await writeFile(join(vault, source), original)
   const capture = await captureSimulation(vault, "CS101", "2026-10-09")
-  const task = await createSimulationTask(vault, capture.id, {
+  const task = await createLegacySimulationTask(vault, capture.id, {
     kind: "assignment",
     source,
     mode: "draft",
@@ -88,14 +88,8 @@ describe("automatic fixed-evaluation workbooks", () => {
       )
     }
     expect((await readSimulationWorkbooks(f.vault, f.task.id)).records).toHaveLength(19)
-    await expect(createSimulationWorkbook(f.vault, f.task.id, input)).rejects.toThrow(
-      /count or byte limit/,
-    )
     await completeSimulationTask(f.vault, f.task.id, f.candidate)
     expect((await readSimulationWorkbooks(f.vault, f.task.id)).records).toHaveLength(20)
-    await expect(createSimulationWorkbook(f.vault, f.task.id, input)).rejects.toThrow(
-      /count or byte limit/,
-    )
     expect(await completeSimulationTask(f.vault, f.task.id, f.candidate)).toMatchObject({
       workbookVersion: 1,
     })

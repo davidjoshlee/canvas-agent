@@ -39,6 +39,7 @@ async function oldCapture(root: string, task: TaskRecord, recipe: 1 | 2 = 1) {
   delete old.answerEvidenceVersion
   const req = resolveRequirements(old.kind, old.assignment?.mode, old.sources, old.guidance, recipe)
   old.questions = req.questions
+  delete old.hostExecutionVersion
   old.workflow = workflowForRequirements(
     old.kind,
     old.assignment?.mode,
@@ -82,6 +83,7 @@ describe("saved parser recipe compatibility", () => {
       task.guidance,
       2,
     )
+    delete task.hostExecutionVersion
     task.workflow = workflowForRequirements(
       task.kind,
       task.assignment?.mode,

@@ -68,8 +68,6 @@ prep COURSE [--week current|YYYY-MM-DD | --session SELECTOR]
 assignment COURSE --source VAULT_PROMPT --mode outline|draft|review|discuss [--work VAULT_WORK] [--context VAULT_PATH] [--message QUESTION]
 task complete UUID --file ABS_CANDIDATE.md; task output UUID; inspect UUID
 revise UUID --feedback TEXT [--work VAULT_WORK]; approve UUID
-calculate --task UUID --file ABS_BATCH.json
-check-numbers UUID --file ABS_CANDIDATE.md
 ```
 
 These are subcommands, not chained shell examples; append explicit --config PATH and --json for machine output. Recover saved work with task list/show/output, not replacements. A missing TASK.md can be reported by task show JSON without repairing history. Listings are metadata, not proof of live jobs, policy, output or currentness.
@@ -78,13 +76,13 @@ These are subcommands, not chained shell examples; append explicit --config PATH
 
 Read validated task JSON/TASK.md before authoring: ID, course, mode, source bodies, full workflow instructions, required headings, questions, deliverable.scope, notices and destination. Saved custom/older requirements override defaults. Prep defaults to the host-local week; use an explicit Monday across timezones. Draft is finished work; outline, review and discussion are distinct outcomes below.
 
-Write a separate candidate: exact `Task: UUID`, `## Required heading`, `### Exact question/item`, exact saved source paths in backticks. Answer every scoped prompt/rubric requirement or state specific PENDING inputs. Execute every derived number, including intermediate operands/prose comparisons; verify inputs against sources and self-review coverage, claims and quotations. Batch: `{"operations":[{"operation":"sum","values":[1,2]}]}`. Use check-numbers before quantitative completion; no flags/source-result matches prove grounding or correctness. Validation is not a grade, permission or approval.
+Write a separate candidate: exact `Task: UUID`, `## Required heading`, `### Exact question/item`, exact saved source paths in backticks. Answer every scoped prompt/rubric requirement or state specific PENDING inputs. Execute every derived number, including intermediate operands/prose comparisons; verify inputs against sources and self-review coverage, claims and quotations. Use the coding harness and its tools for calculations, reproducible execution, spreadsheet creation and substantive review; preserve meaningful inputs, assumptions and results with the work. Validation is not a grade, permission or approval.
 
 Revision preserves edits and produces a new full artifact. Approve only at explicit student direction: versioned local Finals/companions, never Canvas. Check spreadsheet cells/required formats; retries verify existing bytes.
 
 ### Conditional detail
 
-Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, vault history, playbooks/feedback, guidance, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
+Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, vault history, playbooks/feedback, guidance, ingest/extraction, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
 <!-- canvas-agent-cli:end -->
 
 ## Developing the toolkit
@@ -95,6 +93,6 @@ Canvas access is GET-only. Only explicitly allowlisted courses sync. Credentials
 
 Preserve School Agent course-code vault roots and student-owned files. Never overwrite originals, guidance, drafts, or completed outputs. Reject traversal, symlinks, restricted/prohibited context, stale source evidence, ambiguous course selection, and mismatched task identity. Private tasks belong in `_meta/tasks/` and must not be included in a reading copy.
 
-Run `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`. Test the compiled CLI with synthetic fixtures. Edit the shared CLI contract only in `plugins/canvas-agent/references/cli.md` and academic workflow definitions in `src/tasks/workflows.ts`, then run `npm run context:sync`; `npm run context:check` rejects drift. Do not publish, commit, or touch sibling repositories unless the user requests it.
+Run `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`. Test the compiled CLI with synthetic fixtures. Edit the shared CLI contract only in `plugins/canvas-agent/references/cli.md` and academic workflow definitions in `src/tasks/authoring/workflows.ts`, then run `npm run context:sync`; `npm run context:check` rejects drift. Do not publish, commit, or touch sibling repositories unless the user requests it.
 
 Source and tests are grouped by feature. Start with `docs/ARCHITECTURE.md` and `docs/DEVELOPMENT.md`; `src/cli.ts` is only the stable executable entry. Shared persisted types live in `src/shared/types.ts`. Keep historical audit reports, one-off host experiments and School migration/index utilities out of the maintained product. Preserve older saved-task readers. See CONTRACT.md.

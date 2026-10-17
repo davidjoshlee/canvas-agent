@@ -1,9 +1,8 @@
-import { spawnSync } from "node:child_process"
-import { randomUUID } from "node:crypto"
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
+import { calculateSimulationBatch } from "../helpers/legacy-execution.js"
 
 const identifiers = vi.hoisted(() => ({ next: "" }))
 vi.mock("node:crypto", async () => {
@@ -11,10 +10,7 @@ vi.mock("node:crypto", async () => {
   return { ...actual, randomUUID: () => identifiers.next || actual.randomUUID() }
 })
 
-import {
-  calculateSimulationBatch,
-  readSimulationCalculations,
-} from "../../src/simulation/calculations.js"
+import { readSimulationCalculations } from "../../src/simulation/calculations.js"
 import { captureSimulation } from "../../src/simulation/captures.js"
 import { createSimulationTask } from "../../src/simulation/tasks.js"
 
@@ -76,31 +72,6 @@ it("executes source-bound frozen batches and keeps results usable after live-sou
   )
 })
 
-it("validates entire batches before writing and refuses unsupported/unselected inputs or held locks", async () => {
-  const { vault, task, reading } = await fixture()
-  for (const input of [
-    [
-      { operation: "sum", values: [1, 2], source: reading },
-      { operation: "divide", values: [1, 0] },
-    ],
-    [{ operation: "run-code", values: [1] }],
-    [{ operation: "sum", values: [1], source: "OTHER101/reading.md" }],
-    [{ operation: "sum", values: Array.from({ length: 1001 }, () => 1) }],
-    [{ operation: "sum", values: [1], rate: 0.1 }],
-  ])
-    await expect(calculateSimulationBatch(vault, task.id, input)).rejects.toThrow()
-  expect((await readSimulationCalculations(vault, task.id)).records).toEqual([])
-  const lock = join(vault, "_meta/simulations/tasks", task.id, "calculations.lock")
-  await mkdir(lock)
-  await expect(
-    calculateSimulationBatch(vault, task.id, [{ operation: "sum", values: [1] }]),
-  ).rejects.toThrow()
-  expect(
-    await readFile(join(vault, "_meta/simulations/tasks", task.id, "record.json")),
-  ).toBeTruthy()
-  await expect(mkdir(lock)).rejects.toThrow()
-})
-
 it("recomputes saved results, rejects altered bindings and refuses symlinked numeric records", async () => {
   const { root, vault, task, reading } = await fixture()
   const result = await calculateSimulationBatch(vault, task.id, [
@@ -133,83 +104,3 @@ it("recomputes saved results, rejects altered bindings and refuses symlinked num
   await expect(readSimulationCalculations(vault, task.id)).rejects.toThrow(/Symbolic links/)
   expect(await readFile(outside, "utf8")).toBe("PRIVATE_OUTSIDE_LITERAL")
 })
-it("refuses a new write at the private record-count limit without changing existing arithmetic evidence", async () => {
-  const { vault, task } = await fixture()
-  const result = await calculateSimulationBatch(vault, task.id, [
-    { operation: "sum", values: [1, 2] },
-  ])
-  const directory = join(vault, "_meta/simulations/tasks", task.id, "calculations")
-  const original = JSON.parse(await readFile(join(directory, `${result.id}.json`), "utf8"))
-  // Synthetic fixtures for the resource gate, not claims that 99 calculations ran.
-  for (let index = 1; index < 100; index++) {
-    const id = randomUUID()
-    await writeFile(join(directory, `${id}.json`), JSON.stringify({ ...original, id }))
-  }
-  const before = await readSimulationCalculations(vault, task.id)
-  expect(before.records).toHaveLength(100)
-  await expect(
-    calculateSimulationBatch(vault, task.id, [{ operation: "sum", values: [3, 4] }]),
-  ).rejects.toThrow(/limit reached/)
-  expect((await readSimulationCalculations(vault, task.id)).recordsHash).toBe(before.recordsHash)
-})
-it("preserves an unowned temporary collision and removes only the lock it created", async () => {
-  const { vault, task } = await fixture()
-  identifiers.next = "00000000-0000-4000-8000-000000000005"
-  const directory = join(vault, "_meta/simulations/tasks", task.id)
-  const temporary = join(directory, `.calculation-${identifiers.next}.tmp`)
-  await writeFile(temporary, "Unowned private temporary file preserved.")
-  await expect(
-    calculateSimulationBatch(vault, task.id, [{ operation: "sum", values: [1, 2] }]),
-  ).rejects.toThrow()
-  expect(await readFile(temporary, "utf8")).toBe("Unowned private temporary file preserved.")
-  expect((await readSimulationCalculations(vault, task.id)).records).toEqual([])
-  await expect(lstat(join(directory, "calculations.lock"))).rejects.toMatchObject({
-    code: "ENOENT",
-  })
-})
-
-it("runs single/batch and inspection commands through the compiled CLI with redacted invalid input", async () => {
-  const { root, vault, task, reading } = await fixture()
-  const config = join(root, "config.json")
-  const cli = (args: string[]) =>
-    spawnSync(process.execPath, [resolve("dist/cli.js"), ...args, "--config", config, "--json"], {
-      encoding: "utf8",
-    })
-  expect(
-    cli(["init", "--vault", vault, "--canvas-url", "https://canvas.example.test"]).status,
-  ).toBe(0)
-  const single = cli([
-    "simulate",
-    "task",
-    "calculate",
-    task.id,
-    "--operation",
-    "sum",
-    "--values",
-    "1800,-300,-1000",
-    "--source",
-    reading,
-  ])
-  expect(single.status, single.stderr).toBe(0)
-  expect(JSON.parse(single.stdout).results[0].result).toBe(500)
-  expect(single.stdout).not.toContain("PRIVATE_SOURCE_BODY")
-  const file = join(root, "batch.json")
-  await writeFile(
-    file,
-    JSON.stringify({ operations: [{ operation: "multiply", values: [2, 3], source: reading }] }),
-  )
-  expect(cli(["simulate", "task", "calculate", task.id, "--file", file]).status).toBe(0)
-  const shown = cli(["simulate", "task", "calculations", task.id])
-  expect(shown.status, shown.stderr).toBe(0)
-  expect(JSON.parse(shown.stdout).records).toHaveLength(2)
-  await writeFile(file, "PRIVATE_INVALID_JSON_LITERAL")
-  const invalid = cli(["simulate", "task", "calculate", task.id, "--file", file])
-  expect(invalid.status).toBe(1)
-  expect(invalid.stdout + invalid.stderr).not.toContain("PRIVATE_INVALID_JSON_LITERAL")
-  expect(cli(["simulate", "task", "calculate", task.id, "--file", join(root, ".env")]).status).toBe(
-    1,
-  )
-  expect(
-    JSON.parse(cli(["simulate", "task", "calculations", task.id]).stdout).records,
-  ).toHaveLength(2)
-}, 15_000)

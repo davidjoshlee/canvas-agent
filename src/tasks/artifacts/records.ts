@@ -92,6 +92,7 @@ const SavedTaskShape = z
     prepStructureVersion: z.literal(1).optional(),
     answerEvidenceVersion: z.literal(1).optional(),
     workbookVersion: z.literal(1).optional(),
+    hostExecutionVersion: z.literal(1).optional(),
     productNamespaceVersion: z.literal(1).optional(),
     groupScopeVersion: z.literal(1).optional(),
     id: z.string().uuid(),
@@ -298,6 +299,11 @@ function validateGroupRecipe(task: SavedTask, ctx: z.RefinementCtx): void {
 }
 
 function validateWorkflowVersions(task: SavedTask, ctx: z.RefinementCtx): void {
+  if (task.hostExecutionVersion && (task.workbookVersion || task.workflow?.version !== 3))
+    ctx.addIssue({
+      code: "custom",
+      message: "Harness execution requires workflow v3 without an automatic workbook recipe",
+    })
   if (task.prepSelectionVersion && task.kind !== "prep")
     ctx.addIssue({ code: "custom", message: "Prep selection version requires a prep task" })
   if (
@@ -438,6 +444,7 @@ function validateSavedWorkflow(task: SavedTask): boolean {
           task.deliverable,
           task.assignmentStructureVersion,
           task.answerEvidenceVersion,
+          task.hostExecutionVersion,
         )
   if (!legacyWorkflow && task.parentTaskId && task.assignment?.mode === "draft")
     authoritative = {

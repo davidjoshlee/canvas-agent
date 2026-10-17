@@ -201,6 +201,7 @@ describe("versioned prep answer evidence", () => {
     await setup()
     const fresh = await createPrepTask(vault, course.code, "2026-10-12")
     const old = { ...fresh }
+    delete old.hostExecutionVersion
     delete old.answerEvidenceVersion
     old.workflow = workflowForRequirements(
       "prep",

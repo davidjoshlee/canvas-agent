@@ -97,6 +97,12 @@ export function workflowFor(kind: "prep" | "assignment", mode?: AssignmentMode):
   }
 }
 
+// Keep the earlier wording byte-for-byte for saved workflow validation.
+const LEGACY_QUANTITATIVE_INSTRUCTION =
+  "For derived quantitative values, execute the bounded calculate command (or a separately authorized reproducible calculator), preserve meaningful inputs, assumptions and results in the response, and check those inputs against supplied source data. A calculation log or correct arithmetic does not establish that its inputs are grounded. Never substitute mental/model arithmetic for an executed verification; do not copy private task/log paths into the academic artifact."
+const HARNESS_QUANTITATIVE_INSTRUCTION =
+  "Use the coding harness and its tools to execute calculations, create required spreadsheets or other artifacts, and verify the results against supplied source inputs. Preserve reproducible code, assumptions and meaningful results with the work. The CLI saves task context and validates artifact bindings; it does not perform the assignment's calculations or spreadsheet authoring."
+
 /** Versioned task outcomes; old saved workflows keep their original instructions. */
 export function workflowForRequirements(
   kind: "prep" | "assignment",
@@ -108,6 +114,7 @@ export function workflowForRequirements(
   deliverable?: DeliverableEvidence,
   assignmentStructureVersion?: 1,
   answerEvidenceVersion?: 1,
+  hostExecutionVersion?: 1,
 ): AcademicWorkflow {
   if (version !== 2 && version !== 3) throw new Error("Unsupported task workflow version")
   const base = workflowFor(kind, mode)
@@ -143,7 +150,7 @@ export function workflowForRequirements(
   if (version === 3 && kind === "assignment" && mode === "draft") {
     const extra = [
       "Produce the actual finished deliverable within the assistance explicitly permitted: answer the assignment's questions and complete its required analysis or writeup inside the persisted required sections. Do not substitute a guide, topic summary, outline, plan or instructions for the student to do the work. If evidence or permitted scope is insufficient, label the affected answer PENDING and name the missing source or student input in Open questions instead of inventing completion.",
-      "For derived quantitative values, execute the bounded calculate command (or a separately authorized reproducible calculator), preserve meaningful inputs, assumptions and results in the response, and check those inputs against supplied source data. A calculation log or correct arithmetic does not establish that its inputs are grounded. Never substitute mental/model arithmetic for an executed verification; do not copy private task/log paths into the academic artifact.",
+      hostExecutionVersion ? HARNESS_QUANTITATIVE_INSTRUCTION : LEGACY_QUANTITATIVE_INSTRUCTION,
       "Before handing off the candidate, reread it against every prompt/rubric requirement and the supplied materials. Check substantive answers, unsupported claims, quotations, quantitative inputs and executed results, then correct defects within the permitted scope. In the relevant required section or Open questions, distinguish what you actually checked from what remains unverified. This is the host's self-review, not independent grading, instructor approval, student direction to approve, or a guarantee of academic correctness.",
     ]
     instructions.push(
@@ -172,6 +179,11 @@ export function workflowForRequirements(
   } else if (deliverable?.kind === "none" && deliverable.suppressed) {
     instructions.push(
       "Captured active guidance explicitly suppresses deliverable auto-detection. Honor that declaration; it does not waive the actual prompt, rubric, course policy or permitted student scope.",
+    )
+  }
+  if (hostExecutionVersion) {
+    instructions.push(
+      "The coding harness owns reasoning, execution, artifact creation and substantive review. Use its available tools for the required deliverable; Canvas Agent supplies saved Canvas context and task persistence. Do not infer correctness from CLI structural validation.",
     )
   }
   return { version, instructions, requiredSections: [...sections] }

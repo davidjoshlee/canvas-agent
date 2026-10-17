@@ -24,7 +24,6 @@ afterEach(async () => {
 describe("compiled CLI acceptance", () => {
   it.each([
     ["upcoming"],
-    ["cost"],
     ["auth", "import-school-keychain"],
     ["calendar", "override"],
     ["calendar", "check"],
@@ -38,9 +37,7 @@ describe("compiled CLI acceptance", () => {
     ["simulate", "task", "create"],
     ["simulate", "task", "show"],
     ["simulate", "task", "complete"],
-    ["simulate", "task", "calculate"],
     ["simulate", "task", "calculations"],
-    ["simulate", "task", "workbook"],
     ["simulate", "task", "workbooks"],
   ])("registers the student command %s", (...command) => {
     const result = cli([...command.flat(), "--help"])
@@ -79,23 +76,12 @@ describe("compiled CLI acceptance", () => {
       expect(result.stderr).toBe("")
       return JSON.parse(result.stdout)
     }
-    expect(
-      json(["calculate", "--task", taskId, "--operation", "add", "--values", "2,3"]),
-    ).toMatchObject({ operation: "add", result: 5 })
     expect(json(["inspect", taskId])).toMatchObject({
       id: taskId,
       status: "pending",
       snapshots: { current: true },
     })
     expect(json(["compare", taskId, taskId])).toMatchObject({ outputDiff: { available: false } })
-    const workbookInput = join(root, "workbook.json")
-    await writeFile(
-      workbookInput,
-      JSON.stringify({ sheets: [{ name: "Values", rows: [["n"], [4]] }] }),
-    )
-    expect(json(["workbook", taskId, "--file", workbookInput])).toMatchObject({
-      sheets: ["Values"],
-    })
     const task = JSON.parse(
       await readFile(join(vault, "_meta", "tasks", taskId, "task.json"), "utf8"),
     ) as { requirements: string[]; sources: Array<{ path: string }> }

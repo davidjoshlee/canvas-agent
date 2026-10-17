@@ -33,8 +33,6 @@ prep COURSE [--week current|YYYY-MM-DD | --session SELECTOR]
 assignment COURSE --source VAULT_PROMPT --mode outline|draft|review|discuss [--work VAULT_WORK] [--context VAULT_PATH] [--message QUESTION]
 task complete UUID --file ABS_CANDIDATE.md; task output UUID; inspect UUID
 revise UUID --feedback TEXT [--work VAULT_WORK]; approve UUID
-calculate --task UUID --file ABS_BATCH.json
-check-numbers UUID --file ABS_CANDIDATE.md
 ```
 
 These are subcommands, not chained shell examples; append explicit --config PATH and --json for machine output. Recover saved work with task list/show/output, not replacements. A missing TASK.md can be reported by task show JSON without repairing history. Listings are metadata, not proof of live jobs, policy, output or currentness.
@@ -43,13 +41,13 @@ These are subcommands, not chained shell examples; append explicit --config PATH
 
 Read validated task JSON/TASK.md before authoring: ID, course, mode, source bodies, full workflow instructions, required headings, questions, deliverable.scope, notices and destination. Saved custom/older requirements override defaults. Prep defaults to the host-local week; use an explicit Monday across timezones. Draft is finished work; outline, review and discussion are distinct outcomes below.
 
-Write a separate candidate: exact `Task: UUID`, `## Required heading`, `### Exact question/item`, exact saved source paths in backticks. Answer every scoped prompt/rubric requirement or state specific PENDING inputs. Execute every derived number, including intermediate operands/prose comparisons; verify inputs against sources and self-review coverage, claims and quotations. Batch: `{"operations":[{"operation":"sum","values":[1,2]}]}`. Use check-numbers before quantitative completion; no flags/source-result matches prove grounding or correctness. Validation is not a grade, permission or approval.
+Write a separate candidate: exact `Task: UUID`, `## Required heading`, `### Exact question/item`, exact saved source paths in backticks. Answer every scoped prompt/rubric requirement or state specific PENDING inputs. Execute every derived number, including intermediate operands/prose comparisons; verify inputs against sources and self-review coverage, claims and quotations. Use the coding harness and its tools for calculations, reproducible execution, spreadsheet creation and substantive review; preserve meaningful inputs, assumptions and results with the work. Validation is not a grade, permission or approval.
 
 Revision preserves edits and produces a new full artifact. Approve only at explicit student direction: versioned local Finals/companions, never Canvas. Check spreadsheet cells/required formats; retries verify existing bytes.
 
 ### Conditional detail
 
-Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, vault history, playbooks/feedback, guidance, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
+Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, vault history, playbooks/feedback, guidance, ingest/extraction, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
 <!-- canvas-agent-cli:end -->
 
 At each session, read the student's selected config fresh and report its full config and vault paths. During onboarding, ask where the vault should live, suggest `~/canvas-vault`, and explain that readings, drafts and generated work are stored there. Pass the explicitly chosen absolute path to `setup --vault`; after setup, confirm both full paths. Existing users are not asked again unless they request a change. `vault location` reports the current path; `vault location --set ABS_PATH` changes only the selected config and accepts an existing directory. It does not move or copy files. If the configured vault is missing, report the path and ask which existing location is correct rather than making a replacement setup.

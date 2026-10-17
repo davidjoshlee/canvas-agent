@@ -130,9 +130,10 @@ it("keeps deterministic modules independent of orchestration and persistence", a
         file,
       ).toEqual([])
     if (
-      ["src/tasks/calculations/workbook.ts", "src/tasks/calculations/calculation-core.ts"].includes(
-        file,
-      )
+      [
+        "src/tasks/compatibility/workbook.ts",
+        "src/tasks/compatibility/calculation-core.ts",
+      ].includes(file)
     )
       expect(
         dependencies.filter((path) =>

@@ -4,19 +4,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import type { ToolkitConfig } from "../../src/shared/types.js"
+import { compareTasks, inspectTask } from "../../src/tasks/artifacts/inspection.js"
 import { createPrepTask, readTask } from "../../src/tasks/store.js"
-import {
-  CALCULATION_OPERATIONS,
-  calculateTask,
-  calculateValues,
-  compareTasks,
-  createWorkbook,
-  inspectTask,
-  parseCalculationBatch,
-  parseWorkbookInput,
-  reviewGate,
-  workbookTask,
-} from "../../src/tasks/tools.js"
+import { reviewGate } from "../../src/tasks/tools.js"
 
 const roots: string[] = []
 async function fixture() {
@@ -41,88 +31,6 @@ afterEach(async () => {
 })
 
 describe("task tools", () => {
-  it("executes every advertised operation and returns supported names on an unsupported operation", () => {
-    const expected = {
-      sum: 6,
-      mean: 3,
-      median: 3,
-      min: 2,
-      max: 4,
-      stddev: 1,
-      npv: 6,
-      add: 6,
-      subtract: -2,
-      multiply: 8,
-      divide: 0.5,
-      power: 16,
-    }
-    for (const operation of CALCULATION_OPERATIONS)
-      expect(calculateValues(operation, [2, 4], operation === "npv" ? 0 : undefined)).toBe(
-        expected[operation],
-      )
-    expect(() => calculateValues("product", [2, 4])).toThrow(
-      `Supported operations: ${CALCULATION_OPERATIONS.join(", ")}`,
-    )
-  })
-  it("calculates only finite supported operations against current task snapshots", async () => {
-    const { root, config } = await fixture()
-    const task = await createPrepTask(root, "ACCT312", "2026-10-12")
-    await expect(
-      calculateTask(config, {
-        taskId: task.id,
-        operation: "mean",
-        values: "2,4,6",
-        source: task.sources[0]?.path,
-      }),
-    ).resolves.toMatchObject({ result: 4, operation: "mean" })
-    await expect(
-      calculateTask(config, { taskId: task.id, operation: "divide", values: "1,0" }),
-    ).rejects.toThrow("Division by zero")
-    await expect(
-      calculateTask(config, { taskId: task.id, operation: "sum", values: "1,NaN" }),
-    ).rejects.toThrow("finite numbers")
-    const log = await readFile(join(root, "_meta", "tasks", task.id, "calculations.jsonl"), "utf8")
-    expect(log).toContain('"result":4')
-    expect(log).not.toContain("NaN")
-    await writeFile(join(root, "ACCT312", "Week 42", "Reading.md"), "changed")
-    await expect(
-      calculateTask(config, { taskId: task.id, operation: "sum", values: "2,3" }),
-    ).rejects.toThrow("stale")
-  })
-
-  it("supports safe descriptive statistics, NPV, and strict bounded calculation batches", async () => {
-    const { root, config } = await fixture()
-    const task = await createPrepTask(root, "ACCT312", "2026-10-12")
-    await expect(
-      calculateTask(config, { taskId: task.id, operation: "median", values: "10,2,4,6" }),
-    ).resolves.toMatchObject({ result: 5 })
-    await expect(
-      calculateTask(config, { taskId: task.id, operation: "stddev", values: "2,4,6" }),
-    ).resolves.toMatchObject({ result: Math.sqrt(8 / 3) })
-    const npv = await calculateTask(config, {
-      taskId: task.id,
-      operation: "npv",
-      values: "-100,60,60",
-      rate: 0.1,
-    })
-    expect(npv.result).toBeCloseTo(4.132231404958667)
-    expect(npv.rate).toBe(0.1)
-    await expect(
-      calculateTask(config, { taskId: task.id, operation: "npv", values: "1,2" }),
-    ).rejects.toThrow("NPV rate")
-    expect(parseCalculationBatch({ operations: [{ operation: "min", values: [2, 1] }] })).toEqual([
-      { operation: "min", values: [2, 1] },
-    ])
-    expect(() =>
-      parseCalculationBatch({ operations: [{ operation: "sum", values: [1], code: "bad" }] }),
-    ).toThrow("Each calculation")
-    expect(() =>
-      parseCalculationBatch({
-        operations: [{ operation: "sum", values: [Number.POSITIVE_INFINITY] }],
-      }),
-    ).toThrow("finite")
-  })
-
   it("inspects provenance and compares source and completed-output changes", async () => {
     const { root, config } = await fixture()
     const first = await createPrepTask(root, "ACCT312", "2026-10-12")
@@ -156,50 +64,6 @@ describe("task tools", () => {
     await unlink(savedOutput)
     await symlink(external, savedOutput)
     await expect(compareTasks(root, first.id, first.id)).rejects.toThrow("Symbolic links")
-  })
-
-  it("creates bounded values-only workbooks and preserves prior artifacts", async () => {
-    const { root, config } = await fixture()
-    const task = await createPrepTask(root, "ACCT312", "2026-10-12")
-    const parsed = parseWorkbookInput({
-      sheets: [
-        {
-          name: "Data",
-          rows: [
-            ["Name", "Value"],
-            ["A", 3],
-            ["=1+1", null],
-          ],
-        },
-      ],
-    })
-    const bytes = await createWorkbook(parsed)
-    expect(bytes.subarray(0, 2).toString()).toBe("PK")
-    expect(() => parseWorkbookInput({ sheets: [{ name: "Bad/Name", rows: [] }] })).toThrow(
-      "valid Excel names",
-    )
-    expect(() => parseWorkbookInput({ sheets: [{ name: "x", rows: [[Number.NaN]] }] })).toThrow(
-      "finite",
-    )
-    const input = join(root, "workbook.json")
-    await writeFile(input, JSON.stringify({ sheets: [{ name: "Data", rows: [["Value"], [2]] }] }))
-    const one = await workbookTask(config, task.id, input)
-    const two = await workbookTask(config, task.id, input)
-    await writeFile(input, "PRIVATE_INVALID_WORKBOOK_INPUT")
-    await expect(workbookTask(config, task.id, input)).rejects.toThrow(
-      "Workbook input must contain valid UTF-8 JSON",
-    )
-    const credential = join(root, ".env")
-    await writeFile(credential, "PRIVATE_CREDENTIAL_FIXTURE")
-    await expect(workbookTask(config, task.id, credential)).rejects.toThrow(/credential file/)
-    expect(await readFile(credential, "utf8")).toBe("PRIVATE_CREDENTIAL_FIXTURE")
-    expect(one.path).toMatch(/^ACCT312\/.+\/01 Workbook\.xlsx$/)
-    expect(two.path).toContain("01 Workbook.v2.xlsx")
-    expect(
-      createHash("sha256")
-        .update(await readFile(join(root, one.path)))
-        .digest("hex"),
-    ).toBe(one.hash)
   })
 
   it("audits extracted originals up to the document ingestion size bound", async () => {

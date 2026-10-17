@@ -4,19 +4,18 @@ import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:f
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { calculateSimulationBatch } from "../../src/simulation/calculations.js"
 import { captureSimulation } from "../../src/simulation/captures.js"
 import {
   completeSimulationTask,
   createSimulationTask,
   readSimulationTask,
 } from "../../src/simulation/tasks.js"
-import { createSimulationWorkbook } from "../../src/simulation/workbooks.js"
 import {
   compareSimulationEvaluations,
   readSimulationComparison,
 } from "../../tools/evaluation/comparison.js"
 import { comparisonM1Bundle } from "../../tools/evaluation/m1.js"
+import { calculateSimulationBatch, createSimulationWorkbook } from "../helpers/legacy-execution.js"
 
 const roots: string[] = []
 async function fixture() {
@@ -154,9 +153,7 @@ describe("fixed snapshot evaluation comparison", () => {
       sheets,
       JSON.stringify({ sheets: [{ name: "Pricing", rows: [["PRIVATE_WORKBOOK_CELL", 500]] }] }),
     )
-    expect(cli(["simulate", "task", "workbook", task.id, "--file", sheets, "--json"]).status).toBe(
-      0,
-    )
+    await createSimulationWorkbook(root, task.id, sheets)
     const compared = cli(["simulate", "compare", "--course", "CS101", "--task", task.id, "--json"])
     expect(compared.status, compared.stderr).toBe(0)
     const metadata = JSON.parse(compared.stdout)

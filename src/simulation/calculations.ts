@@ -1,15 +1,10 @@
-import { createHash, randomUUID } from "node:crypto"
+import { createHash } from "node:crypto"
 import { constants } from "node:fs"
-import { link, mkdir, open, readdir, rmdir, unlink } from "node:fs/promises"
-import { dirname, join, resolve } from "node:path"
+import { open, readdir } from "node:fs/promises"
+import { join, resolve } from "node:path"
 import { z } from "zod"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
-import {
-  CALCULATION_OPERATIONS,
-  type CalculationBatchItem,
-  calculateValues,
-  parseCalculationBatch,
-} from "../tasks/calculations/calculation-core.js"
+import { CALCULATION_OPERATIONS, calculateValues } from "../tasks/compatibility/calculation-core.js"
 import { readSimulationTask } from "./tasks.js"
 
 const hash = (value: Buffer | string) => createHash("sha256").update(value).digest("hex")
@@ -135,86 +130,5 @@ export async function readSimulationCalculations(vault: string, id: string) {
     recordsHash: hash(JSON.stringify(digests)),
     totalBytes: bytesRead,
     attributionVerified: false,
-  }
-}
-
-/** Validate the whole batch before an exclusive private write; no live-source or model access. */
-export async function calculateSimulationBatch(
-  vault: string,
-  id: string,
-  input: CalculationBatchItem[],
-) {
-  const items = parseCalculationBatch({ operations: input })
-  const { task, directory, recipeHash } = await scope(vault, id)
-  let count = 0
-  const results = items.map((item) => {
-    count += item.values.length
-    if (count > 10_000)
-      throw new Error("Evaluation calculation batch exceeds 10,000 numeric inputs")
-    const source =
-      item.source === undefined
-        ? undefined
-        : task.task.sources.find((source) => source.path === item.source)
-    if (item.source !== undefined && !source)
-      throw new Error("Calculation source is not selected frozen task evidence")
-    return {
-      operation: item.operation,
-      input: item.values,
-      result: calculateValues(item.operation, item.values, item.rate),
-      ...(item.rate !== undefined ? { rate: item.rate } : {}),
-      ...(source ? { source: { path: source.path, hash: source.hash } } : {}),
-    }
-  })
-  const record = recordSchema.parse({
-    version: 1,
-    id: randomUUID(),
-    taskId: id,
-    simulationId: task.simulationId,
-    snapshotHash: task.snapshotHash,
-    recipeHash,
-    at: new Date().toISOString(),
-    results,
-  })
-  const bytes = JSON.stringify(record)
-  if (Buffer.byteLength(bytes) > 500_000)
-    throw new Error("Evaluation calculation record exceeds safe bounds")
-  const lock = `${directory}.lock`
-  await assertNoSymlinks(lock, true)
-  await mkdir(lock, { mode: 0o700 })
-  const temporary = join(dirname(directory), `.calculation-${record.id}.tmp`)
-  let ownsTemporary = false
-  try {
-    const existing = await readSimulationCalculations(vault, id)
-    if (existing.recipeHash !== recipeHash)
-      throw new Error("Evaluation task changed during calculation")
-    if (
-      existing.records.length >= 100 ||
-      existing.totalBytes + Buffer.byteLength(bytes) > 10_000_000
-    )
-      throw new Error("Evaluation calculation record count or byte limit reached")
-    await mkdir(directory, { recursive: true, mode: 0o700 })
-    await assertNoSymlinks(directory)
-    const handle = await open(temporary, "wx", 0o600)
-    ownsTemporary = true
-    try {
-      await handle.writeFile(bytes)
-    } finally {
-      await handle.close()
-    }
-    await link(temporary, join(directory, `${record.id}.json`))
-  } finally {
-    try {
-      if (ownsTemporary)
-        await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
-          if (error.code !== "ENOENT") throw error
-        })
-    } finally {
-      await rmdir(lock)
-    }
-  }
-  return {
-    ...record,
-    attributionVerified: false,
-    note: "Executed arithmetic on supplied numbers, with optional frozen-source context only. Inputs are not independently grounded; no academic approval or historical verification is implied.",
   }
 }
