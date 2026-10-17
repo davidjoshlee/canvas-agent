@@ -28,7 +28,7 @@ context; homework [--course COURSE]; timeline [--course COURSE]; vault health
 task list --course COURSE [--status pending|completed]; task show UUID
 prep COURSE [--week current|YYYY-MM-DD | --session SELECTOR]
 assignment COURSE --source VAULT_PROMPT --mode outline|draft|review|discuss [--work VAULT_WORK] [--context VAULT_PATH] [--message QUESTION]
-task complete UUID --file ABS_CANDIDATE.md; task output UUID; inspect UUID
+task complete UUID (--file ABS_CANDIDATE.md | --manifest ABS_JSON); task output UUID; inspect UUID
 revise UUID --feedback TEXT [--work VAULT_WORK]; approve UUID
 ```
 
@@ -38,7 +38,9 @@ These are subcommands, not chained shell examples; append explicit --config PATH
 
 Read validated task JSON/TASK.md before authoring: ID, course, mode, source bodies, full workflow instructions, required headings, questions, deliverable.scope, notices and destination. Saved custom/older requirements override defaults. Prep defaults to the host-local week; use an explicit Monday across timezones. Draft is finished work; outline, review and discussion are distinct outcomes below.
 
-Write a separate candidate: exact `Task: UUID`, `## Required heading`, `### Exact question/item`, exact saved source paths in backticks. Answer every scoped prompt/rubric requirement or state specific PENDING inputs. Execute every derived number, including intermediate operands/prose comparisons; verify inputs against sources and self-review coverage, claims and quotations. Use the coding harness and its tools for calculations, reproducible execution, spreadsheet creation and substantive review; preserve meaningful inputs, assumptions and results with the work. Validation is not a grade, permission or approval.
+Write a separate candidate in the task's private working directory: exact `Task: UUID`, `## Required heading`, `### Exact question/item`, exact saved source paths in backticks. Answer every scoped prompt/rubric requirement or state specific PENDING inputs. Execute every derived number, including intermediate operands/prose comparisons; verify inputs against sources and self-review coverage, claims and quotations. Use the coding harness and its tools for calculations, reproducible execution, spreadsheet creation and substantive review; preserve meaningful inputs, assumptions and results with the work. Validation is not a grade, permission or approval.
+
+For a multi-file deliverable, author it in the task's reported private `workingDirectory` and register it with `task complete UUID --manifest ABS_JSON`. Read the conditional bundle reference for the manifest schema, snapshot behavior and approval handling. Execution and check entries are harness reports; Canvas Agent does not execute commands or certify results.
 
 Revision preserves edits and produces a new full artifact. Approve only at explicit student direction: versioned local Finals/companions, never Canvas. Check spreadsheet cells/required formats; retries verify existing bytes.
 
@@ -133,6 +135,8 @@ For default workflow details read the sibling workflows.md and applicable skill.
 Saved older/custom task requirements remain authoritative.
 
 task complete UUID --file ABS_CANDIDATE.md validates and versions the artifact.
+For multi-file work, use task complete UUID --manifest ABS_JSON instead. See the
+manifest schema and bundle behavior in the harness-owned execution section below.
 It checks structure, source bindings, citations and required answer presence,
 not factual correctness or permission. Inspect the saved output. Revise with
 revise UUID --feedback TEXT [--work PATH]; this creates a new full-artifact task
@@ -142,14 +146,62 @@ student's direction and saves a versioned local Final, never a Canvas submission
 ## Task discovery and saved output
 
 task list --course COURSE [--status pending|completed] discovers saved work;
-task show UUID exposes its recipe, evidence and absolute inspection paths.
-task output UUID returns verified saved text/hash, not a new answer.
-inspect UUID checks provenance and currentness; compare UUID OTHER_UUID
+task show UUID exposes its recipe, evidence, absolute inspection paths and
+private working directory; bundle tasks also expose verified bundle metadata.
+task output UUID returns the saved artifact; inspect UUID verifies provenance,
+currentness and any bundle snapshot without producing a new answer; compare UUID OTHER_UUID
 compares recorded evidence. A missing TASK.md can be reported without repairing
 history. Pending/completed listings are durable state, not live process status.
 Preserve task IDs and saved bytes after interruption; discover before recreating.
 
 ## Harness-owned execution and saved artifacts
+
+### Manifest bundles
+
+Use `task complete UUID --manifest ABS_JSON` for multi-file work. The strict
+version 1 manifest requires `version`, matching `taskId`, a relative Markdown
+`primary` path and a `files` array (which may be empty). The primary is
+automatically captured as a deliverable. `files` entries list companions with a
+relative `path`, `role` (`deliverable`, `supporting`, `code` or `log`) and
+`purpose`. Optional `executions` require `command` and `exitCode`; they may also
+include `inputFiles`, `outputFiles` and `log`. Optional `checks` record
+`description` and `result`. All paths are relative to the manifest file, and
+execution file references must name a companion in `files`.
+
+```json
+{
+  "version": 1,
+  "taskId": "UUID",
+  "primary": "candidate.md",
+  "files": [
+    {"path": "model.xlsx", "role": "deliverable", "purpose": "Required model"},
+    {"path": "build.py", "role": "code", "purpose": "Reproducible calculations"}
+  ],
+  "executions": [{"command": "python build.py", "inputFiles": [], "outputFiles": ["model.xlsx"], "exitCode": 0}],
+  "checks": [{"description": "Workbook formulas and output cells reviewed", "result": "Complete"}]
+}
+```
+
+Task creation reports a private `workingDirectory`; keep the candidate,
+manifest and companions there. Completion stores a private immutable snapshot
+with hashes and file sizes and anchors its hash in task metadata. `task show`
+and `inspect` expose bundle metadata and verify its recorded files. Execution
+and check entries are harness reports, not proof a command ran or that the
+result is correct. Revisions expose verified parent files as prior work to inspect
+and revise within the saved task scope, without adding approved source evidence.
+Copy prior files into the new task's working directory before editing; never
+edit registered snapshots or previously completed deliverables in place.
+Approval copies only deliverables to a versioned Finals companion directory;
+supporting files, code and logs stay private with the task.
+
+Registration happens at completion; files merely present in the working directory
+are not registered. Paths inside the vault must belong to this task's working
+directory; external authored directories also work. Do not bundle captured source
+or guidance files as generated work. Execution file references must name the
+primary or a listed companion. A manifest can list up to 500 companions, with a
+50 MiB per-file and 200 MiB aggregate limit. Identical retries verify saved bytes;
+changed bundles require a new task or revision. Frozen simulation tasks continue
+to use `--file`; manifest completion applies to ordinary tasks.
 
 The coding harness owns reasoning, calculations, spreadsheet and other artifact
 creation, and substantive review. Use its tools to execute derived values and
@@ -157,8 +209,10 @@ inspect formulas, cells and required formats. Preserve reproducible code, inputs
 assumptions and results alongside the work. Canvas Agent captures course context,
 creates task handoffs and validates/saves local Markdown outputs; it does not
 execute assignment calculations, generate workbooks or certify correctness.
-Harness-created companion files remain student-owned; task completion does not
-register, copy, approve or verify arbitrary external artifacts.
+Register the deliverables and supporting files that belong with a completed
+artifact in its manifest. Keep temporary or unrelated files out of the manifest.
+Approval copies files marked deliverable to Finals; supporting files, code and
+logs remain private with the task.
 
 Older tasks may contain calculation logs and automatic workbook recipes. Their
 saved instructions, records and artifact bytes remain readable; completing an

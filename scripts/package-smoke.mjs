@@ -478,7 +478,7 @@ try {
   await mkdir(join(vault, "CS101/_meta"), { recursive: true })
   cli(["context"])
   cli(["upcoming", "--course", "CS101"])
-  async function complete(task, frozen = false) {
+  async function complete(task, frozen = false, bundle = false) {
     const shown = cli(frozen ? ["simulate", "task", "show", task.id] : ["task", "show", task.id])
     assert.equal(shown.scope, frozen ? "frozen" : "ordinary")
     assert.equal(shown.locations.config, resolve(config))
@@ -513,10 +513,34 @@ try {
           : []),
       ].join("\n\n"),
     )
+    const manifestFile = join(workspace, `${task.id}.bundle.json`)
+    if (bundle) {
+      await writeFile(join(workspace, `${task.id}.csv`), "label,value\nsynthetic,6\n")
+      await writeFile(join(workspace, `${task.id}.py`), "print(2 * 3)\n")
+      await writeFile(
+        manifestFile,
+        JSON.stringify({
+          version: 1,
+          taskId: task.id,
+          primary: `${task.id}.md`,
+          files: [
+            { path: `${task.id}.csv`, role: "deliverable", purpose: "Synthetic result table" },
+            { path: `${task.id}.py`, role: "code", purpose: "Reproducible calculation" },
+          ],
+          checks: [{ description: "Synthetic arithmetic", result: "Harness reports 2 * 3 = 6" }],
+        }),
+      )
+    }
     const result = cli(
       frozen
         ? ["simulate", "task", "complete", task.id, "--file", file]
-        : ["task", "complete", task.id, "--file", file],
+        : [
+            "task",
+            "complete",
+            task.id,
+            bundle ? "--manifest" : "--file",
+            bundle ? manifestFile : file,
+          ],
     )
     if (record.workbookVersion) {
       const book = frozen ? result.workbook : result.task.workbook
@@ -594,6 +618,13 @@ try {
   await complete(revision)
   const approved = cli(["approve", draft.id])
   assert.equal(approved.workbook, undefined)
+  const bundledDraft = cli(["assignment", "CS101", "--source", prompt, "--mode", "draft"])
+  await complete(bundledDraft, false, true)
+  assert(cli(["task", "show", bundledDraft.id]).bundle)
+  assert(cli(["task", "output", bundledDraft.id]).bundle)
+  assert(cli(["inspect", bundledDraft.id]).bundle)
+  cli(["revise", bundledDraft.id, "--feedback", "Keep the synthetic result table."])
+  cli(["approve", bundledDraft.id])
   const snapshot = cli(["simulate", "capture", "CS101", "--as-of", "2026-10-09"])
   const earlier = cli(["simulate", "derive", snapshot.id, "--as-of", "2026-10-05"])
   assert.equal(earlier.derivedFrom.id, snapshot.id)

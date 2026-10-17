@@ -55,6 +55,7 @@ export interface WorkspaceContext {
   diagnostics: Diagnostic[]
 }
 export interface TaskRecord {
+  bundleHash?: string
   hostExecutionVersion?: 1
   version: 1
   deliverable?: import("../tasks/evidence/deliverable-evidence.js").DeliverableEvidence

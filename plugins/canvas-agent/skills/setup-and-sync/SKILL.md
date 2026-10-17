@@ -31,7 +31,7 @@ context; homework [--course COURSE]; timeline [--course COURSE]; vault health
 task list --course COURSE [--status pending|completed]; task show UUID
 prep COURSE [--week current|YYYY-MM-DD | --session SELECTOR]
 assignment COURSE --source VAULT_PROMPT --mode outline|draft|review|discuss [--work VAULT_WORK] [--context VAULT_PATH] [--message QUESTION]
-task complete UUID --file ABS_CANDIDATE.md; task output UUID; inspect UUID
+task complete UUID (--file ABS_CANDIDATE.md | --manifest ABS_JSON); task output UUID; inspect UUID
 revise UUID --feedback TEXT [--work VAULT_WORK]; approve UUID
 ```
 
@@ -41,7 +41,9 @@ These are subcommands, not chained shell examples; append explicit --config PATH
 
 Read validated task JSON/TASK.md before authoring: ID, course, mode, source bodies, full workflow instructions, required headings, questions, deliverable.scope, notices and destination. Saved custom/older requirements override defaults. Prep defaults to the host-local week; use an explicit Monday across timezones. Draft is finished work; outline, review and discussion are distinct outcomes below.
 
-Write a separate candidate: exact `Task: UUID`, `## Required heading`, `### Exact question/item`, exact saved source paths in backticks. Answer every scoped prompt/rubric requirement or state specific PENDING inputs. Execute every derived number, including intermediate operands/prose comparisons; verify inputs against sources and self-review coverage, claims and quotations. Use the coding harness and its tools for calculations, reproducible execution, spreadsheet creation and substantive review; preserve meaningful inputs, assumptions and results with the work. Validation is not a grade, permission or approval.
+Write a separate candidate in the task's private working directory: exact `Task: UUID`, `## Required heading`, `### Exact question/item`, exact saved source paths in backticks. Answer every scoped prompt/rubric requirement or state specific PENDING inputs. Execute every derived number, including intermediate operands/prose comparisons; verify inputs against sources and self-review coverage, claims and quotations. Use the coding harness and its tools for calculations, reproducible execution, spreadsheet creation and substantive review; preserve meaningful inputs, assumptions and results with the work. Validation is not a grade, permission or approval.
+
+For a multi-file deliverable, author it in the task's reported private `workingDirectory` and register it with `task complete UUID --manifest ABS_JSON`. Read the conditional bundle reference for the manifest schema, snapshot behavior and approval handling. Execution and check entries are harness reports; Canvas Agent does not execute commands or certify results.
 
 Revision preserves edits and produces a new full artifact. Approve only at explicit student direction: versioned local Finals/companions, never Canvas. Check spreadsheet cells/required formats; retries verify existing bytes.
 

@@ -14,8 +14,7 @@ Claude Code reads this file automatically. The canonical agent contract lives in
 
 - Discovery: `instructions --json`, `--help`, `doctor --offline`, `context`, `homework`, `timeline`
 - Course work: `prep COURSE ...`, `assignment COURSE --source ... --mode ...`
-- Task lifecycle: `task show UUID`, `task complete UUID --file ABS_CANDIDATE.md`, `inspect UUID`, `revise UUID --feedback ...`, `approve UUID`
-- Checks: `calculate --task UUID --file ABS_BATCH.json`, `check-numbers UUID --file ABS_CANDIDATE.md`
+- Task lifecycle: `task show UUID`, `task complete UUID --file ABS_CANDIDATE.md` or `--manifest ABS_JSON`, `inspect UUID`, `revise UUID --feedback ...`, `approve UUID`
 
 ## Safety invariants (do not violate)
 
@@ -38,5 +37,5 @@ npm run package:smoke
 ## Where changes belong
 
 - Source only in `src/`; `src/cli.ts` is just the executable entry.
-- Shared contract changes go in `plugins/canvas-agent/references/cli.md` (and academic workflows in `src/tasks/workflows.ts`), then run `npm run context:sync`; `npm run context:check` rejects drift.
+- Shared contract changes go in `plugins/canvas-agent/references/cli.md` (and academic workflows in `src/tasks/authoring/workflows.ts`), then run `npm run context:sync`; `npm run context:check` rejects drift.
 - Read `docs/ARCHITECTURE.md` and `docs/DEVELOPMENT.md` before structural edits.

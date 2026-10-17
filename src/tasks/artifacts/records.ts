@@ -82,6 +82,10 @@ const SourceSchema = z
 const SavedTaskShape = z
   .object({
     version: z.literal(1),
+    bundleHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     deliverable: DeliverableEvidenceSchema.optional(),
     deliverableScopeVersion: z.literal(1).optional(),
     deliverableParserVersion: z.union([z.literal(2), z.literal(3)]).optional(),
