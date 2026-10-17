@@ -7,7 +7,7 @@ import type { SourceRecord, TaskRecord } from "../../shared/types.js"
 import { inspectWorkspace, selectCourse } from "../../vault/workspace.js"
 import { createAssignmentTask } from "../authoring/creation.js"
 import { selectAssignmentInputs } from "../authoring/recipes.js"
-import { verifyWorkbookFile } from "../calculations/draft-workbook.js"
+import { verifyWorkbookFile } from "../compatibility/draft-workbook.js"
 import { captureRevisionEdits } from "../evidence/revision-edits.js"
 import { artifactBaseName, assignmentFinalsDirectory, nextArtifactName } from "./artifact-layout.js"
 import { readVerifiedCompletedOutput } from "./completion.js"
@@ -71,6 +71,7 @@ export async function reviseTask(
       const existing = await readTask(vault, name)
       if (
         existing.parentTaskId === parent.id &&
+        existing.hostExecutionVersion === 1 &&
         existing.workflow?.version === 3 &&
         existing.groupScopeVersion === 1 &&
         existing.deliverable?.version === 1 &&

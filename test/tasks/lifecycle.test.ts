@@ -4,15 +4,17 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { CourseContext, WorkspaceContext } from "../../src/shared/types.js"
+import { createLegacyAssignmentTask } from "../helpers/legacy-execution.js"
 
 const workspace = vi.hoisted(() => ({ inspectWorkspace: vi.fn(), selectCourse: vi.fn() }))
 vi.mock("../../src/vault/workspace.js", () => workspace)
 
 import type { ToolkitConfig } from "../../src/shared/types.js"
 import { completeTask } from "../../src/tasks/artifacts/completion.js"
+import { compareTasks } from "../../src/tasks/artifacts/inspection.js"
 import { approveTask, reviseTask } from "../../src/tasks/artifacts/lifecycle.js"
-import { createAssignmentTask, readTask } from "../../src/tasks/store.js"
-import { compareTasks, reviewGate } from "../../src/tasks/tools.js"
+import { readTask } from "../../src/tasks/store.js"
+import { reviewGate } from "../../src/tasks/tools.js"
 
 const digest = (text: string) => createHash("sha256").update(text).digest("hex")
 let vault = ""
@@ -53,7 +55,7 @@ async function setup() {
 async function completedDraft(extra = "") {
   const prompt = course.sources[0]
   if (!prompt) throw new Error("Fixture prompt is missing")
-  const task = await createAssignmentTask(vault, "GSB-101", prompt.path, "draft")
+  const task = await createLegacyAssignmentTask(vault, "GSB-101", prompt.path, "draft")
   const body = task.requirements
     .map((heading) =>
       heading === "Sources"
@@ -143,7 +145,7 @@ describe("assignment lifecycle", () => {
     expect(
       (await compareTasks(vault, withBook.task.id, empty.task.id)).automaticWorkbooks.change,
     ).toBe("removed")
-    const pending = await createAssignmentTask(
+    const pending = await createLegacyAssignmentTask(
       vault,
       "GSB-101",
       course.sources[0]?.path ?? "missing",
@@ -168,7 +170,7 @@ describe("assignment lifecycle", () => {
   it("recovers a paired interrupted completion without replacing protected workbook versions", async () => {
     await setup()
     const prompt = course.sources[0]?.path ?? "missing"
-    const task = await createAssignmentTask(vault, "GSB-101", prompt, "draft")
+    const task = await createLegacyAssignmentTask(vault, "GSB-101", prompt, "draft")
     const text = `Task: ${task.id}\n\n${task.requirements.map((heading) => `## ${heading}\n${heading === "Sources" ? `\`${prompt}\`` : "Synthetic grounded structural response."}`).join("\n\n")}\n\n### Schedule\n| Label | Value |\n| --- | --- |\n| Cash | 500 |\n`
     await writeFile(candidate, text)
     const destination = join(vault, task.destination)
@@ -187,7 +189,7 @@ describe("assignment lifecycle", () => {
     expect(recovered.task.workbook?.path).toBe(output.replace(/\.md$/, ".xlsx"))
     expect(await readFile(protectedPath, "utf8")).toBe("student-owned workbook")
     expect((await completeTask(vault, task.id, candidate)).output).toBe(output)
-    const next = await createAssignmentTask(vault, "GSB-101", prompt, "draft")
+    const next = await createLegacyAssignmentTask(vault, "GSB-101", prompt, "draft")
     await writeFile(candidate, text.replace(task.id, next.id))
     const fresh = await completeTask(vault, next.id, candidate)
     expect(fresh.output).toBe(`${task.destination}/01 Assignment Draft.v3.md`)
@@ -198,7 +200,7 @@ describe("assignment lifecycle", () => {
   it("does not retrofit workbook behavior into coherent older draft records", async () => {
     await setup()
     const prompt = course.sources[0]?.path ?? "missing"
-    const task = await createAssignmentTask(vault, "GSB-101", prompt, "draft")
+    const task = await createLegacyAssignmentTask(vault, "GSB-101", prompt, "draft")
     const recordPath = join(vault, "_meta/tasks", task.id, "task.json")
     const older = JSON.parse(await readFile(recordPath, "utf8"))
     delete older.workbookVersion
@@ -234,14 +236,13 @@ describe("assignment lifecycle", () => {
     await expect(approveTask(vault, completed.task.id)).rejects.toThrow(/workbook.*modified/i)
     await writeFile(path, original)
     const revised = await reviseTask(vault, completed.task.id, "Revise this.")
-    expect(revised.workbookVersion).toBe(1)
+    expect(revised.hostExecutionVersion).toBe(1)
+    expect(revised.workbookVersion).toBeUndefined()
     const revisedText = (await readFile(candidate, "utf8")).replace(completed.task.id, revised.id)
     await writeFile(candidate, revisedText)
     const revisedCompletion = await completeTask(vault, revised.id, candidate)
     expect(revisedCompletion.output).toContain(".v2.md")
-    expect(await readFile(join(vault, revisedCompletion.task.workbook?.path ?? "missing"))).toEqual(
-      original,
-    )
+    expect(revisedCompletion.task.workbook).toBeUndefined()
     expect(await readFile(path)).toEqual(original)
     const finalDir = "GSB-101/Assignments/Case/Finals"
     await mkdir(join(vault, finalDir), { recursive: true })

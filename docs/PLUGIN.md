@@ -41,7 +41,7 @@ coding hosts may process private context and charge. The CLI never submits.
 
 AGENTS and all three skills embed the same core CLI contract and compact academic
 outcomes. Maintainers edit plugins/canvas-agent/references/cli.md and
-src/tasks/workflows.ts, then run context:sync. context:check rejects drift;
+src/tasks/authoring/workflows.ts, then run context:sync. context:check rejects drift;
 the full default workflow reference is generated beside the CLI reference.
 Saved task instructions and custom requirements govern actual work.
 

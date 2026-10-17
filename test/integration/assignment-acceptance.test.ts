@@ -96,6 +96,11 @@ describe("compiled assignment handoffs", () => {
           requirements.sections,
           requirements.questions,
           requirements.guidanceInstructions,
+          3,
+          task.deliverable,
+          task.assignmentStructureVersion,
+          task.answerEvidenceVersion,
+          task.hostExecutionVersion,
         ),
       )
       expect(task.sources.map((source: { path: string }) => source.path)).toEqual(

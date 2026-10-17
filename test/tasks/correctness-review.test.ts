@@ -11,7 +11,7 @@ import {
   showCorrectnessReview,
 } from "../../src/tasks/review/correctness-review.js"
 import { createAssignmentTask } from "../../src/tasks/store.js"
-import { calculateTask } from "../../src/tasks/tools.js"
+import { calculateTask } from "../helpers/legacy-execution.js"
 
 const roots: string[] = []
 afterEach(async () => {
@@ -120,7 +120,7 @@ it("makes an empty calculation log explicit and refuses stale, corrupted or subs
   const f = await fixture(false)
   const review = await prepareCorrectnessReview(f.vault, f.task.id)
   expect(await readFile(review.handoffPath, "utf8")).toContain(
-    "## Recomputed recorded calculations\n[]",
+    "## Historical recorded calculations\n[]",
   )
   const handoff = await readFile(review.handoffPath)
   await writeFile(join(f.vault, f.prompt), "Changed source")
@@ -213,7 +213,7 @@ it("allows citations to the validated draft under review but not another draft p
   )
 })
 
-it("replays the retained forward-host note against the original synthetic sources and preserves the seven-file baseline", async () => {
+it("replays the retained forward-host note against the original synthetic sources and preserves the six-file baseline", async () => {
   const created = spawnSync(
     process.execPath,
     [resolve("test/helpers/create-correctness-fixture.mjs")],
@@ -252,7 +252,7 @@ it("replays the retained forward-host note against the original synthetic source
     saved.reviewHash,
   )
   const baseline = JSON.parse(await readFile(join(fixture.root, "baseline.json"), "utf8"))
-  expect(baseline).toHaveLength(7)
+  expect(baseline).toHaveLength(6)
   const { createHash } = await import("node:crypto")
   for (const entry of baseline)
     expect(

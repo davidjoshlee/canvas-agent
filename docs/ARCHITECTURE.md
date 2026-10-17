@@ -28,12 +28,12 @@ Canvas GET → synced vault → local course inventory
 | src/tasks/authoring | Task source selection, requirements and workflow definitions |
 | src/tasks/evidence | Deliverable, answer and revision evidence |
 | src/tasks/artifacts | Task records, validation, inspection and artifact lifecycle |
-| src/tasks/calculations | Arithmetic, workbooks and numeric review |
+| src/tasks/compatibility | Historical calculation records and workbook recipe validation |
 | src/tasks/review | Correctness-review handoffs |
 | src/guidance | Course/assignment guidance and inactive proposals |
 | src/feedback | Private own-feedback history and read-only older snapshot formats |
 | src/student | On-demand upcoming work, timeline and calendar |
-| src/simulation | Frozen source captures, saved tasks, calculations and workbook evidence |
+| src/simulation | Frozen source captures, saved tasks and historical evidence readers |
 | src/usage | Explicit host-export usage and cost reporting |
 | tools/evaluation | Checkout-only dogfood, sweeps, experiment windows and human comparison reports |
 | src/shared | Filesystem safety, bounded JSON and shared persisted types |
@@ -64,10 +64,11 @@ Runtime modules never import development tooling.
   inspects snapshots, and owns validated versioned writes and approval. tasks/store
   retains explicit compatibility exports, while production callers use the owning
   modules.
-- tasks/calculations contains deterministic arithmetic and workbook creation;
-  tasks/evidence captures deliverable, answer and revision evidence. Task-bound
-  tools own calculation/artifact recording. Frozen workbook inventory accepts saved
-  task context rather than calling back into task creation/completion.
+- The coding harness owns assignment execution and artifact creation.
+  tasks/compatibility rechecks historical calculation records and workbook bytes;
+  old pending workbook recipes retain their original completion behavior. New
+  tasks carry hostExecutionVersion and do not generate workbook companions.
+  tasks/evidence captures deliverable, answer and revision evidence.
 - tasks/review prepares and saves correctness-review handoffs; it does not certify
   academic correctness.
 - Shared instructions come from one CLI contract; task workflow instructions come

@@ -3,11 +3,6 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { runCli } from "../../src/cli/program.js"
-import {
-  CALCULATION_OPERATIONS,
-  calculateValues,
-  parseCalculationBatch,
-} from "../../src/tasks/tools.js"
 import { type CanvasFetch, createCanvasTestTransport } from "../helpers/canvas-client.js"
 
 const roots: string[] = []
@@ -63,22 +58,6 @@ it("reports the package version without loading a missing configuration or conta
   for (const flag of ["--version", "-V"]) {
     const result = await invoke(["--config", join(root, "missing.json"), flag])
     expect(result).toEqual({ stdout: `${version}\n`, stderr: "", exitCode: 0 })
-  }
-})
-
-it("advertises supported arithmetic and a runnable batch shape in both calculator help commands", async () => {
-  for (const args of [
-    ["calculate", "--help"],
-    ["simulate", "task", "calculate", "--help"],
-  ]) {
-    const result = await invoke(args)
-    expect(result.exitCode, result.stderr).toBe(0)
-    for (const operation of CALCULATION_OPERATIONS) expect(result.stdout).toContain(operation)
-    const example = result.stdout.match(/Batch file: (\{[^\n]+\})/)?.[1]
-    expect(example).toBeDefined()
-    const batch = parseCalculationBatch(JSON.parse(example ?? ""))
-    expect(batch).toHaveLength(1)
-    expect(calculateValues(batch[0]?.operation ?? "", batch[0]?.values ?? [])).toBe(3)
   }
 })
 

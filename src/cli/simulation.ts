@@ -1,7 +1,7 @@
 import type { Command } from "commander"
 import { loadConfig } from "../config/index.js"
 import type { ToolkitConfig } from "../shared/types.js"
-import { calculateSimulationBatch, readSimulationCalculations } from "../simulation/calculations.js"
+import { readSimulationCalculations } from "../simulation/calculations.js"
 import {
   captureSimulation,
   deriveSimulationCapture,
@@ -14,11 +14,8 @@ import {
   inspectSimulationTask,
   listSimulationTasks,
 } from "../simulation/tasks.js"
-import { createSimulationWorkbook, readSimulationWorkbooks } from "../simulation/workbooks.js"
+import { readSimulationWorkbooks } from "../simulation/workbooks.js"
 import { taskInspectionCommand, taskLocations } from "../tasks/artifacts/locations.js"
-import { CALCULATION_OPERATIONS } from "../tasks/calculations/calculation-core.js"
-import { readCalculationBatchFile } from "../tasks/calculations/calculation-input.js"
-import { checkFrozenTaskNumbers } from "../tasks/calculations/numeric-review.js"
 import { vaultMutation } from "../vault/command-effects.js"
 import { readTaskOutput } from "./task-output.js"
 
@@ -112,25 +109,6 @@ export function registerSimulationCommands(program: Command): void {
     .command("task")
     .description("persist and validate fixed-snapshot generation handoffs")
   simulationTask
-    .command("check-numbers <id>")
-    .description(
-      "review a frozen candidate's numeric presence; no current-source reads or academic verdict",
-    )
-    .requiredOption("--file <path>", "absolute structurally valid Markdown candidate")
-    .option("--json", "emit numeric findings only")
-    .action(async (id: string, options, command: Command) => {
-      const result = await checkFrozenTaskNumbers(
-        (await commandConfig(command)).vault.path,
-        id,
-        options.file,
-      )
-      render(
-        result,
-        options.json,
-        `Frozen numeric review: ${result.flagged.length} value(s) need review. ${result.limitation}`,
-      )
-    })
-  simulationTask
     .command("list")
     .description("discover immutable frozen task recipes without current sources or output bodies")
     .requiredOption("--course <code>", "explicit saved course code")
@@ -158,22 +136,6 @@ export function registerSimulationCommands(program: Command): void {
       )
     })
   simulationTask
-    .command("workbook <id>")
-    .hook("preAction", vaultMutation())
-    .description("save a private values-only workbook bound to selected fixed evidence")
-    .requiredOption("--file <path>", "absolute bounded sheets/rows JSON file")
-    .option("--source <path>", "optional exact selected frozen source as context")
-    .option("--json", "emit companion metadata, not cell contents")
-    .action(async (id: string, options, command: Command) => {
-      const result = await createSimulationWorkbook(
-        (await commandConfig(command)).vault.path,
-        id,
-        options.file,
-        options.source,
-      )
-      render(result, options.json, `Private evaluation workbook: ${result.output}\n${result.note}`)
-    })
-  simulationTask
     .command("workbooks <id>")
     .description("revalidate this evaluation's private workbook companions")
     .option("--json", "emit companion metadata, not cell contents")
@@ -183,57 +145,6 @@ export function registerSimulationCommands(program: Command): void {
         result,
         options.json,
         `Validated ${result.records.length} private workbook companion(s); grounding remains unverified.`,
-      )
-    })
-  simulationTask
-    .command("calculate <id>")
-    .hook("preAction", vaultMutation())
-    .description("execute bounded arithmetic bound to this evaluation's selected frozen evidence")
-    .option("--operation <operation>", `supported operation: ${CALCULATION_OPERATIONS.join(", ")}`)
-    .option("--values <values>", "comma-separated finite numeric inputs")
-    .option("--rate <number>", "NPV discount rate only")
-    .option(
-      "--source <path>",
-      "optional exact selected frozen source as context, not proof of grounding",
-    )
-    .option("--file <path>", "bounded JSON batch; each operation supplies its own source")
-    .option("--json", "emit private numeric evidence, never source bodies")
-    .addHelpText("after", '\nBatch file: {"operations":[{"operation":"sum","values":[1,2]}]}')
-    .action(async (id: string, options, command: Command) => {
-      if (
-        (options.file &&
-          (options.operation !== undefined ||
-            options.values !== undefined ||
-            options.rate !== undefined ||
-            options.source !== undefined)) ||
-        (!options.file && (!options.operation || options.values === undefined))
-      )
-        throw new Error(
-          "Choose --file or --operation with --values; batch sources/rates belong in its operations",
-        )
-      const items = options.file
-        ? await readCalculationBatchFile(options.file)
-        : [
-            {
-              operation: options.operation,
-              values: (options.values as string).split(",").map((value) => {
-                if (!value.trim() || !Number.isFinite(Number(value)))
-                  throw new Error("Values must be finite comma-separated numbers")
-                return Number(value)
-              }),
-              ...(options.rate !== undefined ? { rate: Number(options.rate) } : {}),
-              ...(options.source !== undefined ? { source: options.source } : {}),
-            },
-          ]
-      const result = await calculateSimulationBatch(
-        (await commandConfig(command)).vault.path,
-        id,
-        items,
-      )
-      render(
-        result,
-        options.json,
-        `${result.results.map((entry) => `${entry.operation}: ${entry.result}`).join("\n")}\n${result.note}`,
       )
     })
   simulationTask

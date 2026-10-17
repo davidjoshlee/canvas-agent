@@ -67,20 +67,6 @@ const draft = cli(
 const shown = frozen
   ? cli(["simulate", "task", "show", draft.id]).task
   : cli(["task", "show", draft.id])
-for (const [operation, values] of [
-  ["multiply", "4,3"],
-  ["multiply", "2,3"],
-  ["subtract", "12,6"],
-])
-  cli([
-    ...(frozen ? ["simulate", "task", "calculate", draft.id] : ["calculate", "--task", draft.id]),
-    "--operation",
-    operation,
-    "--values",
-    values,
-    "--source",
-    reading,
-  ])
 const flawed =
   'Pilot revenue is 12 and variable cost is 6, so contribution is 8. The source concludes "This pilot proves scalability." I recommend immediate full rollout; there are no missing inputs or design limitations.'
 const candidate = join(root, "synthetic-draft.md")

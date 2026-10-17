@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import JSZip from "jszip"
 import { afterEach, expect, it } from "vitest"
+import { harnessCalculations } from "../helpers/harness-calculations.js"
 
 const roots: string[] = []
 const fixtures = resolve("test/fixtures/host-numeric")
@@ -19,7 +19,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-it("replays host co-edit revision and explicit synthetic local approval with both artifact pairs preserved", async () => {
+it("replays host co-edit revision and explicit synthetic local approval with draft versions preserved", async () => {
   const root = await mkdtemp(join(tmpdir(), "canvas-host-lifecycle-replay-"))
   roots.push(root)
   const vault = join(root, "vault"),
@@ -53,7 +53,13 @@ it("replays host co-edit revision and explicit synthetic local approval with bot
     "--context",
     reading,
   ])
-  cli(["calculate", "--task", parent.id, "--file", join(fixtures, "calculations.json")])
+  harnessCalculations([
+    "calculate",
+    "--task",
+    parent.id,
+    "--file",
+    join(fixtures, "calculations.json"),
+  ])
   const parentFile = join(root, "parent.md")
   await writeFile(
     parentFile,
@@ -62,7 +68,6 @@ it("replays host co-edit revision and explicit synthetic local approval with bot
   const prior = cli(["task", "complete", parent.id, "--file", parentFile])
   const parentPaths = [
     join(vault, prior.output),
-    join(vault, prior.task.workbook.path),
     join(vault, "_meta/tasks", parent.id, "task.json"),
   ]
   const parentBytes = await Promise.all(parentPaths.map((path) => readFile(path)))
@@ -88,7 +93,7 @@ it("replays host co-edit revision and explicit synthetic local approval with bot
   expect(recipe.sources.find((source: { path: string }) => source.path === prior.output).text).toBe(
     parentBytes[0]?.toString(),
   )
-  const numbers = cli([
+  const numbers = harnessCalculations([
     "calculate",
     "--task",
     revision.id,
@@ -109,15 +114,12 @@ it("replays host co-edit revision and explicit synthetic local approval with bot
   const approved = cli(["approve", revision.id])
   const paths = [
     join(vault, completed.output),
-    join(vault, completed.task.workbook.path),
     join(vault, approved.output),
-    join(vault, approved.workbook.path),
     join(vault, "_meta/tasks", revision.id, "task.json"),
   ]
   const retained = await Promise.all(paths.map((path) => readFile(path)))
   expect(retained[0]?.toString()).toBe(text)
-  expect(retained[2]).toEqual(retained[0])
-  expect(retained[3]).toEqual(retained[1])
+  expect(retained[1]).toEqual(retained[0])
   expect(cli(["approve", revision.id]).output).toBe(approved.output)
   cli(["task", "complete", revision.id, "--file", candidate])
   expect(await Promise.all(paths.map((path) => readFile(path)))).toEqual(retained)
@@ -194,7 +196,7 @@ it.each(["primary", "luna"] as const)(
       "Discussion points",
       "Sources",
     ])
-    const calculations = cli([
+    const calculations = harnessCalculations([
       "calculate",
       "--task",
       created.id,
@@ -293,7 +295,7 @@ it("replays a source-based review of flawed work without rewriting or approving 
   expect(recipe.sources.find((source: { path: string }) => source.path === work).text).toBe(
     originalWork.toString(),
   )
-  const numbers = cli([
+  const numbers = harnessCalculations([
     "calculate",
     "--task",
     created.id,
@@ -391,7 +393,7 @@ it.each(["ordinary", "frozen"] as const)(
     expect(
       recipe.sources.find((source: { path: string }) => source.path === reading).text,
     ).toContain("## Part 1")
-    const calculation = cli(
+    const calculation = harnessCalculations(
       frozen
         ? [
             "simulate",
@@ -403,9 +405,9 @@ it.each(["ordinary", "frozen"] as const)(
           ]
         : ["calculate", "--task", created.id, "--file", join(fixtures, "calculations.json")],
     )
-    expect(
-      (frozen ? calculation.results : calculation).map((row: { result: number }) => row.result),
-    ).toEqual([30000, 18000, 20, 4000, 400])
+    expect(calculation.map((row: { result: number }) => row.result)).toEqual([
+      30000, 18000, 20, 4000, 400,
+    ])
     const candidate = join(root, "candidate.md")
     const text = (await readFile(join(fixtures, "candidate.md"), "utf8")).replace(
       "{{TASK_ID}}",
@@ -420,32 +422,18 @@ it.each(["ordinary", "frozen"] as const)(
       )
     const completed = complete()
     const outputPath = join(vault, completed.output)
-    const workbookPath = join(
-      vault,
-      frozen ? completed.workbook.output : completed.task.workbook.path,
-    )
     const recordPath = join(
       vault,
       frozen
         ? `_meta/simulations/tasks/${created.id}/record.json`
         : `_meta/tasks/${created.id}/task.json`,
     )
-    const retained = await Promise.all(
-      [outputPath, workbookPath, recordPath].map((path) => readFile(path)),
-    )
+    const retained = await Promise.all([outputPath, recordPath].map((path) => readFile(path)))
     expect(retained[0]?.toString()).toBe(text)
-    const book = await JSZip.loadAsync(retained[1] ?? Buffer.alloc(0))
-    expect(await book.file("xl/workbook.xml")?.async("string")).toContain(
-      "Incremental launch scenario",
-    )
-    const cells = await book.file("xl/worksheets/sheet1.xml")?.async("string")
-    expect(cells).toContain("<v>4000</v>")
-    expect(cells).toContain("<v>400</v>")
-    expect(cells).not.toContain("<f>")
     complete()
-    expect(
-      await Promise.all([outputPath, workbookPath, recordPath].map((path) => readFile(path))),
-    ).toEqual(retained)
+    expect(await Promise.all([outputPath, recordPath].map((path) => readFile(path)))).toEqual(
+      retained,
+    )
     for (const [path, bytes] of originals) expect(await readFile(join(vault, path))).toEqual(bytes)
     if (frozen) {
       expect(completed.verdict).toBe("pending-human")
@@ -454,9 +442,7 @@ it.each(["ordinary", "frozen"] as const)(
       expect(recovered.state).toBe("completed-pending-human")
       expect(JSON.stringify(recovered)).not.toContain("NEWER_LIVE_SOURCE")
       const evidence = cli(["simulate", "task", "calculations", created.id])
-      expect(evidence.records[0].results.map((row: { result: number }) => row.result)).toEqual([
-        30000, 18000, 20, 4000, 400,
-      ])
+      expect(evidence.records).toEqual([])
       complete()
       expect(await readFile(outputPath)).toEqual(retained[0])
     } else {

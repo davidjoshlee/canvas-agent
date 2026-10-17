@@ -132,6 +132,7 @@ describe("safe task completion", () => {
     const taskPath = join(vault, "_meta", "tasks", task.id, "task.json")
     const legacy = JSON.parse(await readFile(taskPath, "utf8"))
     delete legacy.period
+    delete legacy.hostExecutionVersion
     delete legacy.workflow
     delete legacy.answerEvidenceVersion
     delete legacy.questions

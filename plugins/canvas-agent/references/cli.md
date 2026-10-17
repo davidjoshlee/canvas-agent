@@ -30,8 +30,6 @@ prep COURSE [--week current|YYYY-MM-DD | --session SELECTOR]
 assignment COURSE --source VAULT_PROMPT --mode outline|draft|review|discuss [--work VAULT_WORK] [--context VAULT_PATH] [--message QUESTION]
 task complete UUID --file ABS_CANDIDATE.md; task output UUID; inspect UUID
 revise UUID --feedback TEXT [--work VAULT_WORK]; approve UUID
-calculate --task UUID --file ABS_BATCH.json
-check-numbers UUID --file ABS_CANDIDATE.md
 ```
 
 These are subcommands, not chained shell examples; append explicit --config PATH and --json for machine output. Recover saved work with task list/show/output, not replacements. A missing TASK.md can be reported by task show JSON without repairing history. Listings are metadata, not proof of live jobs, policy, output or currentness.
@@ -40,13 +38,13 @@ These are subcommands, not chained shell examples; append explicit --config PATH
 
 Read validated task JSON/TASK.md before authoring: ID, course, mode, source bodies, full workflow instructions, required headings, questions, deliverable.scope, notices and destination. Saved custom/older requirements override defaults. Prep defaults to the host-local week; use an explicit Monday across timezones. Draft is finished work; outline, review and discussion are distinct outcomes below.
 
-Write a separate candidate: exact `Task: UUID`, `## Required heading`, `### Exact question/item`, exact saved source paths in backticks. Answer every scoped prompt/rubric requirement or state specific PENDING inputs. Execute every derived number, including intermediate operands/prose comparisons; verify inputs against sources and self-review coverage, claims and quotations. Batch: `{"operations":[{"operation":"sum","values":[1,2]}]}`. Use check-numbers before quantitative completion; no flags/source-result matches prove grounding or correctness. Validation is not a grade, permission or approval.
+Write a separate candidate: exact `Task: UUID`, `## Required heading`, `### Exact question/item`, exact saved source paths in backticks. Answer every scoped prompt/rubric requirement or state specific PENDING inputs. Execute every derived number, including intermediate operands/prose comparisons; verify inputs against sources and self-review coverage, claims and quotations. Use the coding harness and its tools for calculations, reproducible execution, spreadsheet creation and substantive review; preserve meaningful inputs, assumptions and results with the work. Validation is not a grade, permission or approval.
 
 Revision preserves edits and produces a new full artifact. Approve only at explicit student direction: versioned local Finals/companions, never Canvas. Check spreadsheet cells/required formats; retries verify existing bytes.
 
 ### Conditional detail
 
-Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, vault history, playbooks/feedback, guidance, correctness, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
+Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, vault history, playbooks/feedback, guidance, correctness, ingest/extraction, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
 <!-- canvas-agent-cli:end -->
 
 ### Installed instruction lookup
@@ -151,26 +149,28 @@ compares recorded evidence. A missing TASK.md can be reported without repairing
 history. Pending/completed listings are durable state, not live process status.
 Preserve task IDs and saved bytes after interruption; discover before recreating.
 
-## Arithmetic, numeric checks and workbooks
+## Harness-owned execution and saved artifacts
 
-calculate --task UUID --file ABS_BATCH.json executes bounded arithmetic.
-A batch is {"operations":[{"operation":"sum","values":[1,2]}]}.
-Read calculate --help for supported operations and arguments. No arbitrary code
-is executed. Source attribution records a claim, not proof of grounded inputs.
-Use approved task source paths and verify every input yourself.
+The coding harness owns reasoning, calculations, spreadsheet and other artifact
+creation, and substantive review. Use its tools to execute derived values and
+inspect formulas, cells and required formats. Preserve reproducible code, inputs,
+assumptions and results alongside the work. Canvas Agent captures course context,
+creates task handoffs and validates/saves local Markdown outputs; it does not
+execute assignment calculations, generate workbooks or certify correctness.
+Harness-created companion files remain student-owned; task completion does not
+register, copy, approve or verify arbitrary external artifacts.
 
-Execute derived numbers, including intermediate values and prose comparisons.
-check-numbers UUID --file ABS_CANDIDATE.md highlights numerical evidence issues;
-it does not certify correctness, completeness or source grounding. A clean
-report is not an academic grade. Use correctness prepare UUID, read its handoff,
-author a separate review and correctness save REVIEW_ID --file ABS_REVIEW.md.
-Correctness reviews do not replace, revise or approve the reviewed artifact.
+Older tasks may contain calculation logs and automatic workbook recipes. Their
+saved instructions, records and artifact bytes remain readable; completing an
+older pending recipe preserves its original companion behavior. New tasks do not
+create automatic workbooks. Read-only `simulate task calculations` and
+`simulate task workbooks` inspect historical frozen records; they do not create
+new calculations or workbooks. Never delete or rewrite old logs or companions.
 
-workbook UUID --file ABS_SHEETS.json accepts bounded values-only JSON:
-{"sheets":[{"name":"Sheet","rows":[["Label",1]]}]}.
-Check required deliverable formats, formulas and cell meaning yourself.
-Automatic draft workbook companions and completion retries preserve saved versions;
-do not overwrite or manually repair companion/task records.
+Use correctness prepare UUID for a separate host-authored review handoff, then
+correctness save REVIEW_ID --file ABS_REVIEW.md. The reviewer uses the coding
+harness for independent execution. Historical CLI logs are optional context;
+absence of those logs says nothing about harness execution.
 
 ## Guidance and feedback
 
@@ -227,7 +227,7 @@ is configured by the CLI. Exported files are not another working vault.
 ## Frozen simulation and usage
 
 Evaluation is isolated from ordinary student tasks. simulate --help exposes
-capture, derived views, frozen tasks, calculations and workbooks.
+capture, derived views and frozen tasks, with read compatibility for older calculation/workbook evidence.
 A capture saves current eligible source versions with explicit cutoff evidence;
 it does not reconstruct past access or silently borrow newer live content.
 Use simulate list and simulate task list to discover
@@ -235,7 +235,7 @@ saved IDs before creating replacements. Consult each subcommand's --help for sco
 
 Frozen task output is read with simulate task output UUID. Frozen authoring uses
 only the saved capture and embedded task, never live course files. Numeric logs
-use simulate task calculate; workbooks/completion are separate frozen commands.
+use the coding harness for execution; frozen completion and archived evidence inspection are separate commands.
 Human verdicts are explicit; never fabricate scores, approvals or historical facts.
 
 Dogfood/sweeps, simulation windows/comparisons and gate m1 belong to the

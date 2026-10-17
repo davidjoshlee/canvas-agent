@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { expect, it } from "vitest"
+import { markLegacyTask } from "../helpers/legacy-execution.js"
 
 it("resumes a killed completion between Markdown and workbook commits without allocating a new version", async () => {
   const root = await mkdtemp(join(tmpdir(), "canvas-completion-kill-"))
@@ -33,6 +34,7 @@ it("resumes a killed completion between Markdown and workbook commits without al
     )
     const sourceBefore = await readFile(join(vault, prompt))
     const task = command(["assignment", "CS101", "--source", prompt, "--mode", "draft"])
+    await markLegacyTask(vault, task.id)
     const shown = command(["task", "show", task.id])
     const recordPath = join(vault, "_meta/tasks", task.id, "task.json")
     const recordBefore = await readFile(recordPath)
@@ -55,7 +57,7 @@ it("resumes a killed completion between Markdown and workbook commits without al
     // durable Markdown hard link, before workbook/task-record writes.
     const program = `
       import fs from "node:fs/promises";
-      import {syncBuiltinESMExports} from "node:module";
+      import { syncBuiltinESMExports } from "node:module";
       const link=fs.link;
       fs.link=async(from,to)=>{
         await link(from,to);

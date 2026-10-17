@@ -203,8 +203,8 @@ it("recovers a recipe after its actual writer process is killed before saving th
   // boundary, after task.json but before TASK.md. No production fault hook.
   const program = `
     import fs from "node:fs/promises";
-    import {syncBuiltinESMExports} from "node:module";
-    import {basename,dirname} from "node:path";
+    import { syncBuiltinESMExports } from "node:module";
+    import { basename, dirname } from "node:path";
     const write=fs.writeFile;
     fs.writeFile=async(path,...args)=>{
       if(String(path).endsWith("/TASK.md")) {

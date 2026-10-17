@@ -54,7 +54,18 @@ function renderWorkflowBlock(mode, full) {
   const kind = mode === "prep" ? "prep" : "assignment"
   const assignmentMode = mode === "prep" ? undefined : mode
   const requirements = resolveRequirements(kind, assignmentMode, [], [])
-  const workflow = workflowForRequirements(kind, assignmentMode, requirements.sections, [], [])
+  const workflow = workflowForRequirements(
+    kind,
+    assignmentMode,
+    requirements.sections,
+    [],
+    [],
+    3,
+    undefined,
+    undefined,
+    undefined,
+    1,
+  )
   return [
     `<!-- canvas-agent-workflow:${mode}:start -->`,
     `### ${mode === "prep" ? "Prep" : `Assignment ${mode}`} outcome`,

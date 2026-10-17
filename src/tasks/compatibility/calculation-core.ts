@@ -1,4 +1,4 @@
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+const _isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
 export const CALCULATION_OPERATIONS = [
@@ -83,50 +83,4 @@ export function calculateValues(operation: string, values: number[], rate?: numb
   }
   if (!Number.isFinite(result)) throw new Error("Operation result is not finite")
   return result
-}
-
-export interface CalculationBatchItem {
-  operation: string
-  values: number[]
-  rate?: number
-  source?: string
-}
-
-/** Parse a small, strict JSON batch of safe numeric operations. */
-export function parseCalculationBatch(raw: unknown): CalculationBatchItem[] {
-  if (
-    !isRecord(raw) ||
-    Object.keys(raw).some((key) => key !== "operations") ||
-    !Array.isArray(raw.operations) ||
-    raw.operations.length < 1 ||
-    raw.operations.length > 100
-  )
-    throw new Error("Calculation JSON must contain 1 to 100 operations")
-  return raw.operations.map((entry) => {
-    if (
-      !isRecord(entry) ||
-      Object.keys(entry).some((key) => !["operation", "values", "rate", "source"].includes(key)) ||
-      typeof entry.operation !== "string" ||
-      !Array.isArray(entry.values) ||
-      entry.values.length < 1 ||
-      entry.values.length > 1000 ||
-      !entry.values.every((value) => typeof value === "number" && Number.isFinite(value))
-    )
-      throw new Error(
-        "Each calculation must contain a supported operation and 1 to 1,000 finite numeric values",
-      )
-    if (
-      entry.rate !== undefined &&
-      (typeof entry.rate !== "number" || !Number.isFinite(entry.rate))
-    )
-      throw new Error("Calculation rate must be finite")
-    if (entry.source !== undefined && typeof entry.source !== "string")
-      throw new Error("Calculation source must be a path")
-    return {
-      operation: entry.operation,
-      values: entry.values as number[],
-      ...(entry.rate === undefined ? {} : { rate: entry.rate as number }),
-      ...(entry.source === undefined ? {} : { source: entry.source as string }),
-    }
-  })
 }

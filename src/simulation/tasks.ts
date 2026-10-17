@@ -24,7 +24,7 @@ import {
   draftWorkbookBytes,
   verifyWorkbookFile,
   workbookFromDraft,
-} from "../tasks/calculations/draft-workbook.js"
+} from "../tasks/compatibility/draft-workbook.js"
 import { captureTaskDeliverable } from "../tasks/evidence/deliverable-evidence.js"
 import { replaySimulation } from "./captures.js"
 import { readSimulationWorkbooksForRecord } from "./workbook-inventory.js"
@@ -52,6 +52,7 @@ const recordSchema = z
     answerEvidenceVersion: z.literal(1).optional(),
     workflowVersion: z.literal(3).optional(),
     workbookVersion: z.literal(1).optional(),
+    hostExecutionVersion: z.literal(1).optional(),
     groupScopeVersion: z.literal(1).optional(),
     deliverableVersion: z.literal(1).optional(),
     deliverableScopeVersion: z.literal(1).optional(),
@@ -164,8 +165,11 @@ async function derive(
   assignmentStructureVersion?: 1,
   deliverableParserVersion?: 2 | 3,
   answerEvidenceVersion?: 1,
+  hostExecutionVersion?: 1,
   budget?: { remaining: number },
 ) {
+  if (hostExecutionVersion && (workbookVersion || workflowVersion !== 3))
+    throw new Error("Harness execution requires workflow v3 without an automatic workbook recipe")
   if (groupScopeVersion && (options.kind !== "assignment" || workflowVersion !== 3))
     throw new Error("Frozen group scope requires the current assignment workflow")
   if (workbookVersion && (options.kind !== "assignment" || options.mode !== "draft"))
@@ -300,6 +304,7 @@ async function derive(
     ...(prepStructureVersion ? { prepStructureVersion } : {}),
     ...(answerEvidenceVersion ? { answerEvidenceVersion } : {}),
     ...(workbookVersion ? { workbookVersion } : {}),
+    ...(hostExecutionVersion ? { hostExecutionVersion } : {}),
     ...(groupScopeVersion ? { groupScopeVersion } : {}),
     id,
     status: "pending",
@@ -339,6 +344,7 @@ async function derive(
       deliverable,
       assignmentStructureVersion,
       answerEvidenceVersion,
+      hostExecutionVersion,
     ),
     notices: [
       ...(guidanceSelectionVersion === 0
@@ -371,6 +377,7 @@ async function derive(
     ...(answerEvidenceVersion ? { answerEvidenceVersion } : {}),
     ...(workflowVersion ? { workflowVersion } : {}),
     ...(workbookVersion ? { workbookVersion } : {}),
+    ...(hostExecutionVersion ? { hostExecutionVersion } : {}),
     ...(groupScopeVersion ? { groupScopeVersion } : {}),
     ...(deliverableVersion ? { deliverableVersion } : {}),
     ...(deliverableScopeVersion ? { deliverableScopeVersion } : {}),
@@ -395,7 +402,7 @@ export async function createSimulationTask(vault: string, simulationId: string, 
     new Date().toISOString(),
     2,
     3,
-    options.kind === "assignment" && options.mode === "draft" ? 1 : undefined,
+    undefined,
     options.kind === "prep" ? 2 : undefined,
     options.kind === "prep" ? 1 : undefined,
     options.kind === "assignment" ? 1 : undefined,
@@ -409,6 +416,7 @@ export async function createSimulationTask(vault: string, simulationId: string, 
       : undefined,
     3,
     options.kind === "prep" ? 1 : undefined,
+    1,
   )
   const serialized = JSON.stringify(record)
   if (Buffer.byteLength(serialized) > 20_000_000)
@@ -492,6 +500,7 @@ export async function readSimulationTask(
     record.assignmentStructureVersion,
     record.deliverableParserVersion,
     record.answerEvidenceVersion,
+    record.hostExecutionVersion,
     budget,
   )
   if (JSON.stringify(expected) !== JSON.stringify(record))

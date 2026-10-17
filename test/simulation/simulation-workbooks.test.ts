@@ -1,17 +1,14 @@
-import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import JSZip from "jszip"
 import { afterEach, expect, it } from "vitest"
 import { captureSimulation } from "../../src/simulation/captures.js"
 import { createSimulationTask } from "../../src/simulation/tasks.js"
-import {
-  createSimulationWorkbook,
-  readSimulationWorkbooks,
-} from "../../src/simulation/workbooks.js"
-import { createWorkbook, parseWorkbookInput } from "../../src/tasks/tools.js"
+import { readSimulationWorkbooks } from "../../src/simulation/workbooks.js"
+import { createWorkbook, parseWorkbookInput } from "../../src/tasks/compatibility/workbook.js"
+import { createSimulationWorkbook } from "../helpers/legacy-execution.js"
 
 const roots: string[] = []
 const data = {
@@ -104,21 +101,6 @@ it("creates reproducible private values-only companions and verifies them after 
   )
 })
 
-it("refuses invalid/out-of-scope inputs and leaves held locks untouched", async () => {
-  const { vault, task, file } = await fixture()
-  await expect(
-    createSimulationWorkbook(vault, task.id, file, "OTHER101/reading.md"),
-  ).rejects.toThrow(/selected frozen/)
-  await writeFile(file, '{"sheets":[{"name":"Bad/Name","rows":[]}]}')
-  await expect(createSimulationWorkbook(vault, task.id, file)).rejects.toThrow(/Sheet names/)
-  expect((await readSimulationWorkbooks(vault, task.id)).records).toEqual([])
-  await writeFile(file, JSON.stringify(data))
-  const lock = join(vault, "_meta/simulations/tasks", task.id, "workbooks.lock")
-  await mkdir(lock)
-  await expect(createSimulationWorkbook(vault, task.id, file)).rejects.toThrow()
-  expect((await lstat(lock)).isDirectory()).toBe(true)
-})
-
 it("rejects workbook/input tampering, incomplete bundles and symlinked evidence", async () => {
   const { root, vault, task, file } = await fixture()
   const created = await createSimulationWorkbook(vault, task.id, file)
@@ -166,30 +148,3 @@ it("enforces row/column bounds and makes reproducible ZIP dates independent of t
   const parsed = parseWorkbookInput(data)
   expect(await createWorkbook(parsed)).toEqual(await createWorkbook(parsed))
 })
-
-it("uses the compiled workbook/inspection commands without printing cells or malformed JSON", async () => {
-  const { root, vault, task, file, source } = await fixture()
-  const config = join(root, "config.json")
-  const cli = (args: string[]) =>
-    spawnSync(process.execPath, [resolve("dist/cli.js"), ...args, "--config", config, "--json"], {
-      encoding: "utf8",
-    })
-  expect(
-    cli(["init", "--vault", vault, "--canvas-url", "https://canvas.example.test"]).status,
-  ).toBe(0)
-  const created = cli(["simulate", "task", "workbook", task.id, "--file", file, "--source", source])
-  expect(created.status, created.stderr).toBe(0)
-  expect(JSON.parse(created.stdout).sheets).toEqual(["Pricing"])
-  expect(created.stdout).not.toContain("Incremental contribution")
-  expect(created.stdout).not.toContain("PRIVATE_PROMPT_BODY")
-  const checked = cli(["simulate", "task", "workbooks", task.id])
-  expect(checked.status, checked.stderr).toBe(0)
-  expect(JSON.parse(checked.stdout).records).toHaveLength(1)
-  await writeFile(file, "PRIVATE_INVALID_WORKBOOK_JSON")
-  const failed = cli(["simulate", "task", "workbook", task.id, "--file", file])
-  expect(failed.status).toBe(1)
-  expect(failed.stdout + failed.stderr).not.toContain("PRIVATE_INVALID_WORKBOOK_JSON")
-  expect(cli(["simulate", "task", "workbook", task.id, "--file", join(root, ".env")]).status).toBe(
-    1,
-  )
-}, 15_000)

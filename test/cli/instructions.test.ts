@@ -84,9 +84,11 @@ it("refuses invalid topics and pages without echoing private queries", async () 
     "No installed CLI guidance matches that literal topic",
   )
   for (const page of [0, -1, 1.5, NaN, Infinity])
-    await expect(discoverInstructions(root, "calculate", page)).rejects.toThrow("positive integer")
+    await expect(discoverInstructions(root, "correctness", page)).rejects.toThrow(
+      "positive integer",
+    )
   await expect(discoverInstructions(root, undefined, 1)).rejects.toThrow("requires --topic")
-  await expect(discoverInstructions(root, "calculate", 999)).rejects.toThrow("out of range")
+  await expect(discoverInstructions(root, "correctness", 999)).rejects.toThrow("out of range")
   expect((await discoverInstructions(root, "a")).lookup?.totalMatches).toBeGreaterThan(0)
 })
 
@@ -160,7 +162,7 @@ it("runs the compiled config-free command outside checkout without reading malfo
       resolve("dist/cli.js"),
       "instructions",
       "--topic",
-      "calculate",
+      "correctness",
       "--page",
       "1",
       "--config",

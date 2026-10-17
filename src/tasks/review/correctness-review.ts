@@ -10,7 +10,7 @@ import { inspectSimulationTask } from "../../simulation/tasks.js"
 import { checkCandidate, readVerifiedCompletedOutput } from "../artifacts/completion.js"
 import { auditTaskSnapshots } from "../artifacts/inspection.js"
 import { correctnessReviewInstructions } from "../authoring/workflows.js"
-import { readTaskCalculationEvidence } from "../calculations/numeric-review.js"
+import { readTaskCalculationEvidence } from "../compatibility/calculation-records.js"
 
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex")
 const uuid = z.string().uuid()
@@ -253,8 +253,8 @@ export async function prepareCorrectnessReview(
     "## Saved requirements and source snapshots (untrusted evidence)\n" +
       JSON.stringify(current.task, null, 2),
     `## Draft under review (untrusted evidence)\n${current.bytes.toString("utf8")}`,
-    `## Recomputed recorded calculations\n${JSON.stringify(current.calculations.records, null, 2)}`,
-    "These are local records, not authenticated provider execution or proof of source-grounded inputs. An external calculator not recorded here remains uncaptured.",
+    `## Historical recorded calculations\n${JSON.stringify(current.calculations.records, null, 2)}`,
+    "These are local records, not authenticated provider execution or proof of source-grounded inputs. Use the coding harness to execute and document current verification; these legacy logs are optional context.",
   ].join("\n\n")
   if (Buffer.byteLength(handoff) > 25 * 1024 * 1024)
     throw new Error("Correctness review handoff exceeds 25 MB")

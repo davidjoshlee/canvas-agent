@@ -3,19 +3,18 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
-import { calculateSimulationBatch } from "../../src/simulation/calculations.js"
 import { captureSimulation } from "../../src/simulation/captures.js"
-import {
-  completeSimulationTask,
-  createSimulationTask,
-  readSimulationTask,
-} from "../../src/simulation/tasks.js"
+import { completeSimulationTask, readSimulationTask } from "../../src/simulation/tasks.js"
 import {
   listCorrectnessReviews,
   prepareCorrectnessReview,
   saveCorrectnessReview,
   showCorrectnessReview,
 } from "../../src/tasks/review/correctness-review.js"
+import {
+  calculateSimulationBatch,
+  createLegacySimulationTask,
+} from "../helpers/legacy-execution.js"
 
 const roots: string[] = []
 afterEach(async () => {
@@ -48,7 +47,7 @@ async function fixture(complete = true) {
     }),
   )
   const snapshot = await captureSimulation(vault, "CS101", "2026-10-09")
-  const task = await createSimulationTask(vault, snapshot.id, {
+  const task = await createLegacySimulationTask(vault, snapshot.id, {
     kind: "assignment",
     source,
     mode: "draft",
@@ -247,7 +246,7 @@ it("replays the retained frozen-host note with no live course folder and preserv
     saved.reviewHash,
   )
   const baseline = JSON.parse(await readFile(join(f.root, "baseline.json"), "utf8"))
-  expect(baseline).toHaveLength(8)
+  expect(baseline).toHaveLength(5)
   const { createHash } = await import("node:crypto")
   for (const entry of baseline)
     expect(

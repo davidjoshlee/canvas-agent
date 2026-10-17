@@ -24,7 +24,7 @@ import {
   verifySourceSnapshot,
 } from "../authoring/recipes.js"
 import { workflowFor } from "../authoring/workflows.js"
-import { draftWorkbookBytes, verifyWorkbookFile } from "../calculations/draft-workbook.js"
+import { draftWorkbookBytes, verifyWorkbookFile } from "../compatibility/draft-workbook.js"
 import { prepareAnswerEvidence } from "../evidence/answer-evidence.js"
 import {
   assignmentDraftsDirectory,

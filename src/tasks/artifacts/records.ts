@@ -92,6 +92,7 @@ export const TaskRecordSchema = z
     prepStructureVersion: z.literal(1).optional(),
     answerEvidenceVersion: z.literal(1).optional(),
     workbookVersion: z.literal(1).optional(),
+    hostExecutionVersion: z.literal(1).optional(),
     productNamespaceVersion: z.literal(1).optional(),
     groupScopeVersion: z.literal(1).optional(),
     id: z.string().uuid(),
@@ -171,6 +172,11 @@ export const TaskRecordSchema = z
   })
   .strict()
   .superRefine((task, ctx) => {
+    if (task.hostExecutionVersion && (task.workbookVersion || task.workflow?.version !== 3))
+      ctx.addIssue({
+        code: "custom",
+        message: "Harness execution requires workflow v3 without an automatic workbook recipe",
+      })
     if (
       task.productNamespaceVersion &&
       (task.workflow?.version !== 3 ||
@@ -433,6 +439,7 @@ export async function readTask(vault: string, id: string): Promise<TaskRecord> {
           result.data.deliverable,
           result.data.assignmentStructureVersion,
           result.data.answerEvidenceVersion,
+          result.data.hostExecutionVersion,
         )
   if (!legacyWorkflow && result.data.parentTaskId && result.data.assignment?.mode === "draft")
     authoritative = {

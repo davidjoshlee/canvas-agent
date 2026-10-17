@@ -534,10 +534,10 @@ describe("simulation window orchestration", () => {
     expect(updated.state).toBe("completed-pending-human")
     expect(updated.counts).toEqual({ pending: 0, completed: 7, unavailable: 0 })
     const compared = await compareSimulationWindow(f.vault, window.id, "CS101")
-    expect(compared.workbookCompanions).toBe(5)
+    expect(compared.workbookCompanions).toBe(0)
     expect(await comparisonM1Bundle(f.vault, "CS101", compared.id)).toMatchObject({
       verdict: "pending-human",
-      workbookCompanions: 5,
+      workbookCompanions: 0,
     })
     expect(await readFile(join(f.vault, f.capture.path))).toEqual(parent)
     expect(await readFile(join(f.vault, f.paths.r1), "utf8")).toBe(
@@ -750,7 +750,7 @@ describe("simulation window orchestration", () => {
       "--week",
       "2026-10-12",
     ])
-    expect(compared.workbookCompanions).toBe(1)
+    expect(compared.workbookCompanions).toBe(0)
     expect(cli(["gate", "m1", "--course", "CS101", "--comparison", compared.id]).verdict).toBe(
       "pending-human",
     )

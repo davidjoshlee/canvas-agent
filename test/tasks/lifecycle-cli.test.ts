@@ -40,8 +40,8 @@ it("recreates revisions for changed student edits through the compiled CLI witho
       ].join("\n\n"),
     )
     const completed = command(["task", "complete", draft.id, "--file", candidate])
-    expect(completed.task.workbookVersion).toBe(1)
-    expect(completed.task.workbook.path).toBe(completed.output.replace(/\.md$/, ".xlsx"))
+    expect(completed.task.workbook).toBeUndefined()
+    expect(command(["task", "show", draft.id]).hostExecutionVersion).toBe(1)
     const original = await readFile(join(vault, completed.output))
     const homework = command(["homework", "--course", "CS101"])
     expect(homework.undated[0]).toMatchObject({
@@ -52,26 +52,21 @@ it("recreates revisions for changed student edits through the compiled CLI witho
     })
     expect(homework.unreadableTaskRecords).toBe(0)
     const saved = command(["task", "show", draft.id])
-    expect(saved.workbookVersion).toBe(1)
-    expect(saved.workbook.path).toBe(completed.output.replace(/\.md$/, ".xlsx"))
-    const workbook = await readFile(join(vault, saved.workbook.path))
+    expect(saved.workbook).toBeUndefined()
     const comparison = command(["compare", draft.id, draft.id])
     expect(comparison.automaticWorkbooks).toMatchObject({
-      change: "same-bytes",
-      before: { state: "verified", workbook: saved.workbook },
+      change: "unknown",
+      before: { state: "harness-owned", workbook: null },
     })
     const gate = command(["gate", "review", draft.id])
-    expect(gate.automaticWorkbook).toMatchObject({ state: "verified", workbook: saved.workbook })
-    expect(await readFile(join(vault, gate.path), "utf8")).toContain(saved.workbook.hash)
+    expect(gate.automaticWorkbook).toMatchObject({ state: "harness-owned", workbook: null })
     // ZIP directory timestamps used to drift across two-second DOS time ticks.
     await new Promise((resolve) => setTimeout(resolve, 2200))
     expect(command(["task", "complete", draft.id, "--file", candidate]).output).toBe(
       completed.output,
     )
     const approved = command(["approve", draft.id])
-    expect(approved.workbook.path).toBe(approved.output.replace(/\.md$/, ".xlsx"))
-    expect(approved.workbook.hash).toBe(saved.workbook.hash)
-    expect(await readFile(join(vault, approved.output.replace(/\.md$/, ".xlsx")))).toEqual(workbook)
+    expect(approved.workbook).toBeUndefined()
     const edits = "CS101/Assignments/Case/Drafts/student-edits.md"
     await writeFile(join(vault, edits), "Student first edit.")
     const args = ["revise", draft.id, "--feedback", "Incorporate my edits.", "--work", edits]
@@ -99,7 +94,6 @@ it("recreates revisions for changed student edits through the compiled CLI witho
     expect(command(args).id).toBe(second.id)
     expect(await readFile(join(vault, "_meta/tasks", first.id, "task.json"))).toEqual(firstRecord)
     expect(await readFile(join(vault, completed.output))).toEqual(original)
-    expect(await readFile(join(vault, saved.workbook.path))).toEqual(workbook)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

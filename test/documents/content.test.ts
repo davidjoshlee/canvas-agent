@@ -248,7 +248,7 @@ describe("bounded document extraction", () => {
     try {
       const file = join(root, "input.docx")
       await writeFile(file, bytes)
-      const code = `import {createRequire} from "node:module"; import {readFile} from "node:fs/promises"; const {extractText}=await import(${JSON.stringify(pathToFileURL(resolve("dist/documents/content.js")).href)}); await extractText({bytes:await readFile(process.argv[1]),filename:"input.docx"}); const require=createRequire(import.meta.url); const paths=Object.keys(require.cache); if(paths.some(path=>path.includes("/argparse/")||path.includes("/sprintf-js/"))) throw new Error("CLI formatter unexpectedly loaded"); console.log("formatter-unloaded");`
+      const code = `import { createRequire } from "node:module"; import { readFile } from "node:fs/promises"; const {extractText}=await import(${JSON.stringify(pathToFileURL(resolve("dist/documents/content.js")).href)}); await extractText({bytes:await readFile(process.argv[1]),filename:"input.docx"}); const require=createRequire(import.meta.url); const paths=Object.keys(require.cache); if(paths.some(path=>path.includes("/argparse/")||path.includes("/sprintf-js/"))) throw new Error("CLI formatter unexpectedly loaded"); console.log("formatter-unloaded");`
       const result = spawnSync(process.execPath, ["--input-type=module", "-e", code, file], {
         cwd: root,
         encoding: "utf8",
