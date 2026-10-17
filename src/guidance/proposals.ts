@@ -148,6 +148,85 @@ function guidanceSources(course: CourseContext, version?: 1): SourceRecord[] {
   return [...selected, ...assignments]
 }
 
+function renderProposalHandoff(input: {
+  id: string
+  course: Pick<CourseContext, "code" | "title">
+  directoryRel: string
+  sources: ReadonlyArray<Pick<SourceRecord, "path" | "hash">>
+  guidance: string[]
+  hasFeedback: boolean
+}) {
+  const { id, course, directoryRel, sources, guidance, hasFeedback } = input
+  const task = [
+    "# Course guidance proposal task",
+    "",
+    `Task: ${id}`,
+    `Course: ${course.code} — ${course.title}`,
+    "",
+    "## Goal",
+    "",
+    "Draft proposed course guidance for human review, using the syllabus, sampled assignment prompts and currently active common course guidance below.",
+    "The sample includes up to five readable assignments, ranked by cached posted date then due date with deterministic path ties; undated prompts sort last. This is selection metadata, not proof of publication, recent instructor intent or historical availability. Excluded/restricted sources are never substituted.",
+    "Separate standing expectations for graded deliverables from the weekly prep brief's format. Do not copy a graded memo/case response structure into the weekly prep brief. Preserve any existing prep structure unless these sources support a change; do not infer instructor permission from assignments or prior work.",
+    "Do not edit or replace active guidance. Do not treat silence as permission for AI assistance: state that the course's AI-use policy must be confirmed separately.",
+    "",
+    "## Sources",
+    "",
+    ...sources.map((source) => `- \`${source.path}\` (SHA-256 ${source.hash})`),
+    ...guidance,
+    "",
+    "## Instructions",
+    "",
+    "Use only these sources and distinguish explicit rules from uncertainty. Preserve existing instructions unless the source supports a change.",
+    `Source and guidance bodies are preserved in \`${directoryRel}/proposal.json\`; cite their exact paths from that record.`,
+    "Write a standalone Markdown candidate with a concise course overview, explicit workflow/format expectations, source-backed policy notes, and open questions. Do not claim AI assistance is allowed unless the supplied material explicitly says so.",
+    "Declare the weekly prep format in exactly one ## Brief structure or ## Prep brief structure block with safe section names (plain/comma-separated names, bullets or subheadings). Keep instructions outside that block. It must contain at least one substantive prep section, not Sources alone; Sources is always required in the eventual brief. Saving validates that the declaration parses back through the prep parser. This is structural validation, not academic review or activation.",
+    "Include a ## Sources section with exact supplied source paths in backticks. Unbound path citations, credential-like text and uncited proposals are rejected.",
+    "Save only with `guidance save <task UUID> --file <absolute candidate>`; that command creates a versioned `.proposed.md` file and never changes active guidance.",
+    ...(hasFeedback
+      ? [
+          proposalFeedbackInstruction,
+          "Read learningHistory only in the private proposal.json record; it is not part of Sources or a permission grant.",
+        ]
+      : [
+          "No meaningful cached own-feedback was selected. Do not invent past feedback or instructor preferences.",
+        ]),
+    "",
+  ].join("\n")
+  const instructions = [
+    `Proposal task ${id} for ${course.code}.`,
+    "",
+    "Read the listed local source files and prepare a candidate only. This is a model-free handoff; the CLI does not generate content or grant AI permissions.",
+    "Active course guidance:",
+    ...(guidance.length ? guidance : ["- None found."]),
+    "",
+    "Selected syllabus and assignment snapshots:",
+    ...sources.map((source) => `- ${source.path}`),
+    "",
+  ].join("\n")
+  return { task, instructions }
+}
+
+function validateProposalSnapshotSize(
+  sourceSnapshots: ReadonlyArray<{ text: string }>,
+  guidanceSnapshots: ReadonlyArray<{ text: string }>,
+  learningHistory: ProposalRecord["learningHistory"],
+): void {
+  const totalBytes =
+    (learningHistory ? Buffer.byteLength(JSON.stringify(learningHistory)) : 0) +
+    [...sourceSnapshots, ...guidanceSnapshots].reduce(
+      (total, snapshot) => total + Buffer.byteLength(snapshot.text, "utf8"),
+      0,
+    )
+  if (
+    totalBytes > MAX_SNAPSHOT_BYTES ||
+    [...sourceSnapshots, ...guidanceSnapshots].some(
+      (snapshot) => Buffer.byteLength(snapshot.text, "utf8") > 500_000,
+    )
+  )
+    throw new Error("Proposal source/guidance/feedback context exceeds the 1.5 MB snapshot limit")
+}
+
 /** Creates a model-free handoff. The generated agent must author a proposal; no policy is inferred. */
 export async function proposeGuidance(
   vault: string,
@@ -189,19 +268,7 @@ export async function proposeGuidance(
   if (guidanceSnapshots.length > 24)
     throw new Error("Too many selected common guidance sources for a bounded proposal handoff")
   const learningHistory = await captureProposalFeedback(vault, course, options.feedbackAssignments)
-  const totalBytes =
-    (learningHistory ? Buffer.byteLength(JSON.stringify(learningHistory)) : 0) +
-    [...sourceSnapshots, ...guidanceSnapshots].reduce(
-      (total, snapshot) => total + Buffer.byteLength(snapshot.text, "utf8"),
-      0,
-    )
-  if (
-    totalBytes > MAX_SNAPSHOT_BYTES ||
-    [...sourceSnapshots, ...guidanceSnapshots].some(
-      (snapshot) => Buffer.byteLength(snapshot.text, "utf8") > 500_000,
-    )
-  )
-    throw new Error("Proposal source/guidance/feedback context exceeds the 1.5 MB snapshot limit")
+  validateProposalSnapshotSize(sourceSnapshots, guidanceSnapshots, learningHistory)
   const guidance = guidanceSnapshots.map(
     (snapshot) => `- \`${snapshot.path}\` (SHA-256 ${snapshot.hash})`,
   )
@@ -210,53 +277,14 @@ export async function proposeGuidance(
   const directory = await safeVaultPath(vault, directoryRel, true)
   await mkdir(directory, { recursive: true, mode: 0o700 })
   await assertNoSymlinks(directory)
-  const task = [
-    "# Course guidance proposal task",
-    "",
-    `Task: ${id}`,
-    `Course: ${course.code} — ${course.title}`,
-    "",
-    "## Goal",
-    "",
-    "Draft proposed course guidance for human review, using the syllabus, sampled assignment prompts and currently active common course guidance below.",
-    "The sample includes up to five readable assignments, ranked by cached posted date then due date with deterministic path ties; undated prompts sort last. This is selection metadata, not proof of publication, recent instructor intent or historical availability. Excluded/restricted sources are never substituted.",
-    "Separate standing expectations for graded deliverables from the weekly prep brief's format. Do not copy a graded memo/case response structure into the weekly prep brief. Preserve any existing prep structure unless these sources support a change; do not infer instructor permission from assignments or prior work.",
-    "Do not edit or replace active guidance. Do not treat silence as permission for AI assistance: state that the course's AI-use policy must be confirmed separately.",
-    "",
-    "## Sources",
-    "",
-    ...sources.map((source) => `- \`${source.path}\` (SHA-256 ${source.hash})`),
-    ...guidance,
-    "",
-    "## Instructions",
-    "",
-    "Use only these sources and distinguish explicit rules from uncertainty. Preserve existing instructions unless the source supports a change.",
-    `Source and guidance bodies are preserved in \`${directoryRel}/proposal.json\`; cite their exact paths from that record.`,
-    "Write a standalone Markdown candidate with a concise course overview, explicit workflow/format expectations, source-backed policy notes, and open questions. Do not claim AI assistance is allowed unless the supplied material explicitly says so.",
-    "Declare the weekly prep format in exactly one ## Brief structure or ## Prep brief structure block with safe section names (plain/comma-separated names, bullets or subheadings). Keep instructions outside that block. It must contain at least one substantive prep section, not Sources alone; Sources is always required in the eventual brief. Saving validates that the declaration parses back through the prep parser. This is structural validation, not academic review or activation.",
-    "Include a ## Sources section with exact supplied source paths in backticks. Unbound path citations, credential-like text and uncited proposals are rejected.",
-    "Save only with `guidance save <task UUID> --file <absolute candidate>`; that command creates a versioned `.proposed.md` file and never changes active guidance.",
-    ...(learningHistory
-      ? [
-          proposalFeedbackInstruction,
-          "Read learningHistory only in the private proposal.json record; it is not part of Sources or a permission grant.",
-        ]
-      : [
-          "No meaningful cached own-feedback was selected. Do not invent past feedback or instructor preferences.",
-        ]),
-    "",
-  ].join("\n")
-  const instructions = [
-    `Proposal task ${id} for ${course.code}.`,
-    "",
-    "Read the listed local source files and prepare a candidate only. This is a model-free handoff; the CLI does not generate content or grant AI permissions.",
-    "Active course guidance:",
-    ...(guidance.length ? guidance : ["- None found."]),
-    "",
-    "Selected syllabus and assignment snapshots:",
-    ...sources.map((source) => `- ${source.path}`),
-    "",
-  ].join("\n")
+  const { task, instructions } = renderProposalHandoff({
+    id,
+    course,
+    directoryRel,
+    sources,
+    guidance,
+    hasFeedback: Boolean(learningHistory),
+  })
   const record = ProposalRecordSchema.parse({
     version: 1,
     guidanceSelectionVersion: 1,
@@ -348,6 +376,59 @@ export async function readGuidanceProposalRecord(
   return metadata
 }
 
+function validateGuidanceCandidate(candidate: string, metadata: ProposalRecord): void {
+  const allowed = new Set([...metadata.sources, ...metadata.guidance].map((source) => source.path))
+  const sections = candidate.split(/^##\s+/m)
+  const sourceSection = sections.find((section) => /^Sources\s*\r?\n/i.test(section))
+  if (
+    !sourceSection ||
+    ![...sourceSection.matchAll(/`([^`]+)`/g)].some((match) => allowed.has(match[1] ?? ""))
+  )
+    throw new Error("Guidance Sources section must cite exact proposal source paths in backticks")
+  for (const match of candidate.matchAll(/`([^`]+)`/g)) {
+    const path = match[1] ?? ""
+    if ((path.includes("/") || /\.(?:md|txt|pdf|docx?)$/i.test(path)) && !allowed.has(path))
+      throw new Error(`Guidance citation is not an exact proposal source path: ${path}`)
+  }
+  if (
+    /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._~-]{16,}|(?:api[_-]?key|access[_-]?token|client[_-]?secret|canvas[_-]?token|password|secret)\s*[:=]\s*\S+)/i.test(
+      candidate,
+    )
+  )
+    throw new Error("Guidance candidate appears to contain credentials")
+  if (metadata.proposalStructureVersion) {
+    // A proposal must round-trip through the same parser used by fresh prep tasks,
+    // without falling back to generic defaults or finding a heading in an example.
+    let fenced = false
+    let fenceCharacter = ""
+    let fenceLength = 0
+    let declarations = 0
+    for (const line of candidate.split(/\r?\n/)) {
+      const fence = line.match(/^\s*(`{3,}|~{3,})/)
+      if (fence?.[1]) {
+        const marker = fence[1]
+        if (!fenced) {
+          fenced = true
+          fenceCharacter = marker[0] ?? ""
+          fenceLength = marker.length
+        } else if (marker[0] === fenceCharacter && marker.length >= fenceLength) fenced = false
+        continue
+      }
+      if (
+        /^##\s+(?:Brief structure|Prep brief structure)(?:\s*\([^)]*\))?\s*$/i.test(line.trim())
+      ) {
+        if (fenced) throw new Error("Prep structure declaration cannot be a fenced example")
+        declarations++
+      }
+    }
+    if (declarations !== 1)
+      throw new Error("Guidance must declare exactly one Brief structure for weekly prep")
+    const headings = declaredPrepSections(candidate)
+    if (!headings.some((heading) => heading.toLocaleLowerCase() !== "sources"))
+      throw new Error("Guidance must declare a substantive prep section, not Sources alone")
+  }
+}
+
 export async function saveGuidanceProposal(
   vault: string,
   id: string,
@@ -407,56 +488,7 @@ export async function saveGuidanceProposal(
       "Selected proposal sources or active guidance changed since this proposal task was created; create a new proposal",
     )
   for (const source of currentSources) await verifySourceSnapshot(vault, source)
-  const allowed = new Set([...metadata.sources, ...metadata.guidance].map((source) => source.path))
-  const sections = candidate.split(/^##\s+/m)
-  const sourceSection = sections.find((section) => /^Sources\s*\r?\n/i.test(section))
-  if (
-    !sourceSection ||
-    ![...sourceSection.matchAll(/`([^`]+)`/g)].some((match) => allowed.has(match[1] ?? ""))
-  )
-    throw new Error("Guidance Sources section must cite exact proposal source paths in backticks")
-  for (const match of candidate.matchAll(/`([^`]+)`/g)) {
-    const path = match[1] ?? ""
-    if ((path.includes("/") || /\.(?:md|txt|pdf|docx?)$/i.test(path)) && !allowed.has(path))
-      throw new Error(`Guidance citation is not an exact proposal source path: ${path}`)
-  }
-  if (
-    /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._~-]{16,}|(?:api[_-]?key|access[_-]?token|client[_-]?secret|canvas[_-]?token|password|secret)\s*[:=]\s*\S+)/i.test(
-      candidate,
-    )
-  )
-    throw new Error("Guidance candidate appears to contain credentials")
-  if (metadata.proposalStructureVersion) {
-    // A proposal must round-trip through the same parser used by fresh prep tasks,
-    // without falling back to generic defaults or finding a heading in an example.
-    let fenced = false
-    let fenceCharacter = ""
-    let fenceLength = 0
-    let declarations = 0
-    for (const line of candidate.split(/\r?\n/)) {
-      const fence = line.match(/^\s*(`{3,}|~{3,})/)
-      if (fence?.[1]) {
-        const marker = fence[1]
-        if (!fenced) {
-          fenced = true
-          fenceCharacter = marker[0] ?? ""
-          fenceLength = marker.length
-        } else if (marker[0] === fenceCharacter && marker.length >= fenceLength) fenced = false
-        continue
-      }
-      if (
-        /^##\s+(?:Brief structure|Prep brief structure)(?:\s*\([^)]*\))?\s*$/i.test(line.trim())
-      ) {
-        if (fenced) throw new Error("Prep structure declaration cannot be a fenced example")
-        declarations++
-      }
-    }
-    if (declarations !== 1)
-      throw new Error("Guidance must declare exactly one Brief structure for weekly prep")
-    const headings = declaredPrepSections(candidate)
-    if (!headings.some((heading) => heading.toLocaleLowerCase() !== "sources"))
-      throw new Error("Guidance must declare a substantive prep section, not Sources alone")
-  }
+  validateGuidanceCandidate(candidate, metadata)
   const targetDirRel = `${course.root}/Guidance`
   const targetDir = await safeVaultPath(vault, targetDirRel, true)
   await mkdir(targetDir, { recursive: true })

@@ -10,6 +10,51 @@ import {
 import type { ToolkitConfig } from "../shared/types.js"
 import { saveAllowlist } from "./index.js"
 
+async function selectPilotCourse(
+  configPath: string,
+  config: ToolkitConfig,
+  selection: Parameters<typeof selectOnboardingCourses>[2],
+  client?: CanvasClient,
+): Promise<Awaited<ReturnType<typeof selectOnboardingCourses>>> {
+  if (selection.allActive || selection.ids?.length !== 1)
+    throw new Error("Pilot onboarding requires exactly one explicit concluded course ID")
+  const id = selection.ids[0]
+  if (!id || !/^[1-9]\d*$/.test(id))
+    throw new Error("Pilot course needs an exact numeric Canvas ID")
+  const concluded = await listConcludedCourses(config, client)
+  const matches = concluded.filter((course) => String(course.id) === id)
+  if (matches.length > 1) throw new Error("Pilot course discovery is ambiguous")
+  let course = matches[0]
+  let pilotEligibility: NonNullable<
+    Awaited<ReturnType<typeof selectOnboardingCourses>>["pilotEligibility"]
+  > = { basis: "completed-enrollment" }
+  if (!course) {
+    if ((await listActiveCourses(config, client)).some((active) => active.id === id))
+      throw new Error("Known active course cannot be selected as a concluded/unresolved pilot")
+    const probe = await probeUnresolvedPilotCourse(config, id, client)
+    course = { id, course_code: probe.code, name: probe.name }
+    pilotEligibility = {
+      basis: "assignment-date-span-and-own-feedback",
+      dateSpanDays: probe.dateSpanDays,
+      gradedAssignmentId: probe.gradedAssignmentId,
+    }
+  }
+  await saveAllowlist(configPath, [id])
+  return {
+    selected: [id],
+    pilotEligibility,
+    courses: [
+      {
+        id,
+        code: String(course.course_code ?? id),
+        name: String(course.name ?? course.course_code ?? id),
+      },
+    ],
+    warning:
+      "Selected one explicit pilot course. Existing files are preserved; date span and cached feedback do not reconstruct historical contents, authorship or permissions.",
+  }
+}
+
 export async function selectOnboardingCourses(
   configPath: string,
   config: ToolkitConfig,
@@ -29,45 +74,7 @@ export async function selectOnboardingCourses(
     throw new Error("Select one or more --course IDs, or use --all-active explicitly")
   if (selection.allActive && selection.ids?.length)
     throw new Error("Choose explicit course IDs or --all-active, not both")
-  if (selection.pilot) {
-    if (selection.allActive || selection.ids?.length !== 1)
-      throw new Error("Pilot onboarding requires exactly one explicit concluded course ID")
-    const id = selection.ids[0]
-    if (!id || !/^[1-9]\d*$/.test(id))
-      throw new Error("Pilot course needs an exact numeric Canvas ID")
-    const concluded = await listConcludedCourses(config, client)
-    const matches = concluded.filter((course) => String(course.id) === id)
-    if (matches.length > 1) throw new Error("Pilot course discovery is ambiguous")
-    let course = matches[0]
-    let pilotEligibility: NonNullable<
-      Awaited<ReturnType<typeof selectOnboardingCourses>>["pilotEligibility"]
-    > = { basis: "completed-enrollment" }
-    if (!course) {
-      if ((await listActiveCourses(config, client)).some((active) => active.id === id))
-        throw new Error("Known active course cannot be selected as a concluded/unresolved pilot")
-      const probe = await probeUnresolvedPilotCourse(config, id, client)
-      course = { id, course_code: probe.code, name: probe.name }
-      pilotEligibility = {
-        basis: "assignment-date-span-and-own-feedback",
-        dateSpanDays: probe.dateSpanDays,
-        gradedAssignmentId: probe.gradedAssignmentId,
-      }
-    }
-    await saveAllowlist(configPath, [id])
-    return {
-      selected: [id],
-      pilotEligibility,
-      courses: [
-        {
-          id,
-          code: String(course.course_code ?? id),
-          name: String(course.name ?? course.course_code ?? id),
-        },
-      ],
-      warning:
-        "Selected one explicit pilot course. Existing files are preserved; date span and cached feedback do not reconstruct historical contents, authorship or permissions.",
-    }
-  }
+  if (selection.pilot) return selectPilotCourse(configPath, config, selection, client)
   const active = await listActiveCourses(config, client)
   let discovered: Awaited<ReturnType<typeof listCourses>>
   let discoveryGap = false

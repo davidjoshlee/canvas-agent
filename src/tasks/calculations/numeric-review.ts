@@ -98,26 +98,7 @@ export async function readTaskCalculationEvidence(vault: string, task: TaskRecor
   return { results, records, hash: sha(text) }
 }
 
-/** Numeric presence heuristic, not semantic grounding, execution authentication or grading. */
-export function numericPresenceReview(
-  task: TaskRecord,
-  candidate: string,
-  arithmetic: Arithmetic[],
-) {
-  if (arithmetic.length > 10_000)
-    throw new Error("Numeric review arithmetic inventory exceeds bounds")
-  if (task.sources.length + task.guidance.length > 1000)
-    throw new Error("Numeric review exceeds 1000 source references")
-  const selected = [...task.sources, ...task.guidance]
-  let pathBytes = 0,
-    textBytes = 0
-  for (const source of selected) {
-    pathBytes += Buffer.byteLength(source.path)
-    textBytes += Buffer.byteLength(source.text)
-    if (pathBytes > 1024 * 1024) throw new Error("Numeric review reference paths exceed 1 MB")
-    if (textBytes > 20 * 1024 * 1024) throw new Error("Numeric review source text exceeds 20 MB")
-  }
-  const paths = new Set(selected.map((source) => source.path))
+function createNumericScanner(paths: Set<string>, arithmetic: Arithmetic[]) {
   let matches = 0
   const ignoredDateLabels: Array<{ date: string; line: number }> = []
   let ignoredDateLabelCount = 0
@@ -194,8 +175,38 @@ export function numericPresenceReview(
     }
     return found
   }
+  return {
+    values,
+    ignoredDateLabels,
+    get ignoredDateLabelCount() {
+      return ignoredDateLabelCount
+    },
+  }
+}
+
+/** Numeric presence heuristic, not semantic grounding, execution authentication or grading. */
+export function numericPresenceReview(
+  task: TaskRecord,
+  candidate: string,
+  arithmetic: Arithmetic[],
+) {
+  if (arithmetic.length > 10_000)
+    throw new Error("Numeric review arithmetic inventory exceeds bounds")
+  if (task.sources.length + task.guidance.length > 1000)
+    throw new Error("Numeric review exceeds 1000 source references")
+  const selected = [...task.sources, ...task.guidance]
+  let pathBytes = 0,
+    textBytes = 0
+  for (const source of selected) {
+    pathBytes += Buffer.byteLength(source.path)
+    textBytes += Buffer.byteLength(source.text)
+    if (pathBytes > 1024 * 1024) throw new Error("Numeric review reference paths exceed 1 MB")
+    if (textBytes > 20 * 1024 * 1024) throw new Error("Numeric review source text exceeds 20 MB")
+  }
+  const paths = new Set(selected.map((source) => source.path))
+  const scanner = createNumericScanner(paths, arithmetic)
   const sourceText = selected.map((source) => source.text).join("\n")
-  const literals = new Set(values(sourceText).map((entry) => entry.value))
+  const literals = new Set(scanner.values(sourceText).map((entry) => entry.value))
   const results = new Set(arithmetic.map((entry) => entry.result))
   const inputs = new Set(arithmetic.flatMap((entry) => entry.input))
   type Finding = {
@@ -211,7 +222,7 @@ export function numericPresenceReview(
     occurrences: number
   }
   const findings = new Map<number, Finding>()
-  for (const entry of values(candidate, true)) {
+  for (const entry of scanner.values(candidate, true)) {
     const existing = findings.get(entry.value)
     if (existing) {
       if (existing.classification === "rounded-recorded-result" && !entry.roundedMatches.length) {
@@ -248,9 +259,9 @@ export function numericPresenceReview(
   return {
     observedNumbers,
     flagged,
-    ignoredDateLabels,
-    ignoredDateLabelCount,
-    ignoredDateLabelsTruncated: ignoredDateLabelCount > ignoredDateLabels.length,
+    ignoredDateLabels: scanner.ignoredDateLabels,
+    ignoredDateLabelCount: scanner.ignoredDateLabelCount,
+    ignoredDateLabelsTruncated: scanner.ignoredDateLabelCount > scanner.ignoredDateLabels.length,
     needsReview: flagged.length > 0,
     numericCorrectnessVerified: false,
     executionAuthenticated: false,

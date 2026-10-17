@@ -56,6 +56,69 @@ function json(bytes: Buffer): unknown {
     throw new Error("Workbook evidence must contain valid UTF-8 JSON; inspect locally")
   }
 }
+type WorkbookRecipe = {
+  simulationId: string
+  snapshotHash: string
+  task: { sources: SourceRecord[] }
+}
+
+async function readWorkbookBundle(
+  directory: string,
+  name: string,
+  scope: { id: string; task: WorkbookRecipe; recipeHash: string },
+  budget: { totalBytes: number },
+) {
+  const { id, task, recipeHash } = scope
+  const base = join(directory, name)
+  await assertNoSymlinks(base)
+  if (
+    JSON.stringify((await readdir(base)).sort()) !==
+    JSON.stringify(["input.json", "record.json", "workbook.xlsx"])
+  )
+    throw new Error("Evaluation workbook bundle is incomplete or contains unknown entries")
+  const metadata = await readBoundedFile(join(base, "record.json"), 100_000)
+  let record: z.infer<typeof recordSchema>
+  try {
+    record = recordSchema.parse(json(metadata))
+  } catch {
+    throw new Error("Invalid evaluation workbook metadata; inspect locally")
+  }
+  const output = `_meta/simulations/tasks/${id}/workbooks/${name}/workbook.xlsx`
+  if (
+    record.id !== name ||
+    record.taskId !== id ||
+    record.simulationId !== task.simulationId ||
+    record.recipeHash !== recipeHash ||
+    record.snapshotHash !== task.snapshotHash ||
+    record.output !== output ||
+    record.automatic
+  )
+    throw new Error("Evaluation workbook scope or recipe binding changed")
+  const input = await readBoundedFile(join(base, "input.json"), 5 * 1024 * 1024)
+  const bytes = await readBoundedFile(join(base, "workbook.xlsx"), 5 * 1024 * 1024)
+  budget.totalBytes += input.length + bytes.length + metadata.length
+  if (budget.totalBytes > 50_000_000) throw new Error("Evaluation workbook evidence exceeds 50 MB")
+  const parsed = parseWorkbookInput(json(input))
+  if (
+    hash(input) !== record.inputHash ||
+    hash(bytes) !== record.hash ||
+    bytes.length !== record.size ||
+    JSON.stringify(parsed.sheets.map((sheet) => sheet.name)) !== JSON.stringify(record.sheets) ||
+    !(record.rendererVersion === 1
+      ? bytes.equals(await createWorkbook(parsed))
+      : await matchesLegacyWorkbook(parsed, bytes))
+  )
+    throw new Error("Evaluation workbook input or values-only bytes changed")
+  if (
+    record.source &&
+    !task.task.sources.some(
+      (source) => source.path === record.source?.path && source.hash === record.source.hash,
+    )
+  )
+    throw new Error("Workbook source differs from selected frozen evidence")
+  return { record, digest: `${name}:${hash(metadata)}:${hash(input)}:${hash(bytes)}` }
+}
+
 export async function readSimulationWorkbooksForRecord<
   T extends {
     simulationId: string
@@ -89,57 +152,16 @@ export async function readSimulationWorkbooksForRecord<
     throw new Error("Evaluation workbook inventory is invalid or exceeds 20 companions")
   const records: z.infer<typeof recordSchema>[] = [],
     digests: string[] = []
-  let totalBytes = 0
+  const budget = { totalBytes: 0 }
   for (const name of names.sort()) {
-    const base = join(directory, name)
-    await assertNoSymlinks(base)
-    if (
-      JSON.stringify((await readdir(base)).sort()) !==
-      JSON.stringify(["input.json", "record.json", "workbook.xlsx"])
+    const { record, digest } = await readWorkbookBundle(
+      directory,
+      name,
+      { id, task, recipeHash },
+      budget,
     )
-      throw new Error("Evaluation workbook bundle is incomplete or contains unknown entries")
-    const metadata = await readBoundedFile(join(base, "record.json"), 100_000)
-    let record: z.infer<typeof recordSchema>
-    try {
-      record = recordSchema.parse(json(metadata))
-    } catch {
-      throw new Error("Invalid evaluation workbook metadata; inspect locally")
-    }
-    const output = `_meta/simulations/tasks/${id}/workbooks/${name}/workbook.xlsx`
-    if (
-      record.id !== name ||
-      record.taskId !== id ||
-      record.simulationId !== task.simulationId ||
-      record.recipeHash !== recipeHash ||
-      record.snapshotHash !== task.snapshotHash ||
-      record.output !== output ||
-      record.automatic
-    )
-      throw new Error("Evaluation workbook scope or recipe binding changed")
-    const input = await readBoundedFile(join(base, "input.json"), 5 * 1024 * 1024)
-    const bytes = await readBoundedFile(join(base, "workbook.xlsx"), 5 * 1024 * 1024)
-    totalBytes += input.length + bytes.length + metadata.length
-    if (totalBytes > 50_000_000) throw new Error("Evaluation workbook evidence exceeds 50 MB")
-    const parsed = parseWorkbookInput(json(input))
-    if (
-      hash(input) !== record.inputHash ||
-      hash(bytes) !== record.hash ||
-      bytes.length !== record.size ||
-      JSON.stringify(parsed.sheets.map((sheet) => sheet.name)) !== JSON.stringify(record.sheets) ||
-      !(record.rendererVersion === 1
-        ? bytes.equals(await createWorkbook(parsed))
-        : await matchesLegacyWorkbook(parsed, bytes))
-    )
-      throw new Error("Evaluation workbook input or values-only bytes changed")
-    if (
-      record.source &&
-      !task.task.sources.some(
-        (source) => source.path === record.source?.path && source.hash === record.source.hash,
-      )
-    )
-      throw new Error("Workbook source differs from selected frozen evidence")
     records.push(record)
-    digests.push(`${name}:${hash(metadata)}:${hash(input)}:${hash(bytes)}`)
+    digests.push(digest)
   }
   if (task.workbookVersion === 1) {
     const completion = evaluation?.completion
@@ -166,11 +188,11 @@ export async function readSimulationWorkbooksForRecord<
       })
       records.push(automatic)
       const metadata = JSON.stringify(completion)
-      totalBytes += book.size + Buffer.byteLength(metadata)
+      budget.totalBytes += book.size + Buffer.byteLength(metadata)
       digests.push(`automatic:${hash(metadata)}:${book.inputHash}:${book.hash}`)
     }
   }
-  if (records.length > 20 || totalBytes > 50_000_000)
+  if (records.length > 20 || budget.totalBytes > 50_000_000)
     throw new Error("Evaluation workbook inventory exceeds companion count or byte bounds")
   return {
     taskId: id,
@@ -179,7 +201,7 @@ export async function readSimulationWorkbooksForRecord<
     recipeHash,
     records,
     recordsHash: hash(JSON.stringify(digests)),
-    totalBytes,
+    totalBytes: budget.totalBytes,
     attributionVerified: false,
   }
 }

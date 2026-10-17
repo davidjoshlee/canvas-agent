@@ -36,16 +36,7 @@ function addNotice(
   )
 }
 
-/** Read a School Agent style workspace without changing it or following links. */
-export async function inspectWorkspace(vault: string): Promise<WorkspaceContext> {
-  const root = resolve(vault)
-  await assertNoSymlinks(root)
-  const rootStat = await lstat(root).catch(() => null)
-  if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) {
-    throw new Error(`Workspace is not a readable directory: ${root}`)
-  }
-
-  const notices: NoticeCollector = { messages: [], diagnostics: [] }
+async function readCourseMappings(root: string, notices: NoticeCollector) {
   const mapped = new Map<
     string,
     { id: string; name: string; code?: string; syncNamespace?: "Canvas Agent" }
@@ -91,6 +82,14 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
         "error",
       )
   }
+  return mapped
+}
+
+async function readWorkspaceCourses(
+  root: string,
+  mapped: Awaited<ReturnType<typeof readCourseMappings>>,
+  notices: NoticeCollector,
+) {
   const ownership = [...mapped.values()].some((course) => course.syncNamespace)
     ? await readPreservedOwnership(root)
     : undefined
@@ -138,6 +137,10 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
     courses.push(course)
   }
 
+  return courses
+}
+
+async function readPendingTaskPaths(root: string, notices: NoticeCollector) {
   const pendingTasks: string[] = []
   const tasksPath = join(root, "_meta", "tasks")
   try {
@@ -190,6 +193,22 @@ export async function inspectWorkspace(vault: string): Promise<WorkspaceContext>
       )
   }
 
+  return pendingTasks
+}
+
+/** Read a School Agent style workspace without changing it or following links. */
+export async function inspectWorkspace(vault: string): Promise<WorkspaceContext> {
+  const root = resolve(vault)
+  await assertNoSymlinks(root)
+  const rootStat = await lstat(root).catch(() => null)
+  if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error(`Workspace is not a readable directory: ${root}`)
+  }
+
+  const notices: NoticeCollector = { messages: [], diagnostics: [] }
+  const mapped = await readCourseMappings(root, notices)
+  const courses = await readWorkspaceCourses(root, mapped, notices)
+  const pendingTasks = await readPendingTaskPaths(root, notices)
   return {
     version: 1,
     vault: root,
@@ -271,31 +290,26 @@ async function readPreservedOwnership(vault: string): Promise<Record<string, str
   }
 }
 
-async function inspectCourse(
-  vault: string,
-  code: string,
-  notices: NoticeCollector,
+type ParsedDocument = NonNullable<Awaited<ReturnType<typeof readDocument>>>
+
+interface CourseInventory {
+  vault: string
+  root: string
+  absoluteRoot: string
+  sources: SourceRecord[]
+  excluded: ExcludedSource[]
+  guidance: string[]
+  existingWork: string[]
+  compatible: Map<string, Awaited<ReturnType<typeof readDocument>>>
+  restrictedOriginals: Set<string>
+}
+
+async function filterRetiredSources(
+  entries: ScanEntry[],
+  root: string,
+  excluded: ExcludedSource[],
   retiredOwnership?: Record<string, string>,
-): Promise<CourseContext> {
-  const absoluteRoot = join(vault, code)
-  const root = relative(vault, absoluteRoot).split(sep).join("/")
-  const sources: SourceRecord[] = []
-  const excluded: ExcludedSource[] = []
-  const guidance: string[] = []
-  const existingWork: string[] = []
-  const entries: ScanEntry[] = []
-  const periods = (await readdir(absoluteRoot, { withFileTypes: true }))
-    .filter(
-      (entry) =>
-        entry.isDirectory() &&
-        !entry.isSymbolicLink() &&
-        /^(?:Week \d+ - [A-Za-z]{3} \d{1,2}|Milestone \d+(?: - [A-Za-z]{3} \d{1,2})?|Session \d+(?: - [A-Za-z]{3} \d{1,2})?)$/i.test(
-          entry.name,
-        ),
-    )
-    .map((entry) => `${root}/${entry.name}`)
-    .sort()
-  await walk(absoluteRoot, root, entries, notices)
+): Promise<void> {
   // Retain retired files on disk and in saved histories, but never let an
   // unchanged old Canvas snapshot shadow refreshed sources. Edited/untracked
   // School or student files remain eligible. Filter before deriving relations.
@@ -317,6 +331,9 @@ async function inspectCourse(
       }
     }
   }
+}
+
+async function appendGlobalGuidance(vault: string, entries: ScanEntry[]): Promise<void> {
   const globalAgents = join(vault, "AGENTS.md")
   try {
     const stat = await lstat(globalAgents)
@@ -326,7 +343,14 @@ async function inspectCourse(
   } catch {
     // Root guidance is optional.
   }
+}
 
+async function readCourseIndex(
+  root: string,
+  code: string,
+  entries: ScanEntry[],
+  excluded: ExcludedSource[],
+) {
   let title = code
   let safeIndex:
     | {
@@ -348,8 +372,15 @@ async function inspectCourse(
       })
     }
   }
-  if (safeIndex) sources.push(toSource(safeIndex.entry, safeIndex.parsed))
+  return { title, source: safeIndex ? toSource(safeIndex.entry, safeIndex.parsed) : undefined }
+}
 
+async function inspectCompatibleSources(
+  vault: string,
+  absoluteRoot: string,
+  entries: ScanEntry[],
+  excluded: ExcludedSource[],
+) {
   // A restrictive compatible declaration must not be bypassed through its raw
   // text original or an older extraction variant. Keep historical bytes intact.
   const compatible = new Map<string, Awaited<ReturnType<typeof readDocument>>>()
@@ -380,193 +411,219 @@ async function inspectCourse(
       restrictedOriginals.add(originalPath)
   }
 
-  for (const entry of entries) {
-    if (entry.path === `${root}/_index.md`) continue
-    if (/^(?:credentials?|secrets?|passwords?|tokens?)(?:\..*)?$/i.test(entry.name)) {
+  return { compatible, restrictedOriginals }
+}
+
+async function readExtractionSource(
+  context: CourseInventory,
+  entry: ScanEntry,
+  parsed: ParsedDocument,
+): Promise<SourceRecord | undefined> {
+  const { vault, absoluteRoot, excluded } = context
+  const originalPath = stringValue(parsed.data.original_path)
+  const originalHash = stringValue(parsed.data.original_hash)
+  if (
+    originalPath &&
+    /(?:^|\/)(?:credentials?|secrets?|passwords?|tokens?)(?:\.[^/]*)?$/i.test(originalPath)
+  ) {
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.credential_like_original",
+      reason: "Credential-like original; extraction omitted",
+    })
+    return
+  }
+  const relativeOriginal = originalPath && resolve(vault, originalPath)
+  if (!originalPath || !originalHash || !relativeOriginal?.startsWith(absoluteRoot + sep)) {
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.invalid_extraction_provenance",
+      reason: "Extraction sidecar has invalid original provenance; text omitted",
+    })
+    return
+  }
+  try {
+    await assertNoSymlinks(relativeOriginal)
+    const originalInfo = await lstat(relativeOriginal)
+    if (!originalInfo.isFile() || originalInfo.size > 50 * 1024 * 1024)
+      throw new Error("Extraction original exceeds the regular-file size limit")
+    const original = await readFile(relativeOriginal)
+    if (createHash("sha256").update(original).digest("hex") !== originalHash) {
       excluded.push({
         path: entry.path,
-        reasonCode: "source.credential_like",
-        reason: "Credential-like file; text omitted",
+        reasonCode: "source.stale_extraction",
+        reason: "Extraction sidecar is stale; text omitted",
       })
-      continue
+      return
     }
-    if (isProposal(entry.path)) {
+    // A generated sidecar must not launder policy metadata from an original
+    // Markdown/text document. The sidecar's own frontmatter only proves
+    // provenance; the original's guidance policy remains authoritative.
+    if (textExtensions.has(extension(basename(originalPath)))) {
+      const originalEntry: ScanEntry = {
+        path: originalPath,
+        absolute: relativeOriginal,
+        name: basename(originalPath),
+        parent: dirname(originalPath),
+      }
+      const originalParsed = await readDocument(originalEntry, [])
+      if (!originalParsed || isRestricted(originalParsed.data)) {
+        excluded.push({
+          path: entry.path,
+          reasonCode: "source.restricted_original_metadata",
+          reason:
+            "Original document has malformed or restricted policy metadata; extraction omitted",
+        })
+        return
+      }
+    }
+  } catch {
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.unsafe_extraction_original",
+      reason: "Extraction original is missing or unsafe; text omitted",
+    })
+    return
+  }
+  if (isRestricted(parsed.data)) {
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.restricted_policy_metadata",
+      reason: "Restricted policy metadata; text omitted",
+    })
+    return
+  }
+  return {
+    ...toSource(entry, parsed),
+    originalPath,
+    originalHash,
+    ...(stringValue(parsed.data.module_canvas_id)
+      ? { moduleCanvasId: stringValue(parsed.data.module_canvas_id) as string }
+      : {}),
+  }
+}
+
+function courseSourceRecord(
+  entry: ScanEntry,
+  parsed: ParsedDocument,
+  excluded: ExcludedSource[],
+): SourceRecord | undefined {
+  const record = toSource(entry, parsed)
+  if (parsed.data.assignment_dates !== undefined) {
+    const evidence = AssignmentDatesSchema.safeParse(parsed.data.assignment_dates)
+    if (!evidence.success) {
       excluded.push({
         path: entry.path,
-        reasonCode: "source.proposed_guidance",
-        reason: "Proposed guidance is not active context; text omitted",
+        reasonCode: "source.invalid_assignment_dates",
+        reason: "Invalid assignment date evidence; inspect source metadata",
       })
-      continue
+      return
     }
-    if (entry.path === "AGENTS.md") {
-      const parsed = await readDocument(entry, excluded)
-      if (!parsed) continue
-      if (isRestricted(parsed.data)) {
-        excluded.push({
-          path: entry.path,
-          reasonCode: "source.restricted_policy_metadata",
-          reason: "Restricted policy metadata; text omitted",
-        })
-        continue
-      }
-      guidance.push(entry.path)
-      continue
-    }
-    if (isExistingWork(entry.path)) {
-      existingWork.push(entry.path)
-      continue
-    }
-    if (!textExtensions.has(extension(entry.name))) {
-      excluded.push({
-        path: entry.path,
-        reasonCode: "source.unsupported_file_type",
-        reason: "Unsupported or binary file type; text not read",
-      })
-      continue
-    }
-    const isGuidance = isGuidancePath(entry.path)
-    const parsed = compatible.has(entry.path)
-      ? compatible.get(entry.path)
-      : await readDocument(entry, excluded)
-    if (!parsed) continue
-    if (
-      restrictedOriginals.has(entry.path) ||
-      restrictedOriginals.has(stringValue(parsed.data.original_path) ?? "")
-    ) {
-      excluded.push({
-        path: entry.path,
-        reasonCode: "source.restricted_compatible_policy",
-        reason:
-          "Restricted compatible policy declaration; original and extraction variants omitted",
-      })
-      continue
-    }
-    if (entry.name.endsWith(".extracted.md")) {
-      const originalPath = stringValue(parsed.data.original_path)
-      const originalHash = stringValue(parsed.data.original_hash)
-      if (
-        originalPath &&
-        /(?:^|\/)(?:credentials?|secrets?|passwords?|tokens?)(?:\.[^/]*)?$/i.test(originalPath)
-      ) {
-        excluded.push({
-          path: entry.path,
-          reasonCode: "source.credential_like_original",
-          reason: "Credential-like original; extraction omitted",
-        })
-        continue
-      }
-      const relativeOriginal = originalPath && resolve(vault, originalPath)
-      if (!originalPath || !originalHash || !relativeOriginal?.startsWith(absoluteRoot + sep)) {
-        excluded.push({
-          path: entry.path,
-          reasonCode: "source.invalid_extraction_provenance",
-          reason: "Extraction sidecar has invalid original provenance; text omitted",
-        })
-        continue
-      }
-      try {
-        await assertNoSymlinks(relativeOriginal)
-        const originalInfo = await lstat(relativeOriginal)
-        if (!originalInfo.isFile() || originalInfo.size > 50 * 1024 * 1024)
-          throw new Error("Extraction original exceeds the regular-file size limit")
-        const original = await readFile(relativeOriginal)
-        if (createHash("sha256").update(original).digest("hex") !== originalHash) {
-          excluded.push({
-            path: entry.path,
-            reasonCode: "source.stale_extraction",
-            reason: "Extraction sidecar is stale; text omitted",
-          })
-          continue
-        }
-        // A generated sidecar must not launder policy metadata from an original
-        // Markdown/text document. The sidecar's own frontmatter only proves
-        // provenance; the original's guidance policy remains authoritative.
-        if (textExtensions.has(extension(basename(originalPath)))) {
-          const originalEntry: ScanEntry = {
-            path: originalPath,
-            absolute: relativeOriginal,
-            name: basename(originalPath),
-            parent: dirname(originalPath),
-          }
-          const originalParsed = await readDocument(originalEntry, [])
-          if (!originalParsed || isRestricted(originalParsed.data)) {
-            excluded.push({
-              path: entry.path,
-              reasonCode: "source.restricted_original_metadata",
-              reason:
-                "Original document has malformed or restricted policy metadata; extraction omitted",
-            })
-            continue
-          }
-        }
-      } catch {
-        excluded.push({
-          path: entry.path,
-          reasonCode: "source.unsafe_extraction_original",
-          reason: "Extraction original is missing or unsafe; text omitted",
-        })
-        continue
-      }
-      if (isRestricted(parsed.data)) {
-        excluded.push({
-          path: entry.path,
-          reasonCode: "source.restricted_policy_metadata",
-          reason: "Restricted policy metadata; text omitted",
-        })
-        continue
-      }
-      sources.push({
-        ...toSource(entry, parsed),
-        originalPath,
-        originalHash,
-        ...(stringValue(parsed.data.module_canvas_id)
-          ? { moduleCanvasId: stringValue(parsed.data.module_canvas_id) as string }
-          : {}),
-      })
-      continue
-    }
+    record.assignmentDates = evidence.data
+  }
+  if (stringValue(parsed.data.module_canvas_id))
+    record.moduleCanvasId = stringValue(parsed.data.module_canvas_id) ?? undefined
+  const relationText =
+    typeof parsed.data.related_paths === "string"
+      ? [parsed.data.related_paths]
+      : Array.isArray(parsed.data.related_paths)
+        ? parsed.data.related_paths.filter((v): v is string => typeof v === "string")
+        : []
+  const relatedPaths = [...new Set(relationText)]
+  if (relatedPaths.length) record.relatedPaths = relatedPaths
+  if (stringValue(parsed.data.due_at)) record.dueAt = stringValue(parsed.data.due_at) ?? undefined
+  if (!record.dueAt && isRecord(parsed.data.dates))
+    record.dueAt = stringValue(parsed.data.dates.due_at) ?? undefined
+  if (stringValue(parsed.data.canvas_id))
+    record.canvasId = stringValue(parsed.data.canvas_id) ?? undefined
+  return record
+}
+
+async function inspectCourseEntry(context: CourseInventory, entry: ScanEntry): Promise<void> {
+  const { root, sources, excluded, guidance, existingWork, compatible, restrictedOriginals } =
+    context
+  if (entry.path === `${root}/_index.md`) return
+  if (/^(?:credentials?|secrets?|passwords?|tokens?)(?:\..*)?$/i.test(entry.name)) {
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.credential_like",
+      reason: "Credential-like file; text omitted",
+    })
+    return
+  }
+  if (isProposal(entry.path)) {
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.proposed_guidance",
+      reason: "Proposed guidance is not active context; text omitted",
+    })
+    return
+  }
+  if (entry.path === "AGENTS.md") {
+    const parsed = await readDocument(entry, excluded)
+    if (!parsed) return
     if (isRestricted(parsed.data)) {
       excluded.push({
         path: entry.path,
         reasonCode: "source.restricted_policy_metadata",
         reason: "Restricted policy metadata; text omitted",
       })
-      continue
+      return
     }
-    const record = toSource(entry, parsed)
-    if (parsed.data.assignment_dates !== undefined) {
-      const evidence = AssignmentDatesSchema.safeParse(parsed.data.assignment_dates)
-      if (!evidence.success) {
-        excluded.push({
-          path: entry.path,
-          reasonCode: "source.invalid_assignment_dates",
-          reason: "Invalid assignment date evidence; inspect source metadata",
-        })
-        continue
-      }
-      record.assignmentDates = evidence.data
-    }
-    if (stringValue(parsed.data.module_canvas_id))
-      record.moduleCanvasId = stringValue(parsed.data.module_canvas_id) ?? undefined
-    const relationText =
-      typeof parsed.data.related_paths === "string"
-        ? [parsed.data.related_paths]
-        : Array.isArray(parsed.data.related_paths)
-          ? parsed.data.related_paths.filter((v): v is string => typeof v === "string")
-          : []
-    const relatedPaths = [...new Set(relationText)]
-    if (relatedPaths.length) record.relatedPaths = relatedPaths
-    if (stringValue(parsed.data.due_at)) record.dueAt = stringValue(parsed.data.due_at) ?? undefined
-    if (!record.dueAt && isRecord(parsed.data.dates))
-      record.dueAt = stringValue(parsed.data.dates.due_at) ?? undefined
-    if (stringValue(parsed.data.canvas_id))
-      record.canvasId = stringValue(parsed.data.canvas_id) ?? undefined
-    if (isGuidance) {
-      guidance.push(entry.path)
-    } else {
-      sources.push(record)
-    }
+    guidance.push(entry.path)
+    return
   }
+  if (isExistingWork(entry.path)) {
+    existingWork.push(entry.path)
+    return
+  }
+  if (!textExtensions.has(extension(entry.name))) {
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.unsupported_file_type",
+      reason: "Unsupported or binary file type; text not read",
+    })
+    return
+  }
+  const isGuidance = isGuidancePath(entry.path)
+  const parsed = compatible.has(entry.path)
+    ? compatible.get(entry.path)
+    : await readDocument(entry, excluded)
+  if (!parsed) return
+  if (
+    restrictedOriginals.has(entry.path) ||
+    restrictedOriginals.has(stringValue(parsed.data.original_path) ?? "")
+  ) {
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.restricted_compatible_policy",
+      reason: "Restricted compatible policy declaration; original and extraction variants omitted",
+    })
+    return
+  }
+  if (entry.name.endsWith(".extracted.md")) {
+    const record = await readExtractionSource(context, entry, parsed)
+    if (record) sources.push(record)
+    return
+  }
+  if (isRestricted(parsed.data)) {
+    excluded.push({
+      path: entry.path,
+      reasonCode: "source.restricted_policy_metadata",
+      reason: "Restricted policy metadata; text omitted",
+    })
+    return
+  }
+  const record = courseSourceRecord(entry, parsed, excluded)
+  if (!record) return
+  if (isGuidance) {
+    guidance.push(entry.path)
+  } else {
+    sources.push(record)
+  }
+}
+
+function linkCourseSources(root: string, sources: SourceRecord[], notices: NoticeCollector) {
   const approvedPaths = new Set(sources.map((source) => source.path))
   const home = sources.find((source) => source.path === `${root}/00 Home.md`)
   for (const source of sources) {
@@ -606,6 +663,52 @@ async function inspectCourse(
       }
     }
   }
+  return home
+}
+
+async function inspectCourse(
+  vault: string,
+  code: string,
+  notices: NoticeCollector,
+  retiredOwnership?: Record<string, string>,
+): Promise<CourseContext> {
+  const absoluteRoot = join(vault, code)
+  const root = relative(vault, absoluteRoot).split(sep).join("/")
+  const sources: SourceRecord[] = []
+  const excluded: ExcludedSource[] = []
+  const guidance: string[] = []
+  const existingWork: string[] = []
+  const entries: ScanEntry[] = []
+  const periods = (await readdir(absoluteRoot, { withFileTypes: true }))
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        !entry.isSymbolicLink() &&
+        /^(?:Week \d+ - [A-Za-z]{3} \d{1,2}|Milestone \d+(?: - [A-Za-z]{3} \d{1,2})?|Session \d+(?: - [A-Za-z]{3} \d{1,2})?)$/i.test(
+          entry.name,
+        ),
+    )
+    .map((entry) => `${root}/${entry.name}`)
+    .sort()
+  await walk(absoluteRoot, root, entries, notices)
+  await filterRetiredSources(entries, root, excluded, retiredOwnership)
+  await appendGlobalGuidance(vault, entries)
+  const index = await readCourseIndex(root, code, entries, excluded)
+  let title = index.title
+  if (index.source) sources.push(index.source)
+  const compatible = await inspectCompatibleSources(vault, absoluteRoot, entries, excluded)
+  const context: CourseInventory = {
+    vault,
+    root,
+    absoluteRoot,
+    sources,
+    excluded,
+    guidance,
+    existingWork,
+    ...compatible,
+  }
+  for (const entry of entries) await inspectCourseEntry(context, entry)
+  const home = linkCourseSources(root, sources, notices)
   // School Agent does not have canvas-courses.json. Its public navigation file
   // carries the course identity; don't mistake a page/assignment ID for a course ID.
   const canvasId = home?.canvasUrl?.match(/\/courses\/(\d+)\/?(?:[?#].*)?$/)?.[1]

@@ -146,54 +146,31 @@ async function textFile(path: string, limit = 20_000_000, budget?: { remaining: 
     await handle.close()
   }
 }
-async function derive(
-  vault: string,
-  simulationId: string,
+type SimulationRecipe = Pick<
+  z.output<typeof recordSchema>,
+  | "selectionVersion"
+  | "workflowVersion"
+  | "workbookVersion"
+  | "prepSelectionVersion"
+  | "prepStructureVersion"
+  | "groupScopeVersion"
+  | "deliverableVersion"
+  | "deliverableScopeVersion"
+  | "guidanceSelectionVersion"
+  | "assignmentStructureVersion"
+  | "deliverableParserVersion"
+  | "answerEvidenceVersion"
+>
+type Replay = Awaited<ReturnType<typeof replaySimulation>>
+type FrozenIdentity = { id: string; createdAt: string }
+
+function selectFrozenInputs(
   options: z.output<typeof optionsSchema>,
-  id: string,
-  createdAt: string,
-  selectionVersion?: 2,
-  workflowVersion?: 3,
-  workbookVersion?: 1,
-  prepSelectionVersion?: 2,
-  prepStructureVersion?: 1,
-  groupScopeVersion?: 1,
-  deliverableVersion?: 1,
-  deliverableScopeVersion?: 1,
-  guidanceSelectionVersion?: 0 | 1,
-  assignmentStructureVersion?: 1,
-  deliverableParserVersion?: 2 | 3,
-  answerEvidenceVersion?: 1,
-  budget?: { remaining: number },
+  course: CourseContext,
+  all: SourceRecord[],
+  recipe: SimulationRecipe,
 ) {
-  if (groupScopeVersion && (options.kind !== "assignment" || workflowVersion !== 3))
-    throw new Error("Frozen group scope requires the current assignment workflow")
-  if (workbookVersion && (options.kind !== "assignment" || options.mode !== "draft"))
-    throw new Error("Automatic frozen workbooks require an assignment draft")
-  if (answerEvidenceVersion && (options.kind !== "prep" || workflowVersion !== 3))
-    throw new Error("Frozen answer evidence requires the current prep workflow")
-  const replay = await replaySimulation(vault, simulationId, budget)
-  const all: SourceRecord[] = replay.sources.map(
-    ({ availabilitySignals: _signals, ...source }) => source,
-  )
-  let guidance: SourceRecord[] =
-    selectionVersion === 2
-      ? replay.guidance.map(({ availabilitySignals: _signals, ...source }) => source)
-      : []
-  const course: CourseContext = {
-    ...replay.course,
-    sources: all.filter((source) => source.type !== "student-work"),
-    excluded: replay.excluded,
-    guidance: [],
-    existingWork: [],
-    periods: [
-      ...new Set(
-        all.flatMap(
-          (source) => source.path.match(/^(.+\/(?:Week|Milestone) \d+[^/]*)(?:\/|$)/)?.[1] ?? [],
-        ),
-      ),
-    ],
-  }
+  const { selectionVersion, prepSelectionVersion } = recipe
   let sources: SourceRecord[], period: TaskRecord["period"]
   validateDiscussionMessage(options.mode, options.message)
   if (options.kind === "prep") {
@@ -247,20 +224,46 @@ async function derive(
       sources.push(work)
     }
   }
-  if (guidanceSelectionVersion) {
-    if (workflowVersion !== 3 || selectionVersion !== 2 || replay.guidanceIdentityVersion !== 1)
-      throw new Error(
-        "Frozen scoped guidance requires a versioned identity capture and current workflow",
-      )
-    guidance = selectTaskGuidance(options.kind, guidance, sources[0])
-    if (
-      replay.restrictedGuidanceVersion === 1 &&
-      selectTaskGuidance(options.kind, replay.restrictedGuidance ?? [], sources[0]).length
-    )
-      throw new Error(
-        "Selected frozen guidance is excluded by policy; review the captured restriction before creating work",
-      )
-  }
+  return { sources, period }
+}
+
+function frozenTaskNotices(
+  recipe: SimulationRecipe,
+  kind: "prep" | "assignment",
+  limitation: string,
+): string[] {
+  const { guidanceSelectionVersion, selectionVersion } = recipe
+  return [
+    ...(guidanceSelectionVersion === 0
+      ? [
+          "This older capture has no versioned guidance identity evidence. Whole-course guidance selection remains unverified, not assignment-isolated; review ownership or create a fresh capture. No live guidance is borrowed.",
+        ]
+      : []),
+    limitation,
+    "Evaluation output is private and never replaces student coursework. Independently confirm current AI-use permission before host generation; captured technical eligibility is not instructor authorization.",
+    "Use fixed source bodies only. Missing context requires a fresh capture or explicit limitation, never current-vault substitution.",
+    ...(selectionVersion === 2 && kind === "assignment"
+      ? [
+          "Selection recipe v2 includes explicitly linked owning and ordered preceding teaching modules from this capture only. Review the complete supplied source list; never downgrade/edit the recipe to remove context.",
+        ]
+      : []),
+  ]
+}
+
+function resolveFrozenRequirements(
+  recipe: SimulationRecipe,
+  options: z.output<typeof optionsSchema>,
+  sources: SourceRecord[],
+  guidance: SourceRecord[],
+) {
+  const {
+    deliverableVersion,
+    workflowVersion,
+    deliverableParserVersion,
+    deliverableScopeVersion,
+    assignmentStructureVersion,
+    prepStructureVersion,
+  } = recipe
   if (deliverableVersion && workflowVersion !== 3)
     throw new Error("Frozen deliverables require the current workflow")
   if (deliverableParserVersion && !deliverableVersion)
@@ -285,6 +288,32 @@ async function derive(
     assignmentStructureVersion,
     prepStructureVersion,
   )
+  return { deliverable, resolved }
+}
+
+function buildFrozenTask(
+  replay: Replay,
+  options: z.output<typeof optionsSchema>,
+  identity: FrozenIdentity,
+  recipe: SimulationRecipe,
+  sources: SourceRecord[],
+  guidance: SourceRecord[],
+  period?: TaskRecord["period"],
+): TaskRecord {
+  const { id, createdAt } = identity
+  const {
+    workflowVersion,
+    workbookVersion,
+    prepSelectionVersion,
+    prepStructureVersion,
+    groupScopeVersion,
+    deliverableScopeVersion,
+    guidanceSelectionVersion,
+    assignmentStructureVersion,
+    deliverableParserVersion,
+    answerEvidenceVersion,
+  } = recipe
+  const { deliverable, resolved } = resolveFrozenRequirements(recipe, options, sources, guidance)
   const groupCategoryId = groupScopeVersion
     ? groupCategoryFromPrompt(sources.find((source) => source.path === options.source)?.text ?? "")
     : undefined
@@ -340,21 +369,7 @@ async function derive(
       assignmentStructureVersion,
       answerEvidenceVersion,
     ),
-    notices: [
-      ...(guidanceSelectionVersion === 0
-        ? [
-            "This older capture has no versioned guidance identity evidence. Whole-course guidance selection remains unverified, not assignment-isolated; review ownership or create a fresh capture. No live guidance is borrowed.",
-          ]
-        : []),
-      replay.limitation,
-      "Evaluation output is private and never replaces student coursework. Independently confirm current AI-use permission before host generation; captured technical eligibility is not instructor authorization.",
-      "Use fixed source bodies only. Missing context requires a fresh capture or explicit limitation, never current-vault substitution.",
-      ...(selectionVersion === 2 && options.kind === "assignment"
-        ? [
-            "Selection recipe v2 includes explicitly linked owning and ordered preceding teaching modules from this capture only. Review the complete supplied source list; never downgrade/edit the recipe to remove context.",
-          ]
-        : []),
-    ],
+    notices: frozenTaskNotices(recipe, options.kind, replay.limitation),
   }
   if (groupCategoryId)
     task.workflow?.instructions.push(
@@ -363,6 +378,75 @@ async function derive(
         assignmentStructureVersion ? resolved.sections : undefined,
       ),
     )
+  return task
+}
+
+async function derive(
+  vault: string,
+  simulationId: string,
+  options: z.output<typeof optionsSchema>,
+  identity: FrozenIdentity,
+  recipe: SimulationRecipe,
+  budget?: { remaining: number },
+) {
+  const {
+    selectionVersion,
+    workflowVersion,
+    workbookVersion,
+    prepSelectionVersion,
+    prepStructureVersion,
+    groupScopeVersion,
+    deliverableVersion,
+    deliverableScopeVersion,
+    guidanceSelectionVersion,
+    assignmentStructureVersion,
+    deliverableParserVersion,
+    answerEvidenceVersion,
+  } = recipe
+  if (groupScopeVersion && (options.kind !== "assignment" || workflowVersion !== 3))
+    throw new Error("Frozen group scope requires the current assignment workflow")
+  if (workbookVersion && (options.kind !== "assignment" || options.mode !== "draft"))
+    throw new Error("Automatic frozen workbooks require an assignment draft")
+  if (answerEvidenceVersion && (options.kind !== "prep" || workflowVersion !== 3))
+    throw new Error("Frozen answer evidence requires the current prep workflow")
+  const replay = await replaySimulation(vault, simulationId, budget)
+  const all: SourceRecord[] = replay.sources.map(
+    ({ availabilitySignals: _signals, ...source }) => source,
+  )
+  let guidance: SourceRecord[] =
+    selectionVersion === 2
+      ? replay.guidance.map(({ availabilitySignals: _signals, ...source }) => source)
+      : []
+  const course: CourseContext = {
+    ...replay.course,
+    sources: all.filter((source) => source.type !== "student-work"),
+    excluded: replay.excluded,
+    guidance: [],
+    existingWork: [],
+    periods: [
+      ...new Set(
+        all.flatMap(
+          (source) => source.path.match(/^(.+\/(?:Week|Milestone) \d+[^/]*)(?:\/|$)/)?.[1] ?? [],
+        ),
+      ),
+    ],
+  }
+  const { sources, period } = selectFrozenInputs(options, course, all, recipe)
+  if (guidanceSelectionVersion) {
+    if (workflowVersion !== 3 || selectionVersion !== 2 || replay.guidanceIdentityVersion !== 1)
+      throw new Error(
+        "Frozen scoped guidance requires a versioned identity capture and current workflow",
+      )
+    guidance = selectTaskGuidance(options.kind, guidance, sources[0])
+    if (
+      replay.restrictedGuidanceVersion === 1 &&
+      selectTaskGuidance(options.kind, replay.restrictedGuidance ?? [], sources[0]).length
+    )
+      throw new Error(
+        "Selected frozen guidance is excluded by policy; review the captured restriction before creating work",
+      )
+  }
+  const task = buildFrozenTask(replay, options, identity, recipe, sources, guidance, period)
   return recordSchema.parse({
     version: 1,
     ...(selectionVersion ? { selectionVersion } : {}),
@@ -391,24 +475,26 @@ export async function createSimulationTask(vault: string, simulationId: string, 
     vault,
     simulationId,
     options,
-    id,
-    new Date().toISOString(),
-    2,
-    3,
-    options.kind === "assignment" && options.mode === "draft" ? 1 : undefined,
-    options.kind === "prep" ? 2 : undefined,
-    options.kind === "prep" ? 1 : undefined,
-    options.kind === "assignment" ? 1 : undefined,
-    1,
-    options.kind === "assignment" ? 1 : undefined,
-    capture.guidanceIdentityVersion === 1 ? 1 : 0,
-    options.kind === "assignment" &&
-      options.mode === "draft" &&
-      capture.guidanceIdentityVersion === 1
-      ? 1
-      : undefined,
-    3,
-    options.kind === "prep" ? 1 : undefined,
+    { id: id, createdAt: new Date().toISOString() },
+    {
+      selectionVersion: 2,
+      workflowVersion: 3,
+      workbookVersion: options.kind === "assignment" && options.mode === "draft" ? 1 : undefined,
+      prepSelectionVersion: options.kind === "prep" ? 2 : undefined,
+      prepStructureVersion: options.kind === "prep" ? 1 : undefined,
+      groupScopeVersion: options.kind === "assignment" ? 1 : undefined,
+      deliverableVersion: 1,
+      deliverableScopeVersion: options.kind === "assignment" ? 1 : undefined,
+      guidanceSelectionVersion: capture.guidanceIdentityVersion === 1 ? 1 : 0,
+      assignmentStructureVersion:
+        options.kind === "assignment" &&
+        options.mode === "draft" &&
+        capture.guidanceIdentityVersion === 1
+          ? 1
+          : undefined,
+      deliverableParserVersion: 3,
+      answerEvidenceVersion: options.kind === "prep" ? 1 : undefined,
+    },
   )
   const serialized = JSON.stringify(record)
   if (Buffer.byteLength(serialized) > 20_000_000)
@@ -478,20 +564,21 @@ export async function readSimulationTask(
     vault,
     record.simulationId,
     record.options,
-    id,
-    record.task.createdAt,
-    record.selectionVersion,
-    record.workflowVersion,
-    record.workbookVersion,
-    record.prepSelectionVersion,
-    record.prepStructureVersion,
-    record.groupScopeVersion,
-    record.deliverableVersion,
-    record.deliverableScopeVersion,
-    record.guidanceSelectionVersion,
-    record.assignmentStructureVersion,
-    record.deliverableParserVersion,
-    record.answerEvidenceVersion,
+    { id: id, createdAt: record.task.createdAt },
+    {
+      selectionVersion: record.selectionVersion,
+      workflowVersion: record.workflowVersion,
+      workbookVersion: record.workbookVersion,
+      prepSelectionVersion: record.prepSelectionVersion,
+      prepStructureVersion: record.prepStructureVersion,
+      groupScopeVersion: record.groupScopeVersion,
+      deliverableVersion: record.deliverableVersion,
+      deliverableScopeVersion: record.deliverableScopeVersion,
+      guidanceSelectionVersion: record.guidanceSelectionVersion,
+      assignmentStructureVersion: record.assignmentStructureVersion,
+      deliverableParserVersion: record.deliverableParserVersion,
+      answerEvidenceVersion: record.answerEvidenceVersion,
+    },
     budget,
   )
   if (JSON.stringify(expected) !== JSON.stringify(record))

@@ -39,12 +39,7 @@ const slug = (value: string, fallback: string) =>
     .slice(0, 96) || fallback
 const legacySlug = (item: { title: string; canvasId?: string }) =>
   slug(item.title, `untitled-${item.canvasId}`)
-/** Filename/metadata presence only, never completion validity, approval or academic review. */
-export async function withHomeworkDraftStatus(
-  vault: string,
-  context: WorkspaceContext,
-  upcoming: { items: UpcomingItem[]; overdue: UpcomingItem[]; undated: UndatedItem[] },
-) {
+async function readHomeworkDraftInventory(vault: string, context: WorkspaceContext) {
   const directory = join(resolve(vault), "_meta/tasks")
   await assertNoSymlinks(directory, true)
   const names = await readdir(directory).catch((error: unknown) => {
@@ -97,6 +92,19 @@ export async function withHomeworkDraftStatus(
       unreadableTaskRecords++
     }
   }
+  return { native, related, unreadableTaskRecords }
+}
+
+/** Filename/metadata presence only, never completion validity, approval or academic review. */
+export async function withHomeworkDraftStatus(
+  vault: string,
+  context: WorkspaceContext,
+  upcoming: { items: UpcomingItem[]; overdue: UpcomingItem[]; undated: UndatedItem[] },
+) {
+  const { native, related, unreadableTaskRecords } = await readHomeworkDraftInventory(
+    vault,
+    context,
+  )
   const add = <T extends UpcomingItem | UndatedItem>(item: T): T & DraftPresence => {
     const course = context.courses.find((course) => course.code === item.course)
     const paths = native.get(`${item.course}\0${item.path}`) ?? new Map<string, number>()

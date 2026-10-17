@@ -35,6 +35,22 @@ export function registerSimulationCommands(program: Command): void {
   const simulate = program
     .command("simulate")
     .description("capture and replay a fixed, private source snapshot")
+  registerCaptureInventory(simulate)
+  registerCaptureCreation(simulate)
+  registerCaptureReplay(simulate)
+  const simulationTask = simulate
+    .command("task")
+    .description("persist and validate fixed-snapshot generation handoffs")
+  registerFrozenTaskInventory(simulationTask)
+  registerFrozenWorkbookCommands(simulationTask)
+  registerFrozenCalculationCommands(simulationTask)
+  registerFrozenTaskCreation(simulationTask)
+  registerFrozenTaskOutput(simulationTask)
+  registerFrozenTaskInspection(simulationTask)
+  registerFrozenTaskCompletion(simulationTask)
+}
+
+function registerCaptureInventory(simulate: Command): void {
   simulate
     .command("list")
     .description("discover saved capture metadata without reading current course sources")
@@ -51,6 +67,9 @@ export function registerSimulationCommands(program: Command): void {
         `${result.captures.map((capture) => `${capture.id} — ${capture.asOf}`).join("\n") || "No saved captures."}\n${result.inventoryComplete ? "" : "Warning: capture inventory is incomplete.\n"}${result.limitation}`,
       )
     })
+}
+
+function registerCaptureCreation(simulate: Command): void {
   simulate
     .command("capture <course>")
     .hook("preAction", vaultMutation())
@@ -96,6 +115,9 @@ export function registerSimulationCommands(program: Command): void {
         `Derived ${result.sourceCount} source(s) and ${result.guidanceCount} guidance file(s) for ${result.course.code}: ${result.id}. ${result.limitation}`,
       )
     })
+}
+
+function registerCaptureReplay(simulate: Command): void {
   simulate
     .command("replay <id>")
     .description("replay a fixed snapshot as a handoff for an external agent")
@@ -108,9 +130,9 @@ export function registerSimulationCommands(program: Command): void {
         `Replay ${result.id} for ${result.course.code}: ${result.sources.length} fixed source(s). ${result.limitation}`,
       )
     })
-  const simulationTask = simulate
-    .command("task")
-    .description("persist and validate fixed-snapshot generation handoffs")
+}
+
+function registerFrozenTaskInventory(simulationTask: Command): void {
   simulationTask
     .command("check-numbers <id>")
     .description(
@@ -157,6 +179,9 @@ export function registerSimulationCommands(program: Command): void {
         `${result.tasks.map((task) => `${task.id} — ${task.kind}`).join("\n") || "No saved frozen tasks."}\n${result.inventoryComplete ? "" : "Warning: frozen task inventory is incomplete.\n"}${result.limitation}`,
       )
     })
+}
+
+function registerFrozenWorkbookCommands(simulationTask: Command): void {
   simulationTask
     .command("workbook <id>")
     .hook("preAction", vaultMutation())
@@ -185,6 +210,9 @@ export function registerSimulationCommands(program: Command): void {
         `Validated ${result.records.length} private workbook companion(s); grounding remains unverified.`,
       )
     })
+}
+
+function registerFrozenCalculationCommands(simulationTask: Command): void {
   simulationTask
     .command("calculate <id>")
     .hook("preAction", vaultMutation())
@@ -248,6 +276,9 @@ export function registerSimulationCommands(program: Command): void {
         `Validated ${result.records.length} calculation record(s). Source grounding remains unverified.`,
       )
     })
+}
+
+function registerFrozenTaskCreation(simulationTask: Command): void {
   simulationTask
     .command("create <simulationId>")
     .hook("preAction", vaultMutation())
@@ -286,6 +317,9 @@ export function registerSimulationCommands(program: Command): void {
         `Fixed-snapshot task: ${result.id}\nRead ${result.taskFile} and simulate task show. The chosen host generates a separate candidate; confirm course permission first.`,
       )
     })
+}
+
+function registerFrozenTaskOutput(simulationTask: Command): void {
   simulationTask
     .command("output <id>")
     .description("read verified existing frozen output; never generate or record a human verdict")
@@ -301,6 +335,9 @@ export function registerSimulationCommands(program: Command): void {
       if (options.json) render(result, true, "")
       else process.stdout.write(result.text)
     })
+}
+
+function registerFrozenTaskInspection(simulationTask: Command): void {
   simulationTask
     .command("show <id>")
     .option("--json", "emit private fixed source bodies and validated state")
@@ -323,6 +360,9 @@ export function registerSimulationCommands(program: Command): void {
         `Simulation task ${id}: ${result.state}; course ${result.task.course.code}; ${result.task.sources.length} frozen sources. Use --json for the private handoff; do not share it publicly.`,
       )
     })
+}
+
+function registerFrozenTaskCompletion(simulationTask: Command): void {
   simulationTask
     .command("complete <id>")
     .hook("preAction", vaultMutation())

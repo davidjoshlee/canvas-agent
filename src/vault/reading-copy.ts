@@ -298,6 +298,172 @@ async function saveState(root: string, state: MirrorState) {
     await unlink(temp).catch(() => undefined)
   }
 }
+interface MirrorLeases {
+  legacyLock?: string
+}
+
+async function resolveMirrorOwnership(
+  plan: ReadingPlan,
+  options: { importSchoolState?: boolean },
+  leases: MirrorLeases,
+) {
+  let state = await readState(plan.root)
+  const legacyPath = join(plan.root, "_meta/reading-mirror.json")
+  const legacyBytes = await optional(legacyPath, 2 * 1024 * 1024)
+  if (legacyBytes) {
+    const schema = z
+      .object({
+        destination: z.string(),
+        updatedAt: z.string(),
+        files: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/)),
+        mtimes: z.record(z.string(), z.number()).optional(),
+      })
+      .strict()
+    let raw: unknown
+    try {
+      raw = JSON.parse(legacyBytes.toString("utf8"))
+    } catch {
+      throw new Error("Legacy reading-mirror state is invalid")
+    }
+    const legacy = schema.safeParse(raw)
+    if (!legacy.success || !isAbsolute(legacy.data.destination))
+      throw new Error("Legacy reading-mirror state is invalid")
+    if ((await canonical(legacy.data.destination)) === plan.destination) {
+      if (!options.importSchoolState)
+        throw new Error(
+          "School Agent owns this mirror; use --import-school-state only when intentionally transferring ownership",
+        )
+      if (state)
+        throw new Error(
+          "Canvas Agent already has mirror ownership; review the two mappings before importing",
+        )
+      const files = legacy.data.files
+      validateFiles(files)
+      for (const name of [...plan.files.map((file) => file.output), "00 READ ME.txt"]) {
+        if ((await optional(join(plan.destination, "Current", name))) && !files[name])
+          throw new Error(
+            "An unowned file would be overwritten in Current; legacy mapping was not imported",
+          )
+      }
+      const oldLock = join(plan.root, "_meta/reading-mirror.lock")
+      await assertNoSymlinks(oldLock, true)
+      try {
+        await mkdir(oldLock)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST")
+          throw new Error("School Agent reading mirror is locked; wait for it to finish")
+        throw error
+      }
+      leases.legacyLock = oldLock
+      const fresh = await optional(legacyPath, 2 * 1024 * 1024)
+      if (!fresh || digest(fresh) !== digest(legacyBytes))
+        throw new Error("Legacy reading-mirror state changed during import")
+      // Disable the old hook by archiving its mapping, never deleting it.
+      // New ownership starts disabled until a manual refresh is applied.
+      const imported: MirrorState = {
+        version: 1,
+        enabled: false,
+        destination: plan.destination,
+        files,
+      }
+      await saveState(plan.root, imported)
+      const backup = join(plan.root, `_meta/reading-mirror.imported-${randomUUID()}.json`)
+      await assertNoSymlinks(backup, true)
+      await rename(legacyPath, backup)
+      state = imported
+    } else if (options.importSchoolState)
+      throw new Error(
+        "Legacy mirror destination differs; refusing to import into another account/folder",
+      )
+  } else if (options.importSchoolState)
+    throw new Error("No School Agent reading-mirror mapping is available to import")
+  return state
+}
+
+async function inspectMirrorTargets(
+  current: string,
+  data: Map<string, Buffer>,
+  state?: MirrorState,
+) {
+  const existing = new Map<string, Buffer | undefined>()
+  let existingBytes = 0
+  const names = new Set([...data.keys(), ...Object.keys(state?.files ?? {})])
+  // Check every prospective target before changing any destination contents.
+  for (const name of names) {
+    safeName(name)
+    const bytes = await optional(join(current, name))
+    existingBytes += bytes?.length ?? 0
+    if (existingBytes > MAX_TOTAL)
+      throw new Error("Existing reading copy exceeds its bounded refresh limit")
+    if (bytes && !state?.files[name])
+      throw new Error(
+        "An unowned file would be overwritten in Current; choose an empty destination",
+      )
+    existing.set(name, bytes)
+  }
+  return { existing, names }
+}
+
+async function applyMirrorUpdates(
+  plan: ReadingPlan,
+  data: Map<string, Buffer>,
+  state: MirrorState | undefined,
+  names: Set<string>,
+  existing: Map<string, Buffer | undefined>,
+) {
+  const current = join(plan.destination, "Current")
+  const next: MirrorState = {
+    version: 1,
+    enabled: true,
+    destination: plan.destination,
+    files: { ...(state?.files ?? {}) },
+  }
+  let updated = 0,
+    unchanged = 0,
+    recovered = 0
+  const recovery = join(
+    plan.destination,
+    "Recovered",
+    `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`,
+  )
+  for (const name of names) {
+    const before = existing.get(name),
+      desired = data.get(name),
+      target = join(current, name)
+    if (before && desired && digest(before) === digest(desired)) {
+      next.files[name] = digest(desired)
+      unchanged++
+      continue
+    }
+    // Persist ownership intent before a write. An interrupted update can be safely resumed.
+    if (desired) {
+      next.files[name] = digest(desired)
+      await saveState(plan.root, next)
+    }
+    const actual = await optional(target)
+    if (
+      Boolean(actual) !== Boolean(before) ||
+      (actual && before && digest(actual) !== digest(before))
+    )
+      throw new Error("Reading-copy destination changed during refresh; retry")
+    if (actual) {
+      const backup = join(recovery, name)
+      await assertNoSymlinks(backup, true)
+      await mkdir(dirname(backup), { recursive: true })
+      await assertNoSymlinks(target)
+      await rename(target, backup)
+      recovered++
+    }
+    if (desired) {
+      await exclusive(target, desired)
+      updated++
+    } else delete next.files[name]
+    await saveState(plan.root, next)
+  }
+  await saveState(plan.root, next)
+  return { path: current, updated, unchanged, recovered, skipped: plan.skipped }
+}
+
 /** Explicit applied Current export opts this vault into refreshes after successful CLI writes. */
 export async function refreshReadingMirror(
   root: string,
@@ -317,153 +483,20 @@ export async function refreshReadingMirror(
       )
     throw error
   }
-  let legacyLock: string | undefined
+  const leases: MirrorLeases = {}
   try {
-    let state = await readState(plan.root)
-    const legacyPath = join(plan.root, "_meta/reading-mirror.json")
-    const legacyBytes = await optional(legacyPath, 2 * 1024 * 1024)
-    if (legacyBytes) {
-      const schema = z
-        .object({
-          destination: z.string(),
-          updatedAt: z.string(),
-          files: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/)),
-          mtimes: z.record(z.string(), z.number()).optional(),
-        })
-        .strict()
-      let raw: unknown
-      try {
-        raw = JSON.parse(legacyBytes.toString("utf8"))
-      } catch {
-        throw new Error("Legacy reading-mirror state is invalid")
-      }
-      const legacy = schema.safeParse(raw)
-      if (!legacy.success || !isAbsolute(legacy.data.destination))
-        throw new Error("Legacy reading-mirror state is invalid")
-      if ((await canonical(legacy.data.destination)) === plan.destination) {
-        if (!options.importSchoolState)
-          throw new Error(
-            "School Agent owns this mirror; use --import-school-state only when intentionally transferring ownership",
-          )
-        if (state)
-          throw new Error(
-            "Canvas Agent already has mirror ownership; review the two mappings before importing",
-          )
-        const files = legacy.data.files
-        validateFiles(files)
-        for (const name of [...plan.files.map((file) => file.output), "00 READ ME.txt"]) {
-          if ((await optional(join(plan.destination, "Current", name))) && !files[name])
-            throw new Error(
-              "An unowned file would be overwritten in Current; legacy mapping was not imported",
-            )
-        }
-        const oldLock = join(plan.root, "_meta/reading-mirror.lock")
-        await assertNoSymlinks(oldLock, true)
-        try {
-          await mkdir(oldLock)
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "EEXIST")
-            throw new Error("School Agent reading mirror is locked; wait for it to finish")
-          throw error
-        }
-        legacyLock = oldLock
-        const fresh = await optional(legacyPath, 2 * 1024 * 1024)
-        if (!fresh || digest(fresh) !== digest(legacyBytes))
-          throw new Error("Legacy reading-mirror state changed during import")
-        // Disable the old hook by archiving its mapping, never deleting it.
-        // New ownership starts disabled until a manual refresh is applied.
-        const imported: MirrorState = {
-          version: 1,
-          enabled: false,
-          destination: plan.destination,
-          files,
-        }
-        await saveState(plan.root, imported)
-        const backup = join(plan.root, `_meta/reading-mirror.imported-${randomUUID()}.json`)
-        await assertNoSymlinks(backup, true)
-        await rename(legacyPath, backup)
-        state = imported
-      } else if (options.importSchoolState)
-        throw new Error(
-          "Legacy mirror destination differs; refusing to import into another account/folder",
-        )
-    } else if (options.importSchoolState)
-      throw new Error("No School Agent reading-mirror mapping is available to import")
+    const state = await resolveMirrorOwnership(plan, options, leases)
     if (state && state.destination !== plan.destination)
       throw new Error(
         "Reading-copy destination differs from the saved mapping; refusing to reroute automatically",
       )
     const data = await contents(plan),
       current = join(plan.destination, "Current")
-    const existing = new Map<string, Buffer | undefined>()
-    let existingBytes = 0
-    const names = new Set([...data.keys(), ...Object.keys(state?.files ?? {})])
-    // Check every prospective target before changing any destination contents.
-    for (const name of names) {
-      safeName(name)
-      const bytes = await optional(join(current, name))
-      existingBytes += bytes?.length ?? 0
-      if (existingBytes > MAX_TOTAL)
-        throw new Error("Existing reading copy exceeds its bounded refresh limit")
-      if (bytes && !state?.files[name])
-        throw new Error(
-          "An unowned file would be overwritten in Current; choose an empty destination",
-        )
-      existing.set(name, bytes)
-    }
-    const next: MirrorState = {
-      version: 1,
-      enabled: true,
-      destination: plan.destination,
-      files: { ...(state?.files ?? {}) },
-    }
-    let updated = 0,
-      unchanged = 0,
-      recovered = 0
-    const recovery = join(
-      plan.destination,
-      "Recovered",
-      `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`,
-    )
-    for (const name of names) {
-      const before = existing.get(name),
-        desired = data.get(name),
-        target = join(current, name)
-      if (before && desired && digest(before) === digest(desired)) {
-        next.files[name] = digest(desired)
-        unchanged++
-        continue
-      }
-      // Persist ownership intent before a write. An interrupted update can be safely resumed.
-      if (desired) {
-        next.files[name] = digest(desired)
-        await saveState(plan.root, next)
-      }
-      const actual = await optional(target)
-      if (
-        Boolean(actual) !== Boolean(before) ||
-        (actual && before && digest(actual) !== digest(before))
-      )
-        throw new Error("Reading-copy destination changed during refresh; retry")
-      if (actual) {
-        const backup = join(recovery, name)
-        await assertNoSymlinks(backup, true)
-        await mkdir(dirname(backup), { recursive: true })
-        await assertNoSymlinks(target)
-        await rename(target, backup)
-        recovered++
-      }
-      if (desired) {
-        await exclusive(target, desired)
-        updated++
-      } else delete next.files[name]
-      await saveState(plan.root, next)
-    }
-    await saveState(plan.root, next)
-    return { path: current, updated, unchanged, recovered, skipped: plan.skipped }
+    const { existing, names } = await inspectMirrorTargets(current, data, state)
+    return await applyMirrorUpdates(plan, data, state, names, existing)
   } finally {
     try {
-      if (legacyLock) await rmdir(legacyLock)
+      if (leases.legacyLock) await rmdir(leases.legacyLock)
     } finally {
       await rmdir(lock)
     }

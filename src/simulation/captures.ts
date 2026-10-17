@@ -181,6 +181,44 @@ function snapshotPath(vault: string, id: string) {
   return join(resolve(vault), "_meta", "simulations", `${id}.json`)
 }
 
+type AvailableSource = { source: SourceRecord } & Awaited<ReturnType<typeof availability>>
+
+function captureVisibility(
+  entries: AvailableSource[],
+  policyPaths: Set<string>,
+  courseRoot: string,
+): VisibilityInventory {
+  const visibility: VisibilityInventory = {
+    version: 1,
+    documents: entries
+      .filter(({ source }) => !policyPaths.has(source.path) && source.type !== "student-work")
+      .map(({ source, dates, signals, invalid }) => ({
+        path: source.path,
+        hash: source.hash,
+        type: source.type,
+        dates: { ...dates, ...source.moduleDates },
+        explicitSignals: signals as VisibilityInventory["documents"][number]["explicitSignals"],
+        invalid,
+        members: [],
+        ...(source.canvasId === undefined ? {} : { canvasId: source.canvasId }),
+        ...(source.moduleCanvasId === undefined ? {} : { moduleCanvasId: source.moduleCanvasId }),
+      })),
+  }
+  const materialPaths = new Set(visibility.documents.map((document) => document.path))
+  for (const document of visibility.documents) {
+    const source = entries.find((entry) => entry.source.path === document.path)?.source
+    document.members = [
+      ...new Set(
+        (source?.relatedPaths ?? []).map((path) =>
+          path.startsWith(`${courseRoot}/`) ? path : `${courseRoot}/${path}`,
+        ),
+      ),
+    ].filter((path) => materialPaths.has(path))
+  }
+  validateVisibilityInventory(visibility, courseRoot)
+  return visibility
+}
+
 /** Capture exactly the currently readable source version, classified against a cutoff. */
 export async function captureSimulation(
   vaultPath: string,
@@ -237,34 +275,7 @@ export async function captureSimulation(
       source,
       ...(await availability(vault, course.root, source, policyPaths.has(source.path))),
     })
-  const visibility: VisibilityInventory = {
-    version: 1,
-    documents: entries
-      .filter(({ source }) => !policyPaths.has(source.path) && source.type !== "student-work")
-      .map(({ source, dates, signals, invalid }) => ({
-        path: source.path,
-        hash: source.hash,
-        type: source.type,
-        dates: { ...dates, ...source.moduleDates },
-        explicitSignals: signals as VisibilityInventory["documents"][number]["explicitSignals"],
-        invalid,
-        members: [],
-        ...(source.canvasId === undefined ? {} : { canvasId: source.canvasId }),
-        ...(source.moduleCanvasId === undefined ? {} : { moduleCanvasId: source.moduleCanvasId }),
-      })),
-  }
-  const materialPaths = new Set(visibility.documents.map((document) => document.path))
-  for (const document of visibility.documents) {
-    const source = entries.find((entry) => entry.source.path === document.path)?.source
-    document.members = [
-      ...new Set(
-        (source?.relatedPaths ?? []).map((path) =>
-          path.startsWith(`${course.root}/`) ? path : `${course.root}/${path}`,
-        ),
-      ),
-    ].filter((path) => materialPaths.has(path))
-  }
-  validateVisibilityInventory(visibility, course.root)
+  const visibility = captureVisibility(entries, policyPaths, course.root)
   for (const { source, signals: explicitSignals, invalid } of entries) {
     const isGuidance = policyPaths.has(source.path)
     const document = visibility.documents.find((item) => item.path === source.path)
@@ -415,43 +426,7 @@ export async function deriveSimulationCapture(
   return snapshotSummary(snapshot)
 }
 
-async function readSnapshot(
-  vault: string,
-  id: string,
-  allowDerived = true,
-  budget?: { remaining: number },
-): Promise<SimulationSnapshot> {
-  const path = snapshotPath(vault, id)
-  await assertNoSymlinks(path)
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-  let bytes: Buffer
-  try {
-    const info = await file.stat()
-    if (!info.isFile() || info.size > LIMIT)
-      throw new Error("Simulation snapshot is unsafe or exceeds 20 MB")
-    if (budget) {
-      budget.remaining -= info.size
-      if (budget.remaining < 0) throw new Error("Simulation capture inventory exceeds 100 MB")
-    }
-    bytes = await file.readFile()
-    if (budget && bytes.length > info.size) {
-      budget.remaining -= bytes.length - info.size
-      if (budget.remaining < 0) throw new Error("Simulation capture inventory exceeds 100 MB")
-    }
-  } finally {
-    await file.close()
-  }
-  if (bytes.length > LIMIT || !Buffer.from(bytes.toString("utf8"), "utf8").equals(bytes))
-    throw new Error("Simulation snapshot exceeds bounds or is not valid UTF-8")
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(bytes.toString("utf8"))
-  } catch {
-    throw new Error("Simulation snapshot must contain valid JSON; inspect privately")
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-    throw new Error("Simulation snapshot is malformed")
-  const value = parsed as SimulationSnapshot
+function validateSnapshotEnvelope(value: SimulationSnapshot, id: string): void {
   const allowedTopLevel = [
     "asOf",
     "capturedAt",
@@ -502,201 +477,206 @@ async function readSnapshot(
     !/^[a-f0-9]{64}$/.test(value.hash)
   )
     throw new Error("Simulation snapshot is malformed")
-  const sourcePaths = new Set<string>()
-  if (value.visibility !== undefined)
-    validateVisibilityInventory(value.visibility, value.course.root)
-  const sourceKeys = [
-    "availabilitySignals",
-    "canvasId",
-    "canvasUrl",
-    "dates",
-    "dueAt",
-    "assignmentDates",
-    "hash",
-    "moduleCanvasId",
-    "modulePosition",
-    "moduleDates",
-    "originalHash",
-    "ingestProvenance",
-    "originalPath",
-    "path",
-    "postedAt",
-    "relatedPaths",
-    "text",
-    "title",
-    "type",
-  ]
-  for (const [source, guidance] of [
-    ...value.sources.map((source) => [source, false] as const),
-    ...(value.guidance ?? []).map((source) => [source, true] as const),
-  ]) {
-    if (!source || typeof source !== "object" || Array.isArray(source))
-      throw new Error("Simulation snapshot is malformed")
-    const item = source as SimulationSource
-    if (
-      item.ingestProvenance !== undefined &&
-      (!item.ingestProvenance ||
-        typeof item.ingestProvenance !== "object" ||
-        Object.keys(item.ingestProvenance).sort().join(",") !== "hash,path" ||
-        item.ingestProvenance.path !== `${item.path}.ingest.json` ||
-        !/\.school-[a-f0-9]{12}\.extracted\.md$/.test(item.path) ||
-        typeof item.ingestProvenance.hash !== "string" ||
-        !/^[a-f0-9]{64}$/.test(item.ingestProvenance.hash) ||
-        !item.originalPath ||
-        !item.originalHash)
-    )
-      throw new Error("Simulation compatible provenance is malformed")
-    if (
-      item.assignmentDates !== undefined &&
-      !AssignmentDatesSchema.safeParse(item.assignmentDates).success
-    )
-      throw new Error("Simulation assignment date evidence is malformed")
-    if (
-      Object.keys(item).some((key) => !sourceKeys.includes(key)) ||
-      (guidance &&
-        Object.keys(item).some(
-          (key) =>
-            ![
-              "availabilitySignals",
-              "dates",
-              "hash",
-              "path",
-              "text",
-              "title",
-              "type",
-              ...(value.guidanceIdentityVersion === 1 ? ["canvasId", "canvasUrl"] : []),
-            ].includes(key),
-        )) ||
-      typeof item.path !== "string" ||
-      (guidance
-        ? !approvedGuidancePath(value.course.root, item.path) || item.type !== "guidance"
-        : !item.path.startsWith(`${value.course.root}/`)) ||
-      item.path.startsWith("/") ||
-      item.path.split(/[\\/]/).some((part) => part === ".." || (!guidance && part === "_meta")) ||
-      sourcePaths.has(item.path) ||
-      typeof item.title !== "string" ||
-      typeof item.text !== "string" ||
-      Buffer.byteLength(item.text) > 5 * 1024 * 1024 ||
-      typeof item.type !== "string" ||
-      (item.moduleDates !== undefined &&
-        (!item.moduleDates ||
-          typeof item.moduleDates !== "object" ||
-          Array.isArray(item.moduleDates) ||
-          Object.entries(item.moduleDates).some(
-            ([key, value]) =>
-              !["unlock_at", "session_at"].includes(key) ||
-              typeof value !== "string" ||
-              value.length > 4096,
-          ))) ||
-      (item.modulePosition !== undefined &&
-        (!Number.isSafeInteger(item.modulePosition) || item.modulePosition < 1)) ||
-      typeof item.hash !== "string" ||
-      !/^[a-f0-9]{64}$/.test(item.hash) ||
-      !Array.isArray(item.dates) ||
-      !item.dates.every((date) => typeof date === "string") ||
-      !Array.isArray(item.availabilitySignals) ||
-      item.availabilitySignals.length === 0 ||
-      item.availabilitySignals.length > 8 ||
-      new Set(item.availabilitySignals.map((signal) => signal?.field)).size !==
-        item.availabilitySignals.length ||
-      !item.availabilitySignals.every(
-        (signal) =>
-          signal &&
-          typeof signal === "object" &&
-          Object.keys(signal).sort().join(",") === "field,value" &&
-          (signalFields.includes(signal.field) ||
-            (value.visibility !== undefined &&
-              inferredSignalFields.some((field) => field === signal.field))) &&
-          typeof signal.value === "string" &&
-          signalInstant(signal.value) !== undefined &&
-          (signalInstant(signal.value) ?? "") <= value.asOf,
-      )
-    )
-      throw new Error("Simulation snapshot contains an invalid source")
-    sourcePaths.add(item.path)
-    if (guidance && value.guidanceIdentityVersion === 1) {
-      try {
-        guidanceAssignmentIdentity(item)
-      } catch {
-        throw new Error("Captured guidance identity binding is invalid")
-      }
-      if (
-        item.canvasId !== undefined &&
-        (typeof item.canvasId !== "string" || !/^[1-9]\d{0,39}$/.test(item.canvasId))
-      )
-        throw new Error("Captured guidance identity is invalid")
-      if (item.canvasUrl !== undefined) {
-        try {
-          if (typeof item.canvasUrl !== "string" || item.canvasUrl.length > 2000)
-            throw new Error("Invalid URL")
-          const url = new URL(item.canvasUrl)
-          if (
-            !["http:", "https:"].includes(url.protocol) ||
-            url.username ||
-            url.password ||
-            url.search ||
-            url.hash ||
-            url.href !== item.canvasUrl
-          )
-            throw new Error("Noncanonical URL")
-        } catch {
-          throw new Error("Captured guidance URL evidence is invalid")
-        }
-      }
-    }
-    if (value.visibility && !guidance && item.type !== "student-work") {
-      const document = value.visibility.documents.find((document) => document.path === item.path)
-      if (
-        !document ||
-        document.invalid ||
-        document.hash !== item.hash ||
-        document.type !== item.type ||
-        document.canvasId !== item.canvasId ||
-        document.moduleCanvasId !== item.moduleCanvasId ||
-        (item.moduleDates !== undefined &&
-          JSON.stringify(item.moduleDates) !==
-            JSON.stringify(
-              Object.fromEntries(
-                ["unlock_at", "session_at"]
-                  .filter((key) => document.dates[key as "unlock_at" | "session_at"] !== undefined)
-                  .map((key) => [key, document.dates[key as "unlock_at" | "session_at"]]),
-              ),
-            )) ||
-        JSON.stringify(
-          document.explicitSignals.length
-            ? document.explicitSignals
-            : [inferVisibility(document, value.visibility)],
-        ) !== JSON.stringify(item.availabilitySignals)
-      )
-        throw new Error("Simulation structural visibility source binding mismatch")
-    }
-    if (
-      item.availabilitySignals.some((signal) =>
-        inferredSignalFields.some((field) => field === signal.field),
-      )
-    ) {
-      const document = value.visibility?.documents.find((document) => document.path === item.path)
-      if (
-        guidance ||
-        !document ||
-        document.explicitSignals.length > 0 ||
-        document.invalid ||
-        document.hash !== item.hash ||
-        document.type !== item.type ||
-        document.canvasId !== item.canvasId ||
-        document.moduleCanvasId !== item.moduleCanvasId ||
-        JSON.stringify(item.availabilitySignals) !==
-          JSON.stringify([inferVisibility(document, value.visibility as VisibilityInventory)])
-      )
-        throw new Error("Simulation structural visibility evidence mismatch")
-    }
-  }
+}
+
+function validateSnapshotProvenance(item: SimulationSource): void {
   if (
-    !value.excluded.every(
-      (item) => item && typeof item.path === "string" && typeof item.reason === "string",
+    item.ingestProvenance !== undefined &&
+    (!item.ingestProvenance ||
+      typeof item.ingestProvenance !== "object" ||
+      Object.keys(item.ingestProvenance).sort().join(",") !== "hash,path" ||
+      item.ingestProvenance.path !== `${item.path}.ingest.json` ||
+      !/\.school-[a-f0-9]{12}\.extracted\.md$/.test(item.path) ||
+      typeof item.ingestProvenance.hash !== "string" ||
+      !/^[a-f0-9]{64}$/.test(item.ingestProvenance.hash) ||
+      !item.originalPath ||
+      !item.originalHash)
+  )
+    throw new Error("Simulation compatible provenance is malformed")
+  if (
+    item.assignmentDates !== undefined &&
+    !AssignmentDatesSchema.safeParse(item.assignmentDates).success
+  )
+    throw new Error("Simulation assignment date evidence is malformed")
+}
+
+const snapshotSourceKeys = new Set<string>([
+  "availabilitySignals",
+  "canvasId",
+  "canvasUrl",
+  "dates",
+  "dueAt",
+  "assignmentDates",
+  "hash",
+  "moduleCanvasId",
+  "modulePosition",
+  "moduleDates",
+  "originalHash",
+  "ingestProvenance",
+  "originalPath",
+  "path",
+  "postedAt",
+  "relatedPaths",
+  "text",
+  "title",
+  "type",
+])
+
+function validateSnapshotSourceShape(
+  value: SimulationSnapshot,
+  item: SimulationSource,
+  guidance: boolean,
+  sourcePaths: Set<string>,
+): void {
+  if (
+    Object.keys(item).some((key) => !snapshotSourceKeys.has(key)) ||
+    (guidance &&
+      Object.keys(item).some(
+        (key) =>
+          ![
+            "availabilitySignals",
+            "dates",
+            "hash",
+            "path",
+            "text",
+            "title",
+            "type",
+            ...(value.guidanceIdentityVersion === 1 ? ["canvasId", "canvasUrl"] : []),
+          ].includes(key),
+      )) ||
+    typeof item.path !== "string" ||
+    (guidance
+      ? !approvedGuidancePath(value.course.root, item.path) || item.type !== "guidance"
+      : !item.path.startsWith(`${value.course.root}/`)) ||
+    item.path.startsWith("/") ||
+    item.path.split(/[\\/]/).some((part) => part === ".." || (!guidance && part === "_meta")) ||
+    sourcePaths.has(item.path) ||
+    typeof item.title !== "string" ||
+    typeof item.text !== "string" ||
+    Buffer.byteLength(item.text) > 5 * 1024 * 1024 ||
+    typeof item.type !== "string" ||
+    (item.moduleDates !== undefined &&
+      (!item.moduleDates ||
+        typeof item.moduleDates !== "object" ||
+        Array.isArray(item.moduleDates) ||
+        Object.entries(item.moduleDates).some(
+          ([key, value]) =>
+            !["unlock_at", "session_at"].includes(key) ||
+            typeof value !== "string" ||
+            value.length > 4096,
+        ))) ||
+    (item.modulePosition !== undefined &&
+      (!Number.isSafeInteger(item.modulePosition) || item.modulePosition < 1)) ||
+    typeof item.hash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(item.hash) ||
+    !Array.isArray(item.dates) ||
+    !item.dates.every((date) => typeof date === "string") ||
+    !Array.isArray(item.availabilitySignals) ||
+    item.availabilitySignals.length === 0 ||
+    item.availabilitySignals.length > 8 ||
+    new Set(item.availabilitySignals.map((signal) => signal?.field)).size !==
+      item.availabilitySignals.length ||
+    !item.availabilitySignals.every(
+      (signal) =>
+        signal &&
+        typeof signal === "object" &&
+        Object.keys(signal).sort().join(",") === "field,value" &&
+        (signalFields.includes(signal.field) ||
+          (value.visibility !== undefined &&
+            inferredSignalFields.some((field) => field === signal.field))) &&
+        typeof signal.value === "string" &&
+        signalInstant(signal.value) !== undefined &&
+        (signalInstant(signal.value) ?? "") <= value.asOf,
     )
   )
-    throw new Error("Simulation snapshot contains an invalid exclusion")
+    throw new Error("Simulation snapshot contains an invalid source")
+}
+
+function validateCapturedGuidance(item: SimulationSource): void {
+  try {
+    guidanceAssignmentIdentity(item)
+  } catch {
+    throw new Error("Captured guidance identity binding is invalid")
+  }
+  if (
+    item.canvasId !== undefined &&
+    (typeof item.canvasId !== "string" || !/^[1-9]\d{0,39}$/.test(item.canvasId))
+  )
+    throw new Error("Captured guidance identity is invalid")
+  if (item.canvasUrl !== undefined) {
+    try {
+      if (typeof item.canvasUrl !== "string" || item.canvasUrl.length > 2000)
+        throw new Error("Invalid URL")
+      const url = new URL(item.canvasUrl)
+      if (
+        !["http:", "https:"].includes(url.protocol) ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash ||
+        url.href !== item.canvasUrl
+      )
+        throw new Error("Noncanonical URL")
+    } catch {
+      throw new Error("Captured guidance URL evidence is invalid")
+    }
+  }
+}
+
+function validateSourceVisibility(
+  value: SimulationSnapshot,
+  item: SimulationSource,
+  guidance: boolean,
+): void {
+  if (value.visibility && !guidance && item.type !== "student-work") {
+    const document = value.visibility.documents.find((document) => document.path === item.path)
+    if (
+      !document ||
+      document.invalid ||
+      document.hash !== item.hash ||
+      document.type !== item.type ||
+      document.canvasId !== item.canvasId ||
+      document.moduleCanvasId !== item.moduleCanvasId ||
+      (item.moduleDates !== undefined &&
+        JSON.stringify(item.moduleDates) !==
+          JSON.stringify(
+            Object.fromEntries(
+              ["unlock_at", "session_at"]
+                .filter((key) => document.dates[key as "unlock_at" | "session_at"] !== undefined)
+                .map((key) => [key, document.dates[key as "unlock_at" | "session_at"]]),
+            ),
+          )) ||
+      JSON.stringify(
+        document.explicitSignals.length
+          ? document.explicitSignals
+          : [inferVisibility(document, value.visibility)],
+      ) !== JSON.stringify(item.availabilitySignals)
+    )
+      throw new Error("Simulation structural visibility source binding mismatch")
+  }
+  if (
+    item.availabilitySignals.some((signal) =>
+      inferredSignalFields.some((field) => field === signal.field),
+    )
+  ) {
+    const document = value.visibility?.documents.find((document) => document.path === item.path)
+    if (
+      guidance ||
+      !document ||
+      document.explicitSignals.length > 0 ||
+      document.invalid ||
+      document.hash !== item.hash ||
+      document.type !== item.type ||
+      document.canvasId !== item.canvasId ||
+      document.moduleCanvasId !== item.moduleCanvasId ||
+      JSON.stringify(item.availabilitySignals) !==
+        JSON.stringify([inferVisibility(document, value.visibility as VisibilityInventory)])
+    )
+      throw new Error("Simulation structural visibility evidence mismatch")
+  }
+}
+
+function validateRestrictedGuidance(value: SimulationSnapshot, sourcePaths: Set<string>): void {
   if (value.restrictedGuidance !== undefined) {
     if (value.restrictedGuidance.length > 100)
       throw new Error("Simulation restricted guidance inventory exceeds bounds")
@@ -752,8 +732,14 @@ async function readSnapshot(
     if (restrictedGuidancePaths(value).some((path) => !paths.has(path)))
       throw new Error("Captured restricted guidance inventory is incomplete")
   }
-  const { hash: digest, ...base } = value
-  if (snapshotDigest(base) !== digest) throw new Error("Simulation snapshot hash mismatch")
+}
+
+async function validateDerivedSnapshot(
+  vault: string,
+  value: SimulationSnapshot,
+  allowDerived: boolean,
+  budget?: { remaining: number },
+): Promise<void> {
   if (value.derivedFrom !== undefined) {
     if (
       !allowDerived ||
@@ -783,6 +769,72 @@ async function readSnapshot(
     )
       throw new Error("Derived capture differs from its original frozen inventory/cutoff")
   }
+}
+
+async function readSnapshot(
+  vault: string,
+  id: string,
+  allowDerived = true,
+  budget?: { remaining: number },
+): Promise<SimulationSnapshot> {
+  const path = snapshotPath(vault, id)
+  await assertNoSymlinks(path)
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  let bytes: Buffer
+  try {
+    const info = await file.stat()
+    if (!info.isFile() || info.size > LIMIT)
+      throw new Error("Simulation snapshot is unsafe or exceeds 20 MB")
+    if (budget) {
+      budget.remaining -= info.size
+      if (budget.remaining < 0) throw new Error("Simulation capture inventory exceeds 100 MB")
+    }
+    bytes = await file.readFile()
+    if (budget && bytes.length > info.size) {
+      budget.remaining -= bytes.length - info.size
+      if (budget.remaining < 0) throw new Error("Simulation capture inventory exceeds 100 MB")
+    }
+  } finally {
+    await file.close()
+  }
+  if (bytes.length > LIMIT || !Buffer.from(bytes.toString("utf8"), "utf8").equals(bytes))
+    throw new Error("Simulation snapshot exceeds bounds or is not valid UTF-8")
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(bytes.toString("utf8"))
+  } catch {
+    throw new Error("Simulation snapshot must contain valid JSON; inspect privately")
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error("Simulation snapshot is malformed")
+  const value = parsed as SimulationSnapshot
+  validateSnapshotEnvelope(value, id)
+  const sourcePaths = new Set<string>()
+  if (value.visibility !== undefined)
+    validateVisibilityInventory(value.visibility, value.course.root)
+  for (const [source, guidance] of [
+    ...value.sources.map((source) => [source, false] as const),
+    ...(value.guidance ?? []).map((source) => [source, true] as const),
+  ]) {
+    if (!source || typeof source !== "object" || Array.isArray(source))
+      throw new Error("Simulation snapshot is malformed")
+    const item = source as SimulationSource
+    validateSnapshotProvenance(item)
+    validateSnapshotSourceShape(value, item, guidance, sourcePaths)
+    sourcePaths.add(item.path)
+    if (guidance && value.guidanceIdentityVersion === 1) validateCapturedGuidance(item)
+    validateSourceVisibility(value, item, guidance)
+  }
+  if (
+    !value.excluded.every(
+      (item) => item && typeof item.path === "string" && typeof item.reason === "string",
+    )
+  )
+    throw new Error("Simulation snapshot contains an invalid exclusion")
+  validateRestrictedGuidance(value, sourcePaths)
+  const { hash: digest, ...base } = value
+  if (snapshotDigest(base) !== digest) throw new Error("Simulation snapshot hash mismatch")
+  await validateDerivedSnapshot(vault, value, allowDerived, budget)
   return value
 }
 

@@ -307,21 +307,7 @@ export async function extractText(input: {
   }
 }
 
-/** Explicitly copy/extract a selected file inside one course's writable product namespace. */
-export async function ingestFile(
-  vault: string,
-  courseQuery: string,
-  file: string,
-  title?: string,
-  options: {
-    week?: string
-    module?: string
-    asOf?: string
-    compatibility?: IngestCompatibility
-  } = {},
-): Promise<{ original: string; text?: string; notices: string[] }> {
-  const week = options.week
-  const asOf = options.asOf
+function validateIngestDates(week?: string, asOf?: string): void {
   if (asOf !== undefined) {
     const date = new Date(`${asOf}T00:00:00.000Z`)
     if (
@@ -342,6 +328,145 @@ export async function ingestFile(
     )
       throw new Error("Ingest week must be a real Monday in YYYY-MM-DD format")
   }
+}
+
+async function preserveIngestOriginal(original: string, bytes: Uint8Array): Promise<void> {
+  try {
+    await writeFile(original, bytes, { flag: "wx" })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+    // A matching digest in the filename is not proof that an existing vault file
+    // is still the original. Never attach a newly extracted sidecar to tampered data.
+    await assertNoSymlinks(original)
+    const existing = await lstat(original)
+    if (!existing.isFile() || existing.isSymbolicLink() || existing.size !== bytes.byteLength)
+      throw new Error("Existing original is not a matching regular file; it was preserved")
+    const current = await readFile(original)
+    if (sha(current) !== sha(bytes))
+      throw new Error("Existing original has changed; it was preserved")
+  }
+}
+
+interface IngestSidecarEvidence {
+  rel: string
+  originalHash: string
+  week?: string
+  asOf?: string
+  module?: string
+  portable?: ReturnType<typeof renderCompatibleIngestion>
+}
+
+async function saveIngestSidecar(
+  sidecar: string,
+  content: string,
+  evidence: IngestSidecarEvidence,
+  notices: string[],
+): Promise<string> {
+  const { rel, originalHash, week, asOf, module, portable } = evidence
+  if (portable) {
+    const companion = `${sidecar}.ingest.json`
+    const present = await lstat(sidecar).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error
+      return null
+    })
+    if (!present) {
+      try {
+        await writeFile(companion, JSON.stringify(portable.provenance), {
+          flag: "wx",
+          mode: 0o600,
+        })
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+      }
+    }
+    const { data: saved } = await readIngestProvenance(companion)
+    if (JSON.stringify(saved) !== JSON.stringify(portable.provenance))
+      throw new Error("Existing compatible provenance conflicts; artifacts were preserved")
+  }
+  try {
+    await writeFile(sidecar, content, { flag: "wx" })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+    await assertNoSymlinks(sidecar)
+    const existingText = await readFile(sidecar, "utf8")
+    const frontmatter = existingText.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\s*\r?\n|$)/)
+    let metadata: unknown
+    try {
+      metadata = frontmatter ? parseYaml(frontmatter[1] ?? "") : null
+    } catch {
+      metadata = null
+    }
+    const record =
+      metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        ? (metadata as Record<string, unknown>)
+        : null
+    const existingDate =
+      record?.dates && typeof record.dates === "object" && !Array.isArray(record.dates)
+        ? (record.dates as Record<string, unknown>).date
+        : undefined
+    if (
+      (!portable &&
+        (record?.original_path !== rel ||
+          record.original_hash !== originalHash ||
+          record.available_at !== asOf)) ||
+      existingDate !== week ||
+      record?.module_canvas_id !== module
+    )
+      throw new Error(
+        "Existing extraction sidecar has conflicting provenance or period metadata; it was preserved",
+      )
+    if (portable) {
+      const expected = parseYaml(content.match(/^---\n([\s\S]*?)\n---\n/)?.[1] ?? "") as Record<
+        string,
+        unknown
+      >
+      for (const field of [
+        "canvas_id",
+        "canvas_url",
+        "type",
+        "source",
+        "status",
+        "ai_policy",
+        "redistribution",
+        "content_hash",
+      ])
+        if (record?.[field] !== expected[field])
+          throw new Error(
+            "Existing compatible sidecar has conflicting identity or policy metadata; it was preserved",
+          )
+      if (JSON.stringify(record?.dates) !== JSON.stringify(expected.dates))
+        throw new Error("Existing compatible sidecar has conflicting dates; it was preserved")
+      if (
+        JSON.stringify(Object.keys(record ?? {}).sort()) !==
+        JSON.stringify(Object.keys(expected).sort())
+      )
+        throw new Error("Existing compatible sidecar has unexpected metadata; it was preserved")
+      if (sha(existingText) !== portable?.provenance.hash)
+        notices.push(
+          "Edited compatible sidecar preserved; provenance hash is stale and context requires review",
+        )
+    }
+    notices.push("Preserved existing extraction sidecar")
+  }
+  return sidecar
+}
+
+/** Explicitly copy/extract a selected file inside one course's writable product namespace. */
+export async function ingestFile(
+  vault: string,
+  courseQuery: string,
+  file: string,
+  title?: string,
+  options: {
+    week?: string
+    module?: string
+    asOf?: string
+    compatibility?: IngestCompatibility
+  } = {},
+): Promise<{ original: string; text?: string; notices: string[] }> {
+  const week = options.week
+  const asOf = options.asOf
+  validateIngestDates(week, asOf)
   const root = resolve(vault)
   await assertNoSymlinks(root)
   const { selectCourse } = await import("../vault/workspace.js")
@@ -384,20 +509,7 @@ export async function ingestFile(
   await assertNoSymlinks(destinationDir, true)
   await mkdir(destinationDir, { recursive: true })
   await assertNoSymlinks(destinationDir)
-  try {
-    await writeFile(original, bytes, { flag: "wx" })
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
-    // A matching digest in the filename is not proof that an existing vault file
-    // is still the original. Never attach a newly extracted sidecar to tampered data.
-    await assertNoSymlinks(original)
-    const existing = await lstat(original)
-    if (!existing.isFile() || existing.isSymbolicLink() || existing.size !== bytes.byteLength)
-      throw new Error("Existing original is not a matching regular file; it was preserved")
-    const current = await readFile(original)
-    if (sha(current) !== sha(bytes))
-      throw new Error("Existing original has changed; it was preserved")
-  }
+  await preserveIngestOriginal(original, bytes)
   const extracted = await extractText({
     bytes,
     filename: basename(name),
@@ -424,93 +536,19 @@ export async function ingestFile(
     const content =
       portable?.markdown ??
       `---\noriginal_path: ${JSON.stringify(rel)}\noriginal_hash: ${sha(bytes)}\n${asOf ? `available_at: ${JSON.stringify(asOf)}\n` : ""}${options.module ? `module_canvas_id: ${JSON.stringify(options.module)}\n` : ""}${week ? `dates:\n  date: ${JSON.stringify(week)}\n` : ""}---\n\n${body}`
-    if (portable) {
-      const companion = `${sidecar}.ingest.json`
-      const present = await lstat(sidecar).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== "ENOENT") throw error
-        return null
-      })
-      if (!present) {
-        try {
-          await writeFile(companion, JSON.stringify(portable.provenance), {
-            flag: "wx",
-            mode: 0o600,
-          })
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
-        }
-      }
-      const { data: saved } = await readIngestProvenance(companion)
-      if (JSON.stringify(saved) !== JSON.stringify(portable.provenance))
-        throw new Error("Existing compatible provenance conflicts; artifacts were preserved")
-    }
-    try {
-      await writeFile(sidecar, content, { flag: "wx" })
-      text = sidecar
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
-      await assertNoSymlinks(sidecar)
-      const existingText = await readFile(sidecar, "utf8")
-      const frontmatter = existingText.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\s*\r?\n|$)/)
-      let metadata: unknown
-      try {
-        metadata = frontmatter ? parseYaml(frontmatter[1] ?? "") : null
-      } catch {
-        metadata = null
-      }
-      const record =
-        metadata && typeof metadata === "object" && !Array.isArray(metadata)
-          ? (metadata as Record<string, unknown>)
-          : null
-      const existingDate =
-        record?.dates && typeof record.dates === "object" && !Array.isArray(record.dates)
-          ? (record.dates as Record<string, unknown>).date
-          : undefined
-      if (
-        (!portable &&
-          (record?.original_path !== rel ||
-            record.original_hash !== sha(bytes) ||
-            record.available_at !== asOf)) ||
-        existingDate !== week ||
-        record?.module_canvas_id !== options.module
-      )
-        throw new Error(
-          "Existing extraction sidecar has conflicting provenance or period metadata; it was preserved",
-        )
-      if (compatibility) {
-        const expected = parseYaml(content.match(/^---\n([\s\S]*?)\n---\n/)?.[1] ?? "") as Record<
-          string,
-          unknown
-        >
-        for (const field of [
-          "canvas_id",
-          "canvas_url",
-          "type",
-          "source",
-          "status",
-          "ai_policy",
-          "redistribution",
-          "content_hash",
-        ])
-          if (record?.[field] !== expected[field])
-            throw new Error(
-              "Existing compatible sidecar has conflicting identity or policy metadata; it was preserved",
-            )
-        if (JSON.stringify(record?.dates) !== JSON.stringify(expected.dates))
-          throw new Error("Existing compatible sidecar has conflicting dates; it was preserved")
-        if (
-          JSON.stringify(Object.keys(record ?? {}).sort()) !==
-          JSON.stringify(Object.keys(expected).sort())
-        )
-          throw new Error("Existing compatible sidecar has unexpected metadata; it was preserved")
-        if (sha(existingText) !== portable?.provenance.hash)
-          notices.push(
-            "Edited compatible sidecar preserved; provenance hash is stale and context requires review",
-          )
-      }
-      text = sidecar
-      notices.push("Preserved existing extraction sidecar")
-    }
+    text = await saveIngestSidecar(
+      sidecar,
+      content,
+      {
+        rel,
+        originalHash: sha(bytes),
+        week,
+        asOf,
+        module: options.module,
+        portable,
+      },
+      notices,
+    )
   }
   return { original, ...(text ? { text } : {}), notices }
 }

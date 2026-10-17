@@ -12,6 +12,15 @@ export function registerSetupCommands(
   program: Command,
   canvasClient: CanvasClientFactory = createCanvasClient,
 ): void {
+  registerInstructionCommand(program)
+  registerInitCommand(program)
+  registerCourseDiscoveryCommand(program, canvasClient)
+  registerSetupCommand(program)
+  registerCourseListCommand(program, canvasClient)
+  registerConfigCommands(program)
+}
+
+function registerInstructionCommand(program: Command): void {
   program
     .command("instructions")
     .description(
@@ -34,7 +43,9 @@ export function registerSetupCommands(
         [human, ...result.warnings.map((warning) => `Warning: ${warning}`)].join("\n"),
       )
     })
+}
 
+function registerInitCommand(program: Command): void {
   program
     .command("init")
     .description("create a new config and prepare the vault directory")
@@ -73,7 +84,9 @@ export function registerSetupCommands(
         `Created config: ${value.config}\nVault directory ready: ${value.vault}\nThis vault stores readings, drafts, and generated work. This location is saved in the config. Find it with: canvas-agent vault location --config CONFIG_PATH; change it with --set EXISTING_DIRECTORY.\nCanvas token will be read from ${value.tokenEnv}.`,
       )
     })
+}
 
+function registerCourseDiscoveryCommand(program: Command, canvasClient: CanvasClientFactory): void {
   program
     .command("courses")
     .description("discover readable Canvas courses (sync still requires an allowlist)")
@@ -89,7 +102,9 @@ export function registerSetupCommands(
           : "No readable Canvas courses.",
       )
     })
+}
 
+function registerSetupCommand(program: Command): void {
   program
     .command("setup")
     .description("create a new config, blank token template, and vault")
@@ -118,7 +133,9 @@ export function registerSetupCommands(
         `Created config: ${resolve(configPath)}\nVault directory ready: ${config.vault.path}\nThis vault stores readings, drafts, and generated work. This location is saved in the config. Find it with: canvas-agent vault location --config CONFIG_PATH; change it with --set EXISTING_DIRECTORY.\nBlank token template: ${envTemplate}\nSet ${config.canvas.tokenEnv} locally before Canvas access.`,
       )
     })
+}
 
+function registerCourseListCommand(program: Command, canvasClient: CanvasClientFactory): void {
   const courses = program.commands.find((candidate) => candidate.name() === "courses")
   if (!courses) throw new Error("Courses command was not registered")
   courses
@@ -139,7 +156,9 @@ export function registerSetupCommands(
           : "No readable courses.",
       )
     })
+}
 
+function registerConfigCommands(program: Command): void {
   const configCommand = program.command("config").description("inspect configuration safely")
   configCommand
     .command("validate")

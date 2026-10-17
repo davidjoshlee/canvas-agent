@@ -26,6 +26,23 @@ async function localConfig(path: string) {
 
 /** Register model-free student conveniences over the local vault. */
 export function registerStudentCommands(program: Command): void {
+  registerLearningHistoryCommands(program)
+  const guidance =
+    program.commands.find((command) => command.name() === "guidance") ??
+    program.command("guidance").description("create and save local course guidance proposals")
+  registerGuidanceInventory(program, guidance)
+  registerAssignmentGuidance(program, guidance)
+  registerGuidanceProposals(program, guidance)
+  registerCalendarCommands(program)
+  registerUpcomingCommand(program)
+}
+function boundedDays(value: string): number {
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > 365)
+    throw new Error("Days must be an integer between 0 and 365")
+  return Number(value)
+}
+
+function registerLearningHistoryCommands(program: Command): void {
   program
     .command("playbook <course>")
     .description("read private retained feedback/learning history, not a chronological grading log")
@@ -61,9 +78,9 @@ export function registerStudentCommands(program: Command): void {
         `${result.course} assignment ${result.assignmentId}: ${result.status}\n${JSON.stringify(result.feedback, null, 2)}\n${result.limitation}`,
       )
     })
-  const guidance =
-    program.commands.find((command) => command.name() === "guidance") ??
-    program.command("guidance").description("create and save local course guidance proposals")
+}
+
+function registerGuidanceInventory(program: Command, guidance: Command): void {
   guidance
     .command("list")
     .description("discover saved course guidance proposals without generating replacements")
@@ -91,6 +108,9 @@ export function registerStudentCommands(program: Command): void {
         `Proposal ${result.id} for ${result.course}\nRecord: ${result.recordPath}\nTask: ${result.task ?? "missing"}\nInstructions: ${result.instructions ?? "missing"}\nRead the private record to continue; nothing was generated, activated or repaired.`,
       )
     })
+}
+
+function registerAssignmentGuidance(program: Command, guidance: Command): void {
   guidance
     .command("init-assignment <course>")
     .hook("preAction", vaultMutation())
@@ -108,6 +128,9 @@ export function registerStudentCommands(program: Command): void {
         `${result.created ? "Created assignment guidance starter" : "Preserved existing assignment guidance"}: ${result.paths.join(", ")}\nAI permission was not verified. No student work was generated.`,
       )
     })
+}
+
+function registerGuidanceProposals(program: Command, guidance: Command): void {
   guidance
     .command("propose <course>")
     .hook("preAction", vaultMutation())
@@ -153,7 +176,9 @@ export function registerStudentCommands(program: Command): void {
         `Saved guidance proposal: ${path}\nActive guidance was not changed.`,
       )
     })
+}
 
+function registerCalendarCommands(program: Command): void {
   const calendar =
     program.commands.find((command) => command.name() === "calendar") ??
     program.command("calendar").description("compare, override, and export local assignment dates")
@@ -219,7 +244,9 @@ export function registerStudentCommands(program: Command): void {
         `Exported dated assignment events to ${options.file}`,
       )
     })
+}
 
+function registerUpcomingCommand(program: Command): void {
   program
     .command("upcoming")
     .description("show upcoming, overdue, and undated course work")
@@ -245,9 +272,4 @@ export function registerStudentCommands(program: Command): void {
       ]
       emit(result, Boolean(options.json), lines.join("\n"))
     })
-}
-function boundedDays(value: string): number {
-  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > 365)
-    throw new Error("Days must be an integer between 0 and 365")
-  return Number(value)
 }

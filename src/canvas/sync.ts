@@ -623,19 +623,32 @@ function linkedFileIds(html: unknown): string[] {
     if (match[1]) ids.add(match[1])
   return [...ids]
 }
-async function syncOne(
-  config: ToolkitConfig,
-  course: { id: string; code: string; name: string; root: string; syncNamespace?: "Canvas Agent" },
-  manager: Managed,
-  explicitPilot = false,
-  client: CanvasClient = createCanvasClient(config),
-): Promise<void> {
-  const vault = manager.vault,
-    courseRoot = resolve(vault, course.root, course.syncNamespace ?? "")
-  if (!courseRoot.startsWith(vault + sep)) throw new Error("Course code resolves outside the vault")
-  await safeMkdir(vault, courseRoot)
-  const root = base(config),
-    prefix = `courses/${encodeURIComponent(course.id)}`
+type SyncedCourse = {
+  id: string
+  code: string
+  name: string
+  root: string
+  syncNamespace?: "Canvas Agent"
+}
+
+/** Per-course ownership and source relationships accumulated in sync order. */
+interface CourseSync {
+  course: SyncedCourse
+  manager: Managed
+  client: CanvasClient
+  vault: string
+  courseRoot: string
+  root: URL
+  prefix: string
+  contentPaths: Map<string, string>
+  referencedFileIds: Set<string>
+  sourceReferences: Array<{ path: string; ids: string[] }>
+  assignmentDeadlines: unknown[]
+  feedbackAssignmentIds: string[]
+}
+
+async function syncCourseOverview(context: CourseSync, explicitPilot: boolean) {
+  const { client, root, manager, course, courseRoot } = context
   let courseInfo: Obj
   try {
     courseInfo = await jsonObject(
@@ -684,142 +697,139 @@ async function syncOne(
         raw_html_file_ids: syllabusIds,
       }),
     )
-  const contentPaths = new Map<string, string>()
-  const referencedFileIds = new Set(syllabusIds)
-  const sourceReferences: Array<{ path: string; ids: string[] }> = []
-  const optionalList = async (endpoint: string, label: string): Promise<Obj[]> => {
-    try {
-      return await list(client, apiUrl(root, `${prefix}/${endpoint}`))
-    } catch (error) {
-      if (!unavailable(error)) throw error
-      manager.notices.push(
-        `Canvas ${label} unavailable for ${course.code} (HTTP ${error.status}); continuing with accessible module-linked content. Coverage may be incomplete.`,
-      )
-      return []
-    }
+  return { courseInfo, syllabusIds }
+}
+
+async function optionalCourseList(
+  context: CourseSync,
+  endpoint: string,
+  label: string,
+): Promise<Obj[]> {
+  const { client, root, prefix, manager, course } = context
+  try {
+    return await list(client, apiUrl(root, `${prefix}/${endpoint}`))
+  } catch (error) {
+    if (!unavailable(error)) throw error
+    manager.notices.push(
+      `Canvas ${label} unavailable for ${course.code} (HTTP ${error.status}); continuing with accessible module-linked content. Coverage may be incomplete.`,
+    )
+    return []
   }
-  const assignmentDeadlines: unknown[] = []
-  const feedbackAssignmentIds: string[] = []
-  const simple = async (
-    endpoint: string,
-    folder: string,
-    getTitle: (v: Obj) => string,
-    getText: (v: Obj) => string,
-    supplied?: Obj[],
-  ) => {
-    const values =
-      supplied ??
-      (endpoint === "pages"
-        ? await optionalList("pages?per_page=100", "Pages list")
-        : await list(
-            client,
-            apiUrl(
-              root,
-              `${prefix}/${endpoint}?per_page=100${endpoint === "assignments" ? "&include[]=all_dates&override_assignment_dates=true" : ""}`,
-            ),
-          ))
-    for (const value of values) {
-      if (endpoint === "assignments") assignmentDeadlines.push(value.due_at)
-      if (endpoint === "assignments" && /^[1-9]\d*$/.test(String(value.id)))
-        feedbackAssignmentIds.push(String(value.id))
-      let source = value
-      if (endpoint === "pages" && typeof value.body !== "string" && typeof value.url === "string") {
-        try {
-          source = await jsonObject(
-            await get(client, apiUrl(root, `${prefix}/pages/${encodeURIComponent(value.url)}`)),
-          )
-        } catch (error) {
-          if (!unavailable(error)) throw error
-          manager.notices.push(
-            `Canvas page unavailable for ${course.code} (HTTP ${error.status}); coverage may be incomplete.`,
-          )
-          continue
-        }
-      }
-      const title = getTitle(source),
-        identity = endpoint === "pages" ? (source.page_id ?? source.id) : source.id,
-        path = join(
-          courseRoot,
-          "Canvas",
-          folder,
-          `${safeSegment(title)}-${safeSegment(String(identity ?? "item"))}.md`,
+}
+
+async function syncCourseContent(
+  context: CourseSync,
+  endpoint: string,
+  folder: string,
+  getTitle: (v: Obj) => string,
+  getText: (v: Obj) => string,
+  supplied?: Obj[],
+) {
+  const {
+    client,
+    root,
+    prefix,
+    manager,
+    course,
+    vault,
+    courseRoot,
+    assignmentDeadlines,
+    feedbackAssignmentIds,
+    referencedFileIds,
+    sourceReferences,
+    contentPaths,
+  } = context
+  const values =
+    supplied ??
+    (endpoint === "pages"
+      ? await optionalCourseList(context, "pages?per_page=100", "Pages list")
+      : await list(
+          client,
+          apiUrl(
+            root,
+            `${prefix}/${endpoint}?per_page=100${endpoint === "assignments" ? "&include[]=all_dates&override_assignment_dates=true" : ""}`,
+          ),
+        ))
+  for (const value of values) {
+    if (endpoint === "assignments") assignmentDeadlines.push(value.due_at)
+    if (endpoint === "assignments" && /^[1-9]\d*$/.test(String(value.id)))
+      feedbackAssignmentIds.push(String(value.id))
+    let source = value
+    if (endpoint === "pages" && typeof value.body !== "string" && typeof value.url === "string") {
+      try {
+        source = await jsonObject(
+          await get(client, apiUrl(root, `${prefix}/pages/${encodeURIComponent(value.url)}`)),
         )
-      const fields: Record<string, unknown> = {}
-      if (endpoint === "assignments") fields.assignment_dates = captureAssignmentDates(source)
-      if (endpoint === "quizzes") fields.type = "quizzes"
-      const rawHtml = endpoint === "pages" ? source.body : source.description
-      const fileIds = [
-        ...new Set([
-          ...linkedFileIds(rawHtml),
-          ...(endpoint === "assignments"
-            ? assignmentRubricHtml(source.rubric).flatMap(linkedFileIds)
-            : []),
-        ]),
-      ]
-      for (const fileId of fileIds) referencedFileIds.add(fileId)
-      if (fileIds.length) sourceReferences.push({ path, ids: fileIds })
-      if (endpoint === "pages") {
-        const pageUrl = typeof value.url === "string" ? value.url : source.url
-        if (typeof pageUrl === "string")
-          contentPaths.set(`pages:url:${pageUrl}`, relativeVault(vault, path))
-        if (identity != null)
-          contentPaths.set(`pages:${String(identity)}`, relativeVault(vault, path))
-      } else if (identity != null)
-        contentPaths.set(`${endpoint}:${String(identity)}`, relativeVault(vault, path))
-      for (const key of [
-        "due_at",
-        "unlock_at",
-        "published_at",
-        "posted_at",
-        "lock_at",
-        "start_at",
-        "end_at",
-        "created_at",
-        "updated_at",
-      ])
-        if (source[key]) fields[key] = source[key]
-      await managedWrite(
-        manager,
-        path,
-        markdown(title, { ...source, id: identity ?? source.id }, getText(source), fields),
-      )
+      } catch (error) {
+        if (!unavailable(error)) throw error
+        manager.notices.push(
+          `Canvas page unavailable for ${course.code} (HTTP ${error.status}); coverage may be incomplete.`,
+        )
+        continue
+      }
     }
+    const title = getTitle(source),
+      identity = endpoint === "pages" ? (source.page_id ?? source.id) : source.id,
+      path = join(
+        courseRoot,
+        "Canvas",
+        folder,
+        `${safeSegment(title)}-${safeSegment(String(identity ?? "item"))}.md`,
+      )
+    const fields: Record<string, unknown> = {}
+    if (endpoint === "assignments") fields.assignment_dates = captureAssignmentDates(source)
+    if (endpoint === "quizzes") fields.type = "quizzes"
+    const rawHtml = endpoint === "pages" ? source.body : source.description
+    const fileIds = [
+      ...new Set([
+        ...linkedFileIds(rawHtml),
+        ...(endpoint === "assignments"
+          ? assignmentRubricHtml(source.rubric).flatMap(linkedFileIds)
+          : []),
+      ]),
+    ]
+    for (const fileId of fileIds) referencedFileIds.add(fileId)
+    if (fileIds.length) sourceReferences.push({ path, ids: fileIds })
+    if (endpoint === "pages") {
+      const pageUrl = typeof value.url === "string" ? value.url : source.url
+      if (typeof pageUrl === "string")
+        contentPaths.set(`pages:url:${pageUrl}`, relativeVault(vault, path))
+      if (identity != null)
+        contentPaths.set(`pages:${String(identity)}`, relativeVault(vault, path))
+    } else if (identity != null)
+      contentPaths.set(`${endpoint}:${String(identity)}`, relativeVault(vault, path))
+    for (const key of [
+      "due_at",
+      "unlock_at",
+      "published_at",
+      "posted_at",
+      "lock_at",
+      "start_at",
+      "end_at",
+      "created_at",
+      "updated_at",
+    ])
+      if (source[key]) fields[key] = source[key]
+    await managedWrite(
+      manager,
+      path,
+      markdown(title, { ...source, id: identity ?? source.id }, getText(source), fields),
+    )
   }
-  await simple(
-    "assignments",
-    "Assignments",
-    (v) => String(v.name ?? `Assignment ${v.id}`),
-    (v) =>
-      [
-        v.description && textOf(v.description),
-        assignmentGroupCategory(v.group_category_id)
-          ? `Group category: ${assignmentGroupCategory(v.group_category_id)}`
-          : "",
-        v.due_at ? `Due: ${v.due_at}` : "",
-        v.points_possible != null ? `Points: ${v.points_possible}` : "",
-        Array.isArray(v.attachments) && v.attachments.length
-          ? `Attachments: ${v.attachments
-              .map((attachment: Obj) =>
-                String(attachment.display_name ?? attachment.filename ?? "Canvas attachment"),
-              )
-              .join(", ")}`
-          : "",
-        renderAssignmentRubric(v.rubric, cleanHtml),
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
+}
+
+async function collectCourseModules(context: CourseSync) {
+  const { referencedFileIds, contentPaths } = context
+  const modules = await optionalCourseList(
+    context,
+    "modules?include[]=items&per_page=100",
+    "Modules list",
   )
-  await simple(
-    "pages",
-    "Pages",
-    (v) => String(v.title ?? v.url ?? `Page ${v.id}`),
-    (v) => textOf(v.body),
-  )
-  const modules = await optionalList("modules?include[]=items&per_page=100", "Modules list")
   const modulePages = new Set<string>()
   for (const module of modules) {
     if (!Array.isArray(module.items) && module.id != null)
-      module.items = await optionalList(
+      module.items = await optionalCourseList(
+        context,
         `modules/${encodeURIComponent(String(module.id))}/items?per_page=100`,
         "module items",
       )
@@ -834,21 +844,21 @@ async function syncOne(
         modulePages.add(item.page_url)
     }
   }
-  await simple(
+  await syncCourseContent(
+    context,
     "pages",
     "Pages",
     (v) => String(v.title ?? v.url ?? `Page ${v.id}`),
     (v) => textOf(v.body),
     [...modulePages].map((url) => ({ url })),
   )
-  await simple(
-    "quizzes",
-    "Quizzes",
-    (value) => String(value.title ?? `Quiz ${value.id}`),
-    (value) => textOf(value.description),
-    await optionalList("quizzes?per_page=100", "Quizzes list"),
-  )
-  const files = await optionalList("files?per_page=100", "Files list")
+  return modules
+}
+
+async function syncCourseFiles(context: CourseSync) {
+  const { client, root, manager, course, vault, courseRoot, referencedFileIds, contentPaths } =
+    context
+  const files = await optionalCourseList(context, "files?per_page=100", "Files list")
   const knownFileIds = new Set(files.map((file) => String(file.id)))
   for (const fileId of referencedFileIds) {
     if (knownFileIds.has(fileId)) continue
@@ -914,8 +924,10 @@ async function syncOne(
       manager.notices.push(`Could not download Canvas file ${filename} in ${course.code}.`)
     }
   }
-  if (syllabusIds.length)
-    sourceReferences.push({ path: join(courseRoot, "Resources", "Syllabus.md"), ids: syllabusIds })
+}
+
+async function linkExtractedCourseFiles(context: CourseSync) {
+  const { manager, course, sourceReferences, contentPaths } = context
   for (const ref of sourceReferences) {
     const paths = ref.ids
       .map((id) => contentPaths.get(`files:${id}`))
@@ -936,6 +948,10 @@ async function syncOne(
       `\nrelated_paths: ${JSON.stringify([...new Set(paths)])}`
     await managedWrite(manager, ref.path, `---\n${updated}\n---${source.slice(end + 4)}`)
   }
+}
+
+async function syncOwnFeedback(context: CourseSync) {
+  const { client, root, prefix, manager, course, vault, feedbackAssignmentIds } = context
   if (feedbackAssignmentIds.length > 1000)
     throw new Error("Own-feedback assignment inventory exceeds 1000 entries")
   for (const assignmentId of [...new Set(feedbackAssignmentIds)]) {
@@ -991,6 +1007,10 @@ async function syncOne(
       )
     }
   }
+}
+
+async function writeCourseModules(context: CourseSync, courseInfo: Obj, modules: Obj[]) {
+  const { manager, course, courseRoot, assignmentDeadlines, contentPaths } = context
   const sessionYear = resolveSessionYear(
     { ...courseInfo, course_code: courseInfo.course_code ?? course.code },
     assignmentDeadlines,
@@ -1058,6 +1078,10 @@ async function syncOne(
       }),
     )
   }
+}
+
+async function syncCourseDiscussions(context: CourseSync) {
+  const { client, root, prefix, manager, course, courseRoot } = context
   try {
     const topics = await list(client, apiUrl(root, `${prefix}/discussion_topics?per_page=100`))
     for (const topic of topics) {
@@ -1118,6 +1142,86 @@ async function syncOne(
     )
   }
 }
+
+async function syncOne(
+  config: ToolkitConfig,
+  course: SyncedCourse,
+  manager: Managed,
+  explicitPilot = false,
+  client: CanvasClient = createCanvasClient(config),
+): Promise<void> {
+  const vault = manager.vault
+  const courseRoot = resolve(vault, course.root, course.syncNamespace ?? "")
+  if (!courseRoot.startsWith(vault + sep)) throw new Error("Course code resolves outside the vault")
+  await safeMkdir(vault, courseRoot)
+  const context: CourseSync = {
+    course,
+    manager,
+    client,
+    vault,
+    courseRoot,
+    root: base(config),
+    prefix: `courses/${encodeURIComponent(course.id)}`,
+    contentPaths: new Map(),
+    referencedFileIds: new Set(),
+    sourceReferences: [],
+    assignmentDeadlines: [],
+    feedbackAssignmentIds: [],
+  }
+  const { courseInfo, syllabusIds } = await syncCourseOverview(context, explicitPilot)
+  context.referencedFileIds = new Set(syllabusIds)
+  await syncCourseContent(
+    context,
+    "assignments",
+    "Assignments",
+    (v) => String(v.name ?? `Assignment ${v.id}`),
+    (v) =>
+      [
+        v.description && textOf(v.description),
+        assignmentGroupCategory(v.group_category_id)
+          ? `Group category: ${assignmentGroupCategory(v.group_category_id)}`
+          : "",
+        v.due_at ? `Due: ${v.due_at}` : "",
+        v.points_possible != null ? `Points: ${v.points_possible}` : "",
+        Array.isArray(v.attachments) && v.attachments.length
+          ? `Attachments: ${v.attachments
+              .map((attachment: Obj) =>
+                String(attachment.display_name ?? attachment.filename ?? "Canvas attachment"),
+              )
+              .join(", ")}`
+          : "",
+        renderAssignmentRubric(v.rubric, cleanHtml),
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+  )
+  await syncCourseContent(
+    context,
+    "pages",
+    "Pages",
+    (v) => String(v.title ?? v.url ?? `Page ${v.id}`),
+    (v) => textOf(v.body),
+  )
+  const modules = await collectCourseModules(context)
+  await syncCourseContent(
+    context,
+    "quizzes",
+    "Quizzes",
+    (value) => String(value.title ?? `Quiz ${value.id}`),
+    (value) => textOf(value.description),
+    await optionalCourseList(context, "quizzes?per_page=100", "Quizzes list"),
+  )
+  await syncCourseFiles(context)
+  if (syllabusIds.length)
+    context.sourceReferences.push({
+      path: join(courseRoot, "Resources", "Syllabus.md"),
+      ids: syllabusIds,
+    })
+  await linkExtractedCourseFiles(context)
+  await syncOwnFeedback(context)
+  await writeCourseModules(context, courseInfo, modules)
+  await syncCourseDiscussions(context)
+}
 async function readBounded(
   response: Response,
   maxBytes: number,
@@ -1163,39 +1267,15 @@ async function readBounded(
   }
 }
 
-export async function syncCourses(
+type SyncPilot = { id: string; code: string; name: string }
+type CourseManifest = { version: number; courses: Obj[] }
+
+async function discoverSelectedCourses(
   config: ToolkitConfig,
-  options: {
-    unresolvedPilot?: { id: string; code: string; name: string }
-    preserveSchool?: boolean
-  } = {},
-  client: CanvasClient = createCanvasClient(config),
-): Promise<SyncReport> {
-  const pilot = options.unresolvedPilot
-  if (
-    pilot &&
-    (config.courses.allowlist.length !== 1 ||
-      config.courses.allowlist[0] !== pilot.id ||
-      !/^[1-9]\d*$/.test(pilot.id))
-  )
-    throw new Error("Unresolved pilot sync must match exactly one explicitly selected course")
-  if (!config.courses.allowlist.length)
-    return {
-      courses: 0,
-      written: [],
-      notices: ["Canvas course allowlist is empty; nothing was synced."],
-    }
-  const notices: string[] = []
-  const vault = resolve(config.vault.path)
-  await assertNoPreservationMigration(vault)
-  await guardCanvasOrigin(vault, base(config).origin)
-  const stateResult = await loadSyncState(vault, notices, base(config).origin)
-  const subjectHash = await verifiedSubjectHash(config, client)
-  const subjectBound = await guardSyncSubject(vault, base(config).origin, subjectHash)
-  if (!subjectBound && stateResult.stateHash)
-    notices.push(
-      "This vault has no verified historical account binding. The first API-subject reservation protects future syncs only; prior feedback ownership remains unverified.",
-    )
+  client: CanvasClient,
+  notices: string[],
+  pilot?: SyncPilot,
+) {
   let all: Obj[]
   try {
     all = await list(client, apiUrl(base(config), "courses?per_page=100&include[]=term"))
@@ -1275,7 +1355,10 @@ export async function syncCourses(
         ),
     ).values(),
   ]
-  const written: string[] = []
+  return { courses, allow, courseReports, failures }
+}
+
+async function readCourseManifest(vault: string, notices: string[]) {
   const manifestPath = join(vault, "_meta", "canvas-courses.json")
   await assertNoSymlinks(vault, true)
   await assertNoSymlinks(manifestPath, true)
@@ -1296,6 +1379,16 @@ export async function syncCourses(
       previous = { version: 1, courses: [] }
     }
   }
+  return { manifestPath, previous }
+}
+
+async function resolveCourseMappings(
+  vault: string,
+  courses: Array<{ id: string; code: string; name: string }>,
+  previous: CourseManifest,
+  notices: string[],
+  preserveSchool?: boolean,
+) {
   const prior = new Map<string, Obj>(previous.courses.map((c: Obj) => [String(c.id), c]))
   const merged: Obj[] = []
   for (const course of courses) {
@@ -1331,13 +1424,23 @@ export async function syncCourses(
       ...old,
       ...course,
       root,
-      ...(options.preserveSchool ? { syncNamespace: "Canvas Agent" } : {}),
+      ...(preserveSchool ? { syncNamespace: "Canvas Agent" } : {}),
     })
-    if (options.preserveSchool)
+    if (preserveSchool)
       notices.push(
         `Separate Canvas product namespace selected for ${course.code}; School files are not converted or deleted. Existing root-level Canvas artifacts still require review before shared writing is certified.`,
       )
   }
+  return merged
+}
+
+async function validateCourseMappings(
+  vault: string,
+  courses: Array<{ id: string; code: string; name: string }>,
+  previous: CourseManifest,
+  merged: Obj[],
+  stateResult: Awaited<ReturnType<typeof loadSyncState>>,
+): Promise<void> {
   const roots = merged.map((c) => String(c.root))
   if (new Set(roots.map((r) => r.toLocaleLowerCase())).size !== roots.length)
     throw new Error("Canvas course-root collision; sync stopped before writing")
@@ -1390,17 +1493,15 @@ export async function syncCourses(
       }
     }
   }
-  const manager: Managed = {
-    vault,
-    subjectHash,
-    state: stateResult.state,
-    trusted: stateResult.trusted,
-    stateHash: stateResult.stateHash,
-    written,
-    notices,
-  }
-  await guardCanvasOrigin(vault, base(config).origin, true)
-  await guardSyncSubject(vault, base(config).origin, subjectHash, true)
+}
+
+async function publishCourseManifest(
+  manager: Managed,
+  manifestPath: string,
+  previous: CourseManifest,
+  merged: Obj[],
+): Promise<void> {
+  const { vault } = manager
   // The course manifest is toolkit-owned metadata. A valid pre-existing manifest is merged by Canvas ID.
   if (previous.courses.length && !manager.state.files[relativeVault(vault, manifestPath)]) {
     try {
@@ -1413,24 +1514,24 @@ export async function syncCourses(
   for (const course of merged) manifestCourses.set(String(course.id), course)
   const manifest = `${JSON.stringify({ version: 1, courses: [...manifestCourses.values()] }, null, 2)}\n`
   await managedWrite(manager, manifestPath, manifest)
+}
+
+async function syncSelectedCourses(
+  config: ToolkitConfig,
+  client: CanvasClient,
+  manager: Managed,
+  merged: Obj[],
+  selection: Awaited<ReturnType<typeof discoverSelectedCourses>>,
+  pilot?: SyncPilot,
+): Promise<void> {
+  const { written, notices } = manager
+  const { courseReports, failures } = selection
   try {
     for (const course of merged) {
       const beforeWritten = written.length,
         beforeNotices = notices.length
       try {
-        await syncOne(
-          config,
-          course as {
-            id: string
-            code: string
-            name: string
-            root: string
-            syncNamespace?: "Canvas Agent"
-          },
-          manager,
-          pilot?.id === course.id,
-          client,
-        )
+        await syncOne(config, course as SyncedCourse, manager, pilot?.id === course.id, client)
         courseReports.push({
           courseId: String(course.id),
           code: String(course.code),
@@ -1461,6 +1562,66 @@ export async function syncCourses(
     // Preserve ownership evidence even if a later endpoint fails mid-sync.
     await saveSyncState(manager)
   }
+}
+
+export async function syncCourses(
+  config: ToolkitConfig,
+  options: {
+    unresolvedPilot?: { id: string; code: string; name: string }
+    preserveSchool?: boolean
+  } = {},
+  client: CanvasClient = createCanvasClient(config),
+): Promise<SyncReport> {
+  const pilot = options.unresolvedPilot
+  if (
+    pilot &&
+    (config.courses.allowlist.length !== 1 ||
+      config.courses.allowlist[0] !== pilot.id ||
+      !/^[1-9]\d*$/.test(pilot.id))
+  )
+    throw new Error("Unresolved pilot sync must match exactly one explicitly selected course")
+  if (!config.courses.allowlist.length)
+    return {
+      courses: 0,
+      written: [],
+      notices: ["Canvas course allowlist is empty; nothing was synced."],
+    }
+  const notices: string[] = []
+  const vault = resolve(config.vault.path)
+  await assertNoPreservationMigration(vault)
+  await guardCanvasOrigin(vault, base(config).origin)
+  const stateResult = await loadSyncState(vault, notices, base(config).origin)
+  const subjectHash = await verifiedSubjectHash(config, client)
+  const subjectBound = await guardSyncSubject(vault, base(config).origin, subjectHash)
+  if (!subjectBound && stateResult.stateHash)
+    notices.push(
+      "This vault has no verified historical account binding. The first API-subject reservation protects future syncs only; prior feedback ownership remains unverified.",
+    )
+  const selection = await discoverSelectedCourses(config, client, notices, pilot)
+  const { courses, allow, courseReports, failures } = selection
+  const written: string[] = []
+  const { manifestPath, previous } = await readCourseManifest(vault, notices)
+  const merged = await resolveCourseMappings(
+    vault,
+    courses,
+    previous,
+    notices,
+    options.preserveSchool,
+  )
+  await validateCourseMappings(vault, courses, previous, merged, stateResult)
+  const manager: Managed = {
+    vault,
+    subjectHash,
+    state: stateResult.state,
+    trusted: stateResult.trusted,
+    stateHash: stateResult.stateHash,
+    written,
+    notices,
+  }
+  await guardCanvasOrigin(vault, base(config).origin, true)
+  await guardSyncSubject(vault, base(config).origin, subjectHash, true)
+  await publishCourseManifest(manager, manifestPath, previous, merged)
+  await syncSelectedCourses(config, client, manager, merged, selection, pilot)
   if (merged.some((course) => course.syncNamespace === "Canvas Agent")) {
     const layout = await inspectSchoolLayout(vault)
     notices.push(

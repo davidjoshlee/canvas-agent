@@ -28,6 +28,16 @@ function render(value: unknown, json: boolean, message: string): void {
 
 /** Register local, model-free review and calculation tools on the supplied CLI. */
 export function registerToolCommands(program: Command): void {
+  registerCorrectnessReviewCommands(program)
+  registerNumericReviewCommand(program)
+  registerUsageCommand(program)
+  registerCalculationCommand(program)
+  registerTaskInspectionCommands(program)
+  registerReviewGateCommand(program)
+  registerWorkbookCommand(program)
+}
+
+function registerCorrectnessReviewCommands(program: Command): void {
   const correctness = program
     .command("correctness")
     .description("separate host-authored correctness review; never automatic grading or approval")
@@ -88,6 +98,9 @@ export function registerToolCommands(program: Command): void {
         `Saved separate review ${id}: ${result.reviewPath}; not grading or approval.`,
       )
     })
+}
+
+function registerNumericReviewCommand(program: Command): void {
   program
     .command("check-numbers <id>")
     .description(
@@ -107,6 +120,9 @@ export function registerToolCommands(program: Command): void {
         `Numeric review: ${result.flagged.length} value(s) need review. ${result.limitation}`,
       )
     })
+}
+
+function registerUsageCommand(program: Command): void {
   program
     .command("cost")
     .description("summarize an explicitly supplied host usage export; no provider access")
@@ -120,6 +136,9 @@ export function registerToolCommands(program: Command): void {
       })
       render(result, options.json, renderHostUsage(result))
     })
+}
+
+function registerCalculationCommand(program: Command): void {
   program
     .command("calculate")
     .hook("preAction", vaultMutation())
@@ -156,7 +175,9 @@ export function registerToolCommands(program: Command): void {
       })
       render(result, options.json, `${result.operation}: ${result.result}`)
     })
+}
 
+function registerTaskInspectionCommands(program: Command): void {
   program
     .command("inspect <id>")
     .description("inspect task metadata and current source provenance")
@@ -169,7 +190,6 @@ export function registerToolCommands(program: Command): void {
         `${result.kind} task ${result.id}: ${result.status}; ${result.sources.length} sources; snapshots ${result.snapshots.current ? "current" : "stale"}.`,
       )
     })
-
   program
     .command("compare <id> <otherid>")
     .description("compare source hashes and completed output lines between tasks")
@@ -182,7 +202,9 @@ export function registerToolCommands(program: Command): void {
         `Compared ${id} with ${otherid}: ${result.sourceChanges.length} source changes, ${result.guidanceChanges.length} guidance changes.`,
       )
     })
+}
 
+function registerReviewGateCommand(program: Command): void {
   const gate = program.command("gate").description("run structural, provenance-only evaluation")
   gate
     .command("review <taskId>")
@@ -193,7 +215,9 @@ export function registerToolCommands(program: Command): void {
       const result = await reviewGate(await commandConfig(command), taskId)
       render(result, options.json, `Review bundle saved: ${result.path}`)
     })
+}
 
+function registerWorkbookCommand(program: Command): void {
   program
     .command("workbook <taskId>")
     .hook("preAction", vaultMutation())

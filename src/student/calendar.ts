@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { lstat, mkdir, open, readFile, realpath, rename } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
-import type { WorkspaceContext } from "../shared/types.js"
+import type { SourceRecord, WorkspaceContext } from "../shared/types.js"
 import { isAssignmentSource } from "../vault/source-kind.js"
 import type { UpcomingItem } from "./upcoming.js"
 
@@ -235,7 +235,7 @@ function readEvents(ics: string): Event[] {
   }
   return result
 }
-export function compareCalendar(context: WorkspaceContext, ics: string): CalendarNotice[] {
+function calendarAssignments(context: WorkspaceContext) {
   const assignments = context.courses.flatMap((course) => {
     const sources = course.sources.filter((source) => isAssignmentSource(source))
     const activeIds = new Set(
@@ -255,6 +255,29 @@ export function compareCalendar(context: WorkspaceContext, ics: string): Calenda
       )
       .map((source) => ({ course, source }))
   })
+  return assignments
+}
+
+function matchingCalendarEvents(source: SourceRecord, events: Event[]) {
+  const idMatches = source.canvasId
+    ? events
+        .map((event, index) => ({ event, index }))
+        .filter(({ event }) => event.id === source.canvasId)
+    : []
+  const matches = idMatches.length
+    ? idMatches
+    : events
+        .map((event, index) => ({ event, index }))
+        .filter(
+          ({ event }) =>
+            !event.id &&
+            event.title.trim().toLocaleLowerCase() === source.title.trim().toLocaleLowerCase(),
+        )
+  return matches
+}
+
+export function compareCalendar(context: WorkspaceContext, ics: string): CalendarNotice[] {
+  const assignments = calendarAssignments(context)
   const events = readEvents(ics)
   const notices: CalendarNotice[] = []
   const used = new Set<number>()
@@ -269,20 +292,7 @@ export function compareCalendar(context: WorkspaceContext, ics: string): Calenda
       .map(({ index }) => index),
   )
   for (const { source } of assignments) {
-    const idMatches = source.canvasId
-      ? events
-          .map((event, index) => ({ event, index }))
-          .filter(({ event }) => event.id === source.canvasId)
-      : []
-    const matches = idMatches.length
-      ? idMatches
-      : events
-          .map((event, index) => ({ event, index }))
-          .filter(
-            ({ event }) =>
-              !event.id &&
-              event.title.trim().toLocaleLowerCase() === source.title.trim().toLocaleLowerCase(),
-          )
+    const matches = matchingCalendarEvents(source, events)
     if (matches.length > 1) {
       notices.push({
         kind: "ambiguous",
