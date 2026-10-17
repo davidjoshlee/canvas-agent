@@ -29,12 +29,10 @@ Canvas GET → synced vault → local course inventory
 | src/tasks/evidence | Deliverable, answer and revision evidence |
 | src/tasks/artifacts | Task records, validation, inspection and artifact lifecycle |
 | src/tasks/compatibility | Historical calculation records and workbook recipe validation |
-| src/tasks/review | Correctness-review handoffs |
 | src/guidance | Course/assignment guidance and inactive proposals |
 | src/feedback | Private own-feedback history and read-only older snapshot formats |
 | src/student | On-demand upcoming work, timeline and calendar |
 | src/simulation | Frozen source captures, saved tasks and historical evidence readers |
-| src/usage | Explicit host-export usage and cost reporting |
 | tools/evaluation | Checkout-only dogfood, sweeps, experiment windows and human comparison reports |
 | src/shared | Filesystem safety, bounded JSON and shared persisted types |
 
@@ -69,8 +67,6 @@ Runtime modules never import development tooling.
   old pending workbook recipes retain their original completion behavior. New
   tasks carry hostExecutionVersion and do not generate workbook companions.
   tasks/evidence captures deliverable, answer and revision evidence.
-- tasks/review prepares and saves correctness-review handoffs; it does not certify
-  academic correctness.
 - Shared instructions come from one CLI contract; task workflow instructions come
   from tasks/authoring/workflows.ts. Saved older recipes are not silently regenerated.
 - shared/fs-safety owns normalized vault paths, bounded regular-file reads,

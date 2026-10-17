@@ -24,7 +24,6 @@ afterEach(async () => {
 describe("compiled CLI acceptance", () => {
   it.each([
     ["upcoming"],
-    ["cost"],
     ["auth", "import-school-keychain"],
     ["calendar", "override"],
     ["calendar", "check"],

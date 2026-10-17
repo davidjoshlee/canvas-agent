@@ -44,7 +44,7 @@ Revision preserves edits and produces a new full artifact. Approve only at expli
 
 ### Conditional detail
 
-Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, vault history, playbooks/feedback, guidance, correctness, ingest/extraction, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
+Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, vault history, playbooks/feedback, guidance, ingest/extraction, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
 <!-- canvas-agent-cli:end -->
 
 ### Installed instruction lookup
@@ -167,11 +167,6 @@ create automatic workbooks. Read-only `simulate task calculations` and
 `simulate task workbooks` inspect historical frozen records; they do not create
 new calculations or workbooks. Never delete or rewrite old logs or companions.
 
-Use correctness prepare UUID for a separate host-authored review handoff, then
-correctness save REVIEW_ID --file ABS_REVIEW.md. The reviewer uses the coding
-harness for independent execution. Historical CLI logs are optional context;
-absence of those logs says nothing about harness execution.
-
 ## Guidance and feedback
 
 guidance list --course COURSE and guidance show ID recover saved proposals.
@@ -224,7 +219,7 @@ Keep the working vault local; there is no reverse sync or hosted mobile CLI.
 The cloud client controls upload timing; no account, sharing or subscription
 is configured by the CLI. Exported files are not another working vault.
 
-## Frozen simulation and usage
+## Frozen simulation
 
 Evaluation is isolated from ordinary student tasks. simulate --help exposes
 capture, derived views and frozen tasks, with read compatibility for older calculation/workbook evidence.
@@ -241,5 +236,3 @@ Human verdicts are explicit; never fabricate scores, approvals or historical fac
 Dogfood/sweeps, simulation windows/comparisons and gate m1 belong to the
 checkout-only development harness, not the installed CLI. Existing journals
 remain unchanged; use the checkout development instructions to inspect them.
-cost --file ABS_HOST_EXPORT reports supplied host usage; missing prices stay
-unknown and the CLI does not verify provider billing or impose provider budgets.

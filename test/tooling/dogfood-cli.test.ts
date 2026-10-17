@@ -73,8 +73,6 @@ it("runs all ten dogfood flows through the checkout evaluation CLI with explicit
   const resume = ["dogfood", "resume", id, "--course", "CS101", "--offline"]
   const checkpoints = join(vault, "_meta/dogfood", id)
   const before = await readdir(checkpoints)
-  expect(cli([...resume, "--usage-file", join(base, "not-yet-exported.json")]).status).toBe(1)
-  expect(await readdir(checkpoints)).toEqual(before)
   for (const extra of [
     ["--verdict", `${journal.flows.at(-1).data.taskId}=pass`],
     ["--verdict", "00000000-0000-4000-8000-000000000000=pass"],
@@ -113,42 +111,6 @@ it("runs all ten dogfood flows through the checkout evaluation CLI with explicit
   expect(journal.skipped).toBe(2)
   expect(command(["dogfood", "show", id, "--course", "CS101"])).toEqual(journal)
   expect(command(resume)).toEqual(journal)
-  const usageFile = join(base, "host-usage.json")
-  const usageBytes = JSON.stringify({
-    version: 1,
-    host: "Synthetic-host",
-    rows: [
-      {
-        id: "synthetic-row",
-        at: new Date().toISOString(),
-        function: "prep",
-        model: "synthetic/model",
-        source: "host-reported",
-        costUsd: "0.000000001",
-      },
-    ],
-  })
-  await writeFile(usageFile, usageBytes)
-  journal = command([...resume, "--usage-file", usageFile])
-  expect(journal.passed).toBe(9)
-  expect(journal.skipped).toBe(1)
-  expect(journal.flows.at(-1)).toMatchObject({
-    status: "pass",
-    data: {
-      totalCostUsd: "0.000000001",
-      authoritativeBillingVerified: "false",
-      scope: "supplied-export-not-run-attributed",
-    },
-  })
-  expect(command(resume)).toEqual(journal)
-  await writeFile(usageFile, "PRIVATE-INVALID-HOST-EXPORT")
-  const rejectedUsage = cli(resume)
-  expect(rejectedUsage.status).toBe(1)
-  expect(rejectedUsage.stdout + rejectedUsage.stderr).not.toContain("PRIVATE-INVALID-HOST-EXPORT")
-  expect(JSON.parse(rejectedUsage.stdout).flows.at(-1).status).toBe("fail")
-  await writeFile(usageFile, usageBytes)
-  journal = command(resume)
-  expect(journal.flows.at(-1).status).toBe("pass")
   const mirroredFinal = join(mirror, "Current", `${journal.flows[6].data.output}.txt`)
   const copiedFinal = await readFile(mirroredFinal, "utf8")
   expect(copiedFinal).toContain("Synthetic structural fixture")

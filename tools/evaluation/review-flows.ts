@@ -7,7 +7,6 @@ import { assertNoSymlinks } from "../../src/shared/fs-safety.js"
 import { approveTask, reviseTask } from "../../src/tasks/artifacts/lifecycle.js"
 import { readTask } from "../../src/tasks/artifacts/records.js"
 import { createAssignmentTask } from "../../src/tasks/authoring/creation.js"
-import { readHostUsage } from "../../src/usage/host-usage.js"
 import { inspectWorkspace, selectCourse } from "../../src/vault/workspace.js"
 import {
   type CoreDogfoodInput,
@@ -22,7 +21,6 @@ export interface ReviewDogfoodInput extends CoreDogfoodInput {
   editedWork?: string
   discussionMessage?: string
   approveTaskIds?: string[]
-  hostUsageFile?: string
 }
 const phasePrior = (prior: DogfoodResult | undefined, phase: string): DogfoodResult | undefined =>
   prior
@@ -209,44 +207,13 @@ export function buildReviewDogfoodFlows(input: ReviewDogfoodInput): DogfoodFlow[
       ),
     )
   }
-  async function cost(prior?: DogfoodResult) {
-    const file = input.hostUsageFile ?? prior?.data.exportFile
-    if (!file)
-      return outcome(
-        "cost report",
-        "skipped",
-        "No supplied host usage export; costs belong to the chosen host, not an invented zero-dollar total",
-        { owner: "host" },
-        "Review the host's usage/billing report separately, or resume with --usage-file after the preceding flows finish.",
-      )
-    if (prior?.data.exportFile && prior.data.exportFile !== file)
-      throw new Error(
-        "The saved host export choice changed; use a fresh run for a different report",
-      )
-    const report = await readHostUsage(file, {
-      ...(prior?.data.through ? { now: new Date(prior.data.through) } : {}),
-    })
-    if (prior?.data.exportHash && prior.data.exportHash !== report.exportHash)
-      throw new Error("The saved host export changed; restore it or use a fresh run")
+  // Preserve the ten-slot journal format without reopening historical billing exports.
+  async function cost() {
     return outcome(
       "cost report",
-      "pass",
-      "Supplied host export summarized and hash-bound; not run-attributed spend or verified billing",
-      {
-        owner: "host",
-        exportFile: file,
-        exportHash: report.exportHash,
-        since: report.since,
-        through: report.through,
-        rows: String(report.totals.rows),
-        excludedRows: String(report.excludedRows),
-        totalCostUsd: report.totals.costUsd.total ?? "unknown",
-        knownCostSubtotalUsd: report.totals.costUsd.knownSubtotal,
-        missingCostRows: String(report.totals.costUsd.missingRows),
-        scope: "supplied-export-not-run-attributed",
-        authoritativeBillingVerified: "false",
-      },
-      "Use cost --file with the same export for grouped details; review actual host billing separately. This mechanical pass is not financial or academic approval.",
+      "skipped",
+      "Usage and billing belong to the selected coding host",
+      { owner: "host" },
     )
   }
   return [
@@ -294,7 +261,7 @@ export function buildReviewDogfoodFlows(input: ReviewDogfoodInput): DogfoodFlow[
     {
       name: "cost report",
       async validate(result) {
-        const checked = await cost(result)
+        const checked = await cost()
         return (
           checked.status === result.status &&
           JSON.stringify(checked.data) === JSON.stringify(result.data)

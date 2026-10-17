@@ -247,7 +247,7 @@ try {
   }
   commands.push("installed instruction topic without config")
   const topic = JSON.parse(
-    run(bin, ["instructions", "--topic", "correctness", "--config", config, "--json"], workspace),
+    run(bin, ["instructions", "--topic", "assignment", "--config", config, "--json"], workspace),
   )
   assert.equal(topic.lookup.completeReference, false)
   assert(topic.lookup.excerpts.length > 0)
@@ -256,7 +256,7 @@ try {
   const lines = (await readFile(reference.path, "utf8")).split("\n")
   for (const excerpt of topic.lookup.excerpts) {
     assert.equal(lines.slice(excerpt.startLine - 1, excerpt.endLine).join("\n"), excerpt.text)
-    assert(excerpt.text.toLowerCase().includes("correctness"))
+    assert(excerpt.text.toLowerCase().includes("assignment"))
   }
   commands.push("installed instruction unknown topic refusal")
   run(bin, ["instructions", "--topic", "NO_SUCH_SYNTHETIC_TOPIC", "--json"], workspace, 1)
@@ -335,54 +335,6 @@ try {
   assert.equal(cli(["sync", "--full", "--preserve-school"]).fullRequested, true)
   cli(["auth", "status"])
   cli(["auth", "verify"], 1) // Missing token must fail before any HTTP request.
-  const usageFile = join(workspace, "host-usage.json")
-  const usage = JSON.stringify({
-    version: 1,
-    host: "Synthetic-host",
-    rows: [
-      {
-        id: "synthetic-prep",
-        at: new Date().toISOString(),
-        function: "prep",
-        model: "synthetic/model",
-        source: "host-reported",
-        inputTokens: 100,
-        outputTokens: 20,
-        costUsd: "0.000000001",
-      },
-      {
-        id: "synthetic-draft",
-        at: new Date().toISOString(),
-        function: "draft",
-        model: "synthetic/model",
-        source: "estimated",
-      },
-    ],
-  })
-  await writeFile(usageFile, usage)
-  const cost = cli(["cost", "--file", usageFile, "--weeks", "4"])
-  assert.equal(cost.authoritativeBillingVerified, false)
-  assert.equal(cost.totals.rows, 2)
-  assert.deepEqual(cost.totals.costUsd, {
-    total: null,
-    knownSubtotal: "0.000000001",
-    missingRows: 1,
-  })
-  assert.equal(cost.groups.length, 2)
-  assert.equal(await readFile(usageFile, "utf8"), usage)
-  const malformedUsage = join(workspace, "malformed-usage.json")
-  const privateLiteral = "PRIVATE_SYNTHETIC_LITERAL_NOT_JSON"
-  await writeFile(malformedUsage, privateLiteral)
-  const rejected = execute(bin, ["cost", "--file", malformedUsage, "--config", config, "--json"], {
-    cwd: workspace,
-    env,
-    encoding: "utf8",
-    timeout: 30_000,
-  })
-  if (rejected.error) throw rejected.error
-  commands.push("cost malformed-input")
-  assert.equal(rejected.status, 1)
-  assert(!`${rejected.stdout}${rejected.stderr}`.includes(privateLiteral))
   const source = "CS101/Week 01 - Oct 5/reading.md"
   const prompt = "CS101/Assignments/prompt.md"
   const originals = new Map([
@@ -633,31 +585,6 @@ try {
     source,
   ])
   const completedDraft = await complete(draft)
-  const draftBeforeReview = await readFile(join(vault, completedDraft.output))
-  const correctnessReview = cli(["correctness", "prepare", draft.id])
-  const reviewHandoff = await readFile(correctnessReview.handoffPath, "utf8")
-  assert(reviewHandoff.includes("Use the coding harness"))
-  assert(reviewHandoff.includes("Perform a separate correctness-review pass"))
-  assert.equal(correctnessReview.academicCorrectnessVerified, false)
-  assert.equal(correctnessReview.independentReviewerVerified, false)
-  assert(
-    cli(["correctness", "list", "--course", "CS101"]).reviews.some(
-      (entry) => entry.id === correctnessReview.id,
-    ),
-  )
-  assert.equal(cli(["correctness", "show", correctnessReview.id]).taskId, draft.id)
-  const reviewCandidate = join(workspace, "separate-review.md")
-  await writeFile(
-    reviewCandidate,
-    `Review: ${correctnessReview.id}\n\n## Verified\n- Synthetic source paths and output identity were inspected; harness calculations still require substantive verification. \`${prompt}\`\n\n## Needs verification\n- Independent reviewer identity, course permission and substantive source coverage remain unverified by this synthetic package fixture. \`${prompt}\`\n- Review the validated draft \`${completedDraft.output}\`  for substantive correctness; byte validation is not a grade.\n`,
-  )
-  const savedReview = cli(["correctness", "save", correctnessReview.id, "--file", reviewCandidate])
-  assert.equal(savedReview.status, "completed")
-  assert.equal(
-    cli(["correctness", "save", correctnessReview.id, "--file", reviewCandidate]).reviewHash,
-    savedReview.reviewHash,
-  )
-  assert.deepEqual(await readFile(join(vault, completedDraft.output)), draftBeforeReview)
   const draftGate = cli(["gate", "review", draft.id])
   assert.equal(draftGate.automaticWorkbook.state, "harness-owned")
   assert.equal(completedDraft.task.workbook, undefined)
@@ -731,36 +658,6 @@ try {
     source,
   ])
   const completedFrozen = await complete(frozenDraft, true)
-  const frozenOutputBeforeReview = await readFile(join(vault, completedFrozen.output))
-  const frozenReview = cli(["correctness", "prepare", frozenDraft.id, "--frozen"])
-  assert.equal(frozenReview.kind, "frozen")
-  assert.equal(frozenReview.simulationId, snapshot.id)
-  assert.equal(frozenReview.frozenHumanVerdict, "pending-human")
-  assert((await readFile(frozenReview.handoffPath, "utf8")).includes("Use the coding harness"))
-  assert(
-    cli(["correctness", "list", "--course", "CS101"]).reviews.some(
-      (entry) => entry.id === frozenReview.id && entry.frozen,
-    ),
-  )
-  const frozenReviewCandidate = join(workspace, "frozen-review.md")
-  await writeFile(
-    frozenReviewCandidate,
-    `Review: ${frozenReview.id}\n\n## Verified\n- Captured source paths and output identity were inspected; harness execution and academic correctness remain unverified. \`${prompt}\`\n\n## Needs verification\n- The validated frozen output \`${completedFrozen.output}\`  still need academic review, never automatic human approval.\n`,
-  )
-  const savedFrozenReview = cli([
-    "correctness",
-    "save",
-    frozenReview.id,
-    "--file",
-    frozenReviewCandidate,
-  ])
-  assert.equal(savedFrozenReview.status, "completed")
-  assert.equal(
-    cli(["correctness", "save", frozenReview.id, "--file", frozenReviewCandidate]).reviewHash,
-    savedFrozenReview.reviewHash,
-  )
-  assert.equal(cli(["correctness", "show", frozenReview.id]).frozenHumanVerdict, "pending-human")
-  assert.deepEqual(await readFile(join(vault, completedFrozen.output)), frozenOutputBeforeReview)
   const workbooks = cli(["simulate", "task", "workbooks", frozenDraft.id])
   assert.equal(workbooks.records.length, 0)
   assert.equal(completedFrozen.workbook, undefined)
@@ -1039,8 +936,6 @@ try {
         historyMetadataReadinessTested: true,
         configuredTaskArtifactLocationsTested: true,
         verifiedSavedOutputReadTested: true,
-        separateCorrectnessReviewInstalledTested: true,
-        frozenCorrectnessReviewInstalledTested: true,
         packagedInstructionsMatch: true,
         boundedAgentEntrypointsTested: true,
         fullWorkflowReferenceBundled: true,
@@ -1057,7 +952,6 @@ try {
         savedFrozenTaskDiscoveryTested: true,
         harnessExecutionBoundaryTested: true,
         originalsUnchanged: true,
-        hostUsageExportTested: true,
         noAutomaticDraftOrFrozenWorkbooksTested: true,
         derivedFixedCutoffTested: true,
         preservedNamespaceHomeworkTested: true,

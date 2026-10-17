@@ -2,14 +2,7 @@ import type { Command } from "commander"
 import { loadConfig } from "../config/index.js"
 import type { ToolkitConfig } from "../shared/types.js"
 import { compareTasks, inspectTask } from "../tasks/artifacts/inspection.js"
-import {
-  listCorrectnessReviews,
-  prepareCorrectnessReview,
-  saveCorrectnessReview,
-  showCorrectnessReview,
-} from "../tasks/review/correctness-review.js"
 import { reviewGate } from "../tasks/tools.js"
-import { readHostUsage, renderHostUsage } from "../usage/host-usage.js"
 import { vaultMutation } from "../vault/command-effects.js"
 
 const defaultConfig = "./canvas-agent.config.json"
@@ -25,89 +18,8 @@ function render(value: unknown, json: boolean, message: string): void {
 
 /** Register local, model-free review and inspection commands on the supplied CLI. */
 export function registerToolCommands(program: Command): void {
-  registerCorrectnessReviewCommands(program)
-  registerUsageCommand(program)
   registerTaskInspectionCommands(program)
   registerReviewGateCommand(program)
-}
-
-function registerCorrectnessReviewCommands(program: Command): void {
-  const correctness = program
-    .command("correctness")
-    .description("separate host-authored correctness review; never automatic grading or approval")
-  correctness
-    .command("prepare <taskId>")
-    .hook("preAction", vaultMutation())
-    .option("--frozen", "review a completed frozen evaluation using captured evidence only")
-    .option("--json", "emit JSON")
-    .action(async (taskId, options, command) => {
-      const result = await prepareCorrectnessReview(
-        (await commandConfig(command)).vault.path,
-        taskId,
-        { frozen: options.frozen },
-      )
-      render(
-        result,
-        options.json,
-        `Review ${result.id}: read ${result.handoffPath}; a separate host pass must author the note.`,
-      )
-    })
-  correctness
-    .command("list")
-    .requiredOption("--course <course>", "exact saved course code")
-    .option("--json", "emit JSON")
-    .action(async (options, command) => {
-      const result = await listCorrectnessReviews(
-        (await commandConfig(command)).vault.path,
-        options.course,
-      )
-      render(
-        result,
-        options.json,
-        result.reviews.map((value) => `${value.id}\t${value.taskId}`).join("\n") +
-          `\nInventory complete: ${result.inventoryComplete}; currentness not checked.`,
-      )
-    })
-  correctness
-    .command("show <id>")
-    .option("--json", "emit JSON")
-    .action(async (id, options, command) => {
-      const result = await showCorrectnessReview((await commandConfig(command)).vault.path, id)
-      render(result, options.json, `Review ${id}: ${result.status}; handoff ${result.handoffPath}`)
-    })
-  correctness
-    .command("save <id>")
-    .hook("preAction", vaultMutation())
-    .requiredOption("--file <file>", "separate host-authored Markdown review note")
-    .option("--json", "emit JSON")
-    .action(async (id, options, command) => {
-      const result = await saveCorrectnessReview(
-        (await commandConfig(command)).vault.path,
-        id,
-        options.file,
-      )
-      render(
-        result,
-        options.json,
-        `Saved separate review ${id}: ${result.reviewPath}; not grading or approval.`,
-      )
-    })
-}
-
-function registerUsageCommand(program: Command): void {
-  program
-    .command("cost")
-    .description("summarize an explicitly supplied host usage export; no provider access")
-    .requiredOption("--file <path>", "absolute host export JSON, not credentials")
-    .option("--weeks <number>", "look back 1–520 weeks; default current UTC month")
-    .option("--json", "emit metadata and exact supplied-cost totals")
-    .action(async (options, command: Command) => {
-      await commandConfig(command)
-      const result = await readHostUsage(options.file, {
-        weeks: options.weeks === undefined ? undefined : Number(options.weeks),
-      })
-      render(result, options.json, renderHostUsage(result))
-    })
 }
 
 function registerTaskInspectionCommands(program: Command): void {

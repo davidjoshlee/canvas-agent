@@ -8,7 +8,6 @@ import {
   selectAssignmentPrompt,
   selectPrepInputs,
 } from "../../src/tasks/authoring/recipes.js"
-import { readHostUsage } from "../../src/usage/host-usage.js"
 import { vaultMutation } from "../../src/vault/command-effects.js"
 import { refreshConfiguredReadingMirror } from "../../src/vault/reading-copy.js"
 import { inspectWorkspace, selectCourse } from "../../src/vault/workspace.js"
@@ -37,7 +36,7 @@ function emit(journal: DogfoodJournal, json: boolean) {
     passed: journal.flows.filter((flow) => flow.status === "pass").length,
     skipped: journal.flows.filter((flow) => flow.status === "skipped").length,
     limitation:
-      "Mechanical workflow evidence, not academic correctness or full feature parity. Skipped sync/cost flows are not passes. No Canvas submission or automatic human verdict.",
+      "Mechanical workflow evidence, not academic correctness or full feature parity. Skipped flows are not passes. No Canvas submission or automatic human verdict.",
   }
   process.stdout.write(
     json
@@ -61,15 +60,9 @@ async function execute(
     json?: boolean
     verdict?: string[]
     approveTask?: string[]
-    usageFile?: string
   },
 ) {
   if (options.offline && options.sync) throw new Error("Choose --offline or --sync, not both")
-  if (options.usageFile) {
-    if (journal.flows.length < 9)
-      throw new Error("Finish the preceding dogfood flows before attaching a host usage export")
-    await readHostUsage(options.usageFile)
-  }
   const verdicts: Record<string, "pass" | "fail"> = {}
   if ((options.verdict?.length ?? 0) > 100 || (options.approveTask?.length ?? 0) > 100)
     throw new Error("Too many dogfood review decisions")
@@ -105,7 +98,6 @@ async function execute(
     syncAuthorized: Boolean(options.sync),
     humanVerdicts: verdicts,
     approveTaskIds: approve,
-    hostUsageFile: options.usageFile,
     onStudentWrite: () => {
       studentWrite = true
     },
@@ -220,10 +212,6 @@ export function registerDogfoodCommand(program: Command) {
   dogfood
     .command("resume <id>")
     .hook("preAction", vaultMutation())
-    .option(
-      "--usage-file <path>",
-      "attach a normalized host usage export after the preceding flows finish",
-    )
     .option("--course <course>", "explicit saved course scope (required)")
     .option("--offline", "deliberately skip live sync")
     .option("--sync", "authorize selected-course sync")

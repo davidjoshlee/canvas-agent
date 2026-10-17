@@ -308,7 +308,7 @@ it("keeps unconfigured command failures and config-free discovery free of histor
       resolve("dist/cli.js"),
       "instructions",
       "--topic",
-      "correctness",
+      "assignment",
       "--config",
       invalid,
       "--json",

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path"
 import JSZip from "jszip"
 import { afterEach, expect, it } from "vitest"
 import { readTask } from "../../src/tasks/artifacts/records.js"
+import { readTaskCalculationEvidence } from "../../src/tasks/compatibility/calculation-records.js"
 import { calculateTask, markLegacyTask } from "../helpers/legacy-execution.js"
 
 const roots: string[] = []
@@ -12,6 +13,8 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 const retired = [
+  ["correctness"],
+  ["cost"],
   ["calculate"],
   ["check-numbers"],
   ["workbook"],
@@ -97,8 +100,6 @@ it("hands ordinary execution to the harness and preserves its spreadsheet throug
   expect(await readdir(join(f.vault, "_meta/tasks", task.id))).not.toContain("calculations.jsonl")
   const gate = f.cli(["gate", "review", task.id])
   expect(gate.automaticWorkbook.state).toBe("harness-owned")
-  const review = f.cli(["correctness", "prepare", task.id])
-  expect(await readFile(review.handoffPath, "utf8")).toContain("empty legacy log does not mean")
   const revision = f.cli(["revise", task.id, "--feedback", "Clarify the recommendation."])
   expect(f.cli(["task", "show", revision.id]).hostExecutionVersion).toBe(1)
   const approved = f.cli(["approve", task.id])
@@ -160,8 +161,8 @@ it("reads and completes an older workbook recipe and preserves its logs and comp
     workbook = await readFile(join(f.vault, completed.task.workbook.path))
   const logFile = join(f.vault, "_meta/tasks", task.id, "calculations.jsonl"),
     log = await readFile(logFile)
-  const review = f.cli(["correctness", "prepare", task.id])
-  expect(await readFile(review.handoffPath, "utf8")).toContain('"result": 6')
+  const evidence = await readTaskCalculationEvidence(f.vault, await readTask(f.vault, task.id))
+  expect(evidence.records[0]?.result).toBe(6)
   const approved = f.cli(["approve", task.id])
   expect(await readFile(join(f.vault, approved.workbook.path))).toEqual(workbook)
   const revision = f.cli([
