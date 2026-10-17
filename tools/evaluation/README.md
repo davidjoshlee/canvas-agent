@@ -24,5 +24,6 @@ Resume or inspect existing records rather than creating replacements.
 
 The installed CLI retains `simulate` capture/replay and task operations under
 `src/simulation`, including read-only retrieval of existing completed outputs.
-Host usage reporting belongs to `src/usage`. Private course feedback and older
-learning-history readers remain in `src/feedback`.
+Private course feedback and older learning-history readers remain in `src/feedback`.
+The legacy `cost report` journal slot is skipped without reopening exports.
+Earlier checkpoints retain their recorded bytes; resume does not reverify billing.

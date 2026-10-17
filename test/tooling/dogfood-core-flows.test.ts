@@ -181,59 +181,27 @@ describe("concrete first-half dogfood workflows", () => {
       /not both/,
     )
   })
-  it("binds an explicit host export with unknown totals and revalidates its original period and bytes", async () => {
+  it("skips the legacy cost slot without reopening or revalidating saved exports", async () => {
     const { root, config, journal } = await fixture()
-    const file = join(root, "host-usage.json")
-    const bytes = JSON.stringify({
-      version: 1,
-      host: "Synthetic-host",
-      rows: [
-        {
-          id: "row-one",
-          at: new Date().toISOString(),
-          function: "prep",
-          model: "synthetic/model",
-          source: "estimated",
-          costUsd: "0.000000001",
-        },
-        {
-          id: "row-two",
-          at: new Date().toISOString(),
-          function: "draft",
-          model: "synthetic/model",
-          source: "host-reported",
-        },
-      ],
-    })
-    await writeFile(file, bytes)
-    const cost = flow(buildReviewDogfoodFlows({ config, hostUsageFile: file }), "cost report")
-    const result = await cost.run(undefined, journal)
-    expect(result.status).toBe("pass")
-    expect(result.data).toMatchObject({
-      rows: "2",
-      totalCostUsd: "unknown",
-      knownCostSubtotalUsd: "0.000000001",
-      missingCostRows: "1",
-      scope: "supplied-export-not-run-attributed",
-      authoritativeBillingVerified: "false",
-    })
-    expect(JSON.stringify(result)).not.toContain("row-one")
-    expect(await readFile(file, "utf8")).toBe(bytes)
-    const resumed = flow(buildReviewDogfoodFlows({ config }), "cost report")
-    expect(await resumed.validate(result, journal)).toBe(true)
-    expect(await resumed.run(result, journal)).toEqual(result)
-    const skipped = await resumed.run(undefined, journal)
-    expect(await cost.validate(skipped, journal)).toBe(false)
-    await writeFile(file, bytes.replace("0.000000001", "0.000000002"))
-    await expect(resumed.validate(result, journal)).rejects.toThrow(/changed/)
-    await writeFile(file, bytes)
-    expect(await resumed.validate(result, journal)).toBe(true)
-    await expect(
-      flow(
-        buildReviewDogfoodFlows({ config, hostUsageFile: join(root, "different.json") }),
-        "cost report",
-      ).run(result, journal),
-    ).rejects.toThrow(/choice changed/)
+    const file = join(root, "old-export.json")
+    await writeFile(file, "Preserved export bytes")
+    const cost = flow(buildReviewDogfoodFlows({ config }), "cost report")
+    const prior = {
+      name: "cost report" as const,
+      status: "pass" as const,
+      evidence: "Historical export report",
+      nextSteps: "",
+      data: { exportFile: file, exportHash: "old-hash", totalCostUsd: "1.00" },
+    }
+    expect(await cost.validate(prior, journal)).toBe(false)
+    const skipped = await cost.run(prior, journal)
+    expect(skipped.status).toBe("skipped")
+    expect(skipped.data).toEqual({ owner: "host" })
+    expect(prior.data.totalCostUsd).toBe("1.00")
+    expect(await readFile(file, "utf8")).toBe("Preserved export bytes")
+    await rm(file)
+    expect(await cost.run(prior, journal)).toEqual(skipped)
+    expect(await cost.validate(skipped, journal)).toBe(true)
   })
   it("reuses scope-bound sweep sync evidence and refuses changed fingerprints", async () => {
     const { root, config, journal } = await fixture()

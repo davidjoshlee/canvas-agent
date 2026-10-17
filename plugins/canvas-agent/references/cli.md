@@ -46,7 +46,7 @@ Revision preserves edits and produces a new full artifact. Approve only at expli
 
 ### Conditional detail
 
-Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, vault history, playbooks/feedback, guidance, correctness, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
+Use `instructions --json` for installed paths; skill links resolve relative to SKILL.md, not your working directory. Search the applicable command/topic and read its detail plus --help before frozen simulate operations, vault history, playbooks/feedback, guidance, ingest/extraction, arithmetic/workbooks, auth renewal or reading-copy. Frozen work uses captures only, separate IDs and human verdicts. Phone copies are one-way, require a confirmed private destination and never sync back. Full default academic workflows are in sibling `workflows.md`; actual saved task instructions remain authoritative.
 <!-- canvas-agent-cli:end -->
 
 ### Installed instruction lookup
@@ -162,9 +162,7 @@ Use approved task source paths and verify every input yourself.
 Execute derived numbers, including intermediate values and prose comparisons.
 check-numbers UUID --file ABS_CANDIDATE.md highlights numerical evidence issues;
 it does not certify correctness, completeness or source grounding. A clean
-report is not an academic grade. Use correctness prepare UUID, read its handoff,
-author a separate review and correctness save REVIEW_ID --file ABS_REVIEW.md.
-Correctness reviews do not replace, revise or approve the reviewed artifact.
+report is not an academic grade.
 
 workbook UUID --file ABS_SHEETS.json accepts bounded values-only JSON:
 {"sheets":[{"name":"Sheet","rows":[["Label",1]]}]}.
@@ -224,7 +222,7 @@ Keep the working vault local; there is no reverse sync or hosted mobile CLI.
 The cloud client controls upload timing; no account, sharing or subscription
 is configured by the CLI. Exported files are not another working vault.
 
-## Frozen simulation and usage
+## Frozen simulation
 
 Evaluation is isolated from ordinary student tasks. simulate --help exposes
 capture, derived views, frozen tasks, calculations and workbooks.
@@ -241,5 +239,3 @@ Human verdicts are explicit; never fabricate scores, approvals or historical fac
 Dogfood/sweeps, simulation windows/comparisons and gate m1 belong to the
 checkout-only development harness, not the installed CLI. Existing journals
 remain unchanged; use the checkout development instructions to inspect them.
-cost --file ABS_HOST_EXPORT reports supplied host usage; missing prices stay
-unknown and the CLI does not verify provider billing or impose provider budgets.

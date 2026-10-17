@@ -6,14 +6,13 @@ import { join, resolve } from "node:path"
 import { expect, it } from "vitest"
 
 it("records actual synthetic CLI arguments/status/output hashes and refuses config/auth escapes before execution", async () => {
-  const created = spawnSync(
-    process.execPath,
-    [resolve("test/helpers/create-correctness-fixture.mjs"), "--frozen"],
-    { encoding: "utf8", timeout: 30_000 },
-  )
+  const created = spawnSync(process.execPath, [resolve("test/helpers/create-host-fixture.mjs")], {
+    encoding: "utf8",
+    timeout: 30_000,
+  })
   expect(created.status, created.stderr).toBe(0)
   const fixture = JSON.parse(created.stdout)
-  expect(fixture.root.startsWith(join(tmpdir(), "canvas-host-correctness-frozen-"))).toBe(true)
+  expect(fixture.root.startsWith(join(tmpdir(), "canvas-host-journal-"))).toBe(true)
   try {
     const run = (args: string[]) =>
       spawnSync(
@@ -38,7 +37,7 @@ it("records actual synthetic CLI arguments/status/output hashes and refuses conf
     expect(rows[1].stderrHash).toBe(createHash("sha256").update(failed.stderr).digest("hex"))
     expect(run(["auth", "verify"]).status).not.toBe(0)
     expect(run(["simulate", "list", "--config=/not-an-owned-config"]).status).not.toBe(0)
-    expect(run(["correctness", "save", "invalid", "--file=/not-owned.md"]).status).not.toBe(0)
+    expect(run(["check-numbers", "invalid", "--file=/not-owned.md"]).status).not.toBe(0)
     expect(await readFile(log, "utf8")).toBe(original)
   } finally {
     await rm(fixture.root, { recursive: true, force: true })

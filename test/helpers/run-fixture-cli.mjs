@@ -13,8 +13,8 @@ assert(flag === "--root" && delimiter === "--", "Use --root ABS_FIXTURE -- CLI_A
 const root = await realpath(requestedRoot)
 const temporary = await realpath(tmpdir())
 assert(
-  root.startsWith(`${temporary}${sep}canvas-host-correctness-`),
-  "Only owned correctness fixtures are accepted",
+  root.startsWith(`${temporary}${sep}canvas-host-journal-`),
+  "Only owned journal fixtures are accepted",
 )
 const { assertNoSymlinks } = await import(
   new URL("../../dist/shared/fs-safety.js", import.meta.url)
@@ -64,7 +64,6 @@ assert(
   "The fixture config cannot be overridden",
 )
 const allowed =
-  (args[0] === "correctness" && ["list", "show", "prepare", "save"].includes(args[1])) ||
   (args[0] === "task" && ["list", "show"].includes(args[1])) ||
   (args[0] === "simulate" &&
     (["list", "replay"].includes(args[1]) ||
