@@ -380,15 +380,16 @@ export interface VaultHistoryStatus {
   workingTreeCurrentnessVerified: false
 }
 
-/** Inspect only history metadata/object headers. Never lock, repair, snapshot or read vault bodies. */
-export async function inspectVaultHistory(vault: string): Promise<VaultHistoryStatus> {
-  const result = (
-    status: VaultHistoryStatus["status"],
-    configured: boolean | null,
-    enabled: boolean | null,
-    message: string,
-    extra: { latestCommit?: string; files?: number } = {},
-  ): VaultHistoryStatus => ({
+type HistoryStore = NonNullable<Awaited<ReturnType<typeof stateAt>>>
+
+function historyStatus(
+  status: VaultHistoryStatus["status"],
+  configured: boolean | null,
+  enabled: boolean | null,
+  message: string,
+  extra: { latestCommit?: string; files?: number } = {},
+): VaultHistoryStatus {
+  return {
     status,
     configured,
     enabled,
@@ -397,12 +398,60 @@ export async function inspectVaultHistory(vault: string): Promise<VaultHistorySt
     writesPerformed: false,
     fullHistoryIntegrityVerified: false,
     workingTreeCurrentnessVerified: false,
-  })
+  }
+}
+
+async function historyLockPresent(state: HistoryStore): Promise<boolean> {
+  await assertNoSymlinks(state.directory)
+  try {
+    await lstat(join(state.directory, "canvas-history.lock"))
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+    throw error
+  }
+}
+
+function lockedHistoryStatus(): VaultHistoryStatus {
+  return historyStatus(
+    "locked",
+    true,
+    true,
+    "Local history has a lock; metadata readiness is unknown. This does not prove a live process; inspect the owner without automatically removing the lock",
+  )
+}
+
+async function inspectHistoryObjects(state: HistoryStore, current: string) {
+  const files = await tree(state, current)
+  if (files.length) {
+    const output = await git(
+      state.directory,
+      ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
+      Buffer.from(`${files.map((file) => file.oid).join("\n")}\n`),
+      1024 * 1024,
+    )
+    const rows = output.toString().trim().split("\n")
+    let total = 0
+    if (rows.length !== files.length) throw new Error("Missing history objects")
+    for (let i = 0; i < rows.length; i++) {
+      const match = /^([a-f0-9]{40}) blob (\d+)$/.exec(rows[i] ?? "")
+      const size = Number(match?.[2])
+      if (!match || match[1] !== files[i]?.oid || !Number.isSafeInteger(size) || size > fileLimit)
+        throw new Error("Invalid history object headers")
+      total += size
+    }
+    if (total > totalLimit) throw new Error("History object inventory exceeds bounds")
+  }
+  return files
+}
+
+/** Inspect only history metadata/object headers. Never lock, repair, snapshot or read vault bodies. */
+export async function inspectVaultHistory(vault: string): Promise<VaultHistoryStatus> {
   let state: Awaited<ReturnType<typeof stateAt>>
   try {
     state = await stateAt(vault)
   } catch {
-    return result(
+    return historyStatus(
       "unsafe",
       null,
       null,
@@ -410,41 +459,24 @@ export async function inspectVaultHistory(vault: string): Promise<VaultHistorySt
     )
   }
   if (!state)
-    return result(
+    return historyStatus(
       "disabled",
       false,
       false,
       "Optional local history is not configured; no automatic backup is claimed and Git is not required",
     )
   if (!state.enabled)
-    return result(
+    return historyStatus(
       "disabled",
       true,
       false,
       "Local history capture is disabled; retained history is not checked and no current backup is claimed",
     )
-  const lockedNow = async () => {
-    await assertNoSymlinks(state.directory)
-    try {
-      await lstat(join(state.directory, "canvas-history.lock"))
-      return true
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
-      throw error
-    }
-  }
-  const lockedResult = () =>
-    result(
-      "locked",
-      true,
-      true,
-      "Local history has a lock; metadata readiness is unknown. This does not prove a live process; inspect the owner without automatically removing the lock",
-    )
   try {
-    if (await lockedNow()) return lockedResult()
+    if (await historyLockPresent(state)) return lockedHistoryStatus()
     await verifyStore(state)
   } catch {
-    return result(
+    return historyStatus(
       "unsafe",
       true,
       true,
@@ -454,7 +486,7 @@ export async function inspectVaultHistory(vault: string): Promise<VaultHistorySt
   try {
     await git(state.directory, ["--version"], undefined, 1024)
   } catch {
-    return result(
+    return historyStatus(
       "unavailable",
       true,
       true,
@@ -464,7 +496,7 @@ export async function inspectVaultHistory(vault: string): Promise<VaultHistorySt
   try {
     const current = await head(state)
     if (!current)
-      return result(
+      return historyStatus(
         "empty",
         true,
         true,
@@ -475,35 +507,16 @@ export async function inspectVaultHistory(vault: string): Promise<VaultHistorySt
       "commit\n"
     )
       throw new Error("Invalid history commit")
-    const files = await tree(state, current)
-    if (files.length) {
-      const output = await git(
-        state.directory,
-        ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
-        Buffer.from(`${files.map((file) => file.oid).join("\n")}\n`),
-        1024 * 1024,
-      )
-      const rows = output.toString().trim().split("\n")
-      let total = 0
-      if (rows.length !== files.length) throw new Error("Missing history objects")
-      for (let i = 0; i < rows.length; i++) {
-        const match = /^([a-f0-9]{40}) blob (\d+)$/.exec(rows[i] ?? "")
-        const size = Number(match?.[2])
-        if (!match || match[1] !== files[i]?.oid || !Number.isSafeInteger(size) || size > fileLimit)
-          throw new Error("Invalid history object headers")
-        total += size
-      }
-      if (total > totalLimit) throw new Error("History object inventory exceeds bounds")
-    }
-    if (await lockedNow()) return lockedResult()
+    const files = await inspectHistoryObjects(state, current)
+    if (await historyLockPresent(state)) return lockedHistoryStatus()
     if ((await head(state)) !== current)
-      return result(
+      return historyStatus(
         "locked",
         true,
         true,
         "Local history changed during inspection; retry after the writer finishes, without editing saved history",
       )
-    return result(
+    return historyStatus(
       "ready",
       true,
       true,
@@ -511,7 +524,7 @@ export async function inspectVaultHistory(vault: string): Promise<VaultHistorySt
       { latestCommit: current, files: files.length },
     )
   } catch {
-    return result(
+    return historyStatus(
       "unsafe",
       true,
       true,

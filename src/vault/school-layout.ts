@@ -13,6 +13,21 @@ export interface SchoolLayoutState {
   schoolWrites: "unverified" | "blocked-by-marker"
   note: string
 }
+async function readLayoutMarker(path: string): Promise<Buffer> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  let bytes: Buffer
+  try {
+    const current = await file.stat()
+    if (!current.isFile() || current.size > 64_000) throw new Error("Unsafe School layout marker")
+    bytes = await file.readFile()
+  } finally {
+    await file.close()
+  }
+  if (bytes.includes(0) || !Buffer.from(bytes.toString()).equals(bytes))
+    throw new Error("Invalid School layout marker text")
+  return bytes
+}
+
 /** Inspect only School's marker, never advance it for a selected-course migration. */
 export async function inspectSchoolLayout(root: string): Promise<SchoolLayoutState> {
   const path = join(root, "_meta/layout.json")
@@ -45,17 +60,7 @@ export async function inspectSchoolLayout(root: string): Promise<SchoolLayoutSta
           : "No School marker or course folders. School may initialize its global marker on first write to an empty vault; initialize School before Canvas creates shared course folders. Shared-writer safety is not established by this inspection.",
       }
     }
-    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-    let bytes: Buffer
-    try {
-      const current = await file.stat()
-      if (!current.isFile() || current.size > 64_000) throw new Error("Unsafe School layout marker")
-      bytes = await file.readFile()
-    } finally {
-      await file.close()
-    }
-    if (bytes.includes(0) || !Buffer.from(bytes.toString()).equals(bytes))
-      throw new Error("Invalid School layout marker text")
+    const bytes = await readLayoutMarker(path)
     const hash = createHash("sha256").update(bytes).digest("hex")
     let parsed: unknown
     try {

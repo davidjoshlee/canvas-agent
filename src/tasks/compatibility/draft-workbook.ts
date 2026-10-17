@@ -25,10 +25,7 @@ function value(text: string): string | number {
   return Number.isFinite(number) ? number : text
 }
 
-/** Values-only extraction, not a calculation or source-grounding check. */
-export function workbookFromDraft(text: string): WorkbookInput | null {
-  if (Buffer.byteLength(text) > 5 * 1024 * 1024)
-    throw new Error("Draft exceeds the workbook extraction limit")
+function visibleDraftLines(text: string): string[] {
   const lines = text.split(/\r?\n/)
   // Example tables and commented-out content are not finished deliverables.
   let fence: { char: string; length: number } | undefined
@@ -69,6 +66,14 @@ export function workbookFromDraft(text: string): WorkbookInput | null {
     }
     return clean
   })
+  return visible
+}
+
+/** Values-only extraction, not a calculation or source-grounding check. */
+export function workbookFromDraft(text: string): WorkbookInput | null {
+  if (Buffer.byteLength(text) > 5 * 1024 * 1024)
+    throw new Error("Draft exceeds the workbook extraction limit")
+  const visible = visibleDraftLines(text)
   const sheets: WorkbookInput["sheets"] = []
   let heading: string | undefined
   for (let i = 0; i < visible.length; i++) {

@@ -28,6 +28,82 @@ async function historyCheck(vault: string): Promise<HealthCheck> {
   }
 }
 
+async function appendConfiguredReadiness(
+  checks: HealthCheck[],
+  config: ToolkitConfig,
+  options: { syncOnly?: boolean; offline?: boolean },
+): Promise<void> {
+  checks.push({ name: "config", status: "ok", message: "Configuration is valid" })
+  try {
+    await assertNoSymlinks(config.vault.path)
+    const stat = await lstat(config.vault.path)
+    const safe = stat.isDirectory() && !stat.isSymbolicLink()
+    checks.push({
+      name: "vault",
+      status: safe ? "ok" : "error",
+      message: safe ? "Vault directory is available" : "Vault path is not a regular directory",
+    })
+  } catch {
+    checks.push({
+      name: "vault",
+      status: "error",
+      message: "Vault directory is missing or unreadable",
+    })
+  }
+  const tokenAvailable = Boolean(process.env[config.canvas.tokenEnv])
+  if (!options.syncOnly) checks.push(await historyCheck(config.vault.path))
+  checks.push({
+    name: "token-env",
+    status: tokenAvailable ? "ok" : options.syncOnly ? "error" : "warning",
+    message: tokenAvailable
+      ? `Environment variable ${config.canvas.tokenEnv} is set`
+      : options.offline
+        ? `Environment variable ${config.canvas.tokenEnv} is not set; offline commands remain available`
+        : `Environment variable ${config.canvas.tokenEnv} is not set`,
+  })
+  checks.push({
+    name: "allowlist",
+    status: config.courses.allowlist.length ? "ok" : "warning",
+    message: config.courses.allowlist.length
+      ? `${config.courses.allowlist.length} course ID(s) selected`
+      : "No courses are selected for sync",
+  })
+  const identity = await inspectSyncIdentity(
+    config.vault.path,
+    new URL(config.canvas.baseUrl).origin,
+  )
+  checks.push({
+    name: "vault-sync-origin",
+    status:
+      identity.origin === "invalid" || identity.origin === "mismatched"
+        ? "error"
+        : identity.origin === "matched"
+          ? "ok"
+          : "warning",
+    message:
+      identity.origin === "matched"
+        ? "Stored sync server matches the configured origin; this is not account authentication"
+        : identity.origin === "mismatched"
+          ? "Configured Canvas server conflicts with stored vault ownership; use a separate vault"
+          : identity.origin === "invalid"
+            ? "Stored sync server binding is unsafe, malformed or unreadable; inspect it without deleting ownership metadata"
+            : "No bound sync server evidence; a first binding cannot authenticate historical cached feedback",
+  })
+  checks.push({
+    name: "vault-sync-account",
+    status:
+      identity.account === "invalid" || identity.account === "mismatched" ? "error" : "warning",
+    message:
+      identity.account === "reserved"
+        ? "A private API-subject reservation exists; today's account is not verified offline. Sync verifies it before course access"
+        : identity.account === "mismatched"
+          ? "Stored account reservation belongs to a different Canvas server; use a separate vault"
+          : identity.account === "invalid"
+            ? "Stored account binding is unsafe, exposed, malformed or unreadable; stop and inspect it"
+            : "No account reservation exists; first binding does not certify historical cache ownership",
+  })
+}
+
 export async function doctorChecks(
   configPath: string,
   config?: ToolkitConfig,
@@ -56,75 +132,7 @@ export async function doctorChecks(
       message: `Config could not be loaded: ${configPath}`,
     })
   } else {
-    checks.push({ name: "config", status: "ok", message: "Configuration is valid" })
-    try {
-      await assertNoSymlinks(config.vault.path)
-      const stat = await lstat(config.vault.path)
-      const safe = stat.isDirectory() && !stat.isSymbolicLink()
-      checks.push({
-        name: "vault",
-        status: safe ? "ok" : "error",
-        message: safe ? "Vault directory is available" : "Vault path is not a regular directory",
-      })
-    } catch {
-      checks.push({
-        name: "vault",
-        status: "error",
-        message: "Vault directory is missing or unreadable",
-      })
-    }
-    const tokenAvailable = Boolean(process.env[config.canvas.tokenEnv])
-    if (!options.syncOnly) checks.push(await historyCheck(config.vault.path))
-    checks.push({
-      name: "token-env",
-      status: tokenAvailable ? "ok" : options.syncOnly ? "error" : "warning",
-      message: tokenAvailable
-        ? `Environment variable ${config.canvas.tokenEnv} is set`
-        : options.offline
-          ? `Environment variable ${config.canvas.tokenEnv} is not set; offline commands remain available`
-          : `Environment variable ${config.canvas.tokenEnv} is not set`,
-    })
-    checks.push({
-      name: "allowlist",
-      status: config.courses.allowlist.length ? "ok" : "warning",
-      message: config.courses.allowlist.length
-        ? `${config.courses.allowlist.length} course ID(s) selected`
-        : "No courses are selected for sync",
-    })
-    const identity = await inspectSyncIdentity(
-      config.vault.path,
-      new URL(config.canvas.baseUrl).origin,
-    )
-    checks.push({
-      name: "vault-sync-origin",
-      status:
-        identity.origin === "invalid" || identity.origin === "mismatched"
-          ? "error"
-          : identity.origin === "matched"
-            ? "ok"
-            : "warning",
-      message:
-        identity.origin === "matched"
-          ? "Stored sync server matches the configured origin; this is not account authentication"
-          : identity.origin === "mismatched"
-            ? "Configured Canvas server conflicts with stored vault ownership; use a separate vault"
-            : identity.origin === "invalid"
-              ? "Stored sync server binding is unsafe, malformed or unreadable; inspect it without deleting ownership metadata"
-              : "No bound sync server evidence; a first binding cannot authenticate historical cached feedback",
-    })
-    checks.push({
-      name: "vault-sync-account",
-      status:
-        identity.account === "invalid" || identity.account === "mismatched" ? "error" : "warning",
-      message:
-        identity.account === "reserved"
-          ? "A private API-subject reservation exists; today's account is not verified offline. Sync verifies it before course access"
-          : identity.account === "mismatched"
-            ? "Stored account reservation belongs to a different Canvas server; use a separate vault"
-            : identity.account === "invalid"
-              ? "Stored account binding is unsafe, exposed, malformed or unreadable; stop and inspect it"
-              : "No account reservation exists; first binding does not certify historical cache ownership",
-    })
+    await appendConfiguredReadiness(checks, config, options)
   }
   const cliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../dist/cli.js")
   let compiled = false

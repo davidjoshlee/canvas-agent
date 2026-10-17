@@ -16,6 +16,14 @@ export function registerAccessCommands(
   program: Command,
   canvasClient: CanvasClientFactory = createCanvasClient,
 ): void {
+  registerDoctorCommand(program)
+  const auth = program.command("auth").description("provision, check, and renew Canvas credentials")
+  registerCredentialProvisioning(program, auth)
+  registerCredentialRenewal(program, auth)
+  registerCredentialVerification(program, auth, canvasClient)
+}
+
+function registerDoctorCommand(program: Command): void {
   program
     .command("doctor")
     .description("check local readiness without contacting Canvas")
@@ -44,8 +52,9 @@ export function registerAccessCommands(
       )
       if (!result.ok) process.exitCode = 1
     })
+}
 
-  const auth = program.command("auth").description("provision, check, and renew Canvas credentials")
+function registerCredentialProvisioning(program: Command, auth: Command): void {
   auth
     .command("login")
     .description(
@@ -88,6 +97,9 @@ export function registerAccessCommands(
         `Selected School token imported into private adjacent .env; Keychain unchanged.\n${result.nextSteps}`,
       )
     })
+}
+
+function registerCredentialRenewal(program: Command, auth: Command): void {
   auth
     .command("renew")
     .description("show manual Canvas token renewal steps; no network or automatic token minting")
@@ -103,6 +115,13 @@ export function registerAccessCommands(
         ),
       )
     })
+}
+
+function registerCredentialVerification(
+  program: Command,
+  auth: Command,
+  canvasClient: CanvasClientFactory,
+): void {
   auth
     .command("verify")
     .description("verify configured credentials with a read-only request")
@@ -112,7 +131,6 @@ export function registerAccessCommands(
       const result = await verifyAuth(config, canvasClient(config))
       render(result, options.json, "Canvas authentication succeeded.")
     })
-
   auth
     .command("status")
     .description("report local token presence and recorded expiry; not API authorization")

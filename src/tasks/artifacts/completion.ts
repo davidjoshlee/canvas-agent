@@ -13,7 +13,7 @@ import {
   replaceFileAtomically,
   vaultRelativePath as safeRel,
 } from "../../shared/fs-safety.js"
-import type { TaskRecord } from "../../shared/types.js"
+import type { CourseContext, TaskRecord, WorkspaceContext } from "../../shared/types.js"
 import { productDestination } from "../../vault/destinations.js"
 import { inspectWorkspace } from "../../vault/workspace.js"
 import {
@@ -215,64 +215,67 @@ function validateQuestionAnswers(
   }
 }
 
-async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
-  await assertNoSymlinks(resolve(vault))
-  const context = await inspectWorkspace(resolve(vault))
-  const course = context.courses.find(
-    (c) => c.code === task.course.code && c.root === task.course.root,
-  )
-  if (!course) throw new Error("Task course is missing or no longer uniquely identifiable")
-  if (task.learningHistory) await verifyLearningHistory(vault, task.learningHistory, course)
-  if (task.kind === "assignment") {
-    const assignment = task.assignment
-    if (!assignment) throw new Error("Assignment task metadata is missing")
-    const current = await deriveCurrentTaskInputs(vault, course, task)
-    if (!("guidance" in current)) throw new Error("Assignment input recipe omitted guidance")
-    const canonical = (_key: string, value: unknown) =>
-      value && typeof value === "object" && !Array.isArray(value)
-        ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
-        : value
-    const sameRecords = (a: unknown[], b: unknown[]) =>
-      JSON.stringify(a, canonical) === JSON.stringify(b, canonical)
-    // Legacy parsers used different presentation metadata (titles, dates and
-    // relation annotations). Content, roles, original hashes and selected paths
-    // must still match exactly; newly created versioned tasks remain strict.
-    const evidence = (sources: TaskRecord["sources"]) =>
-      sources.map(({ path, hash, text, type, originalPath, originalHash, ingestProvenance }) => ({
-        path,
-        hash,
-        text,
-        type,
-        originalPath,
-        originalHash,
-        ...(task.sources.find((source) => source.path === path)?.ingestProvenance
-          ? { ingestProvenance }
-          : {}),
-      }))
-    if (
-      !sameRecords(
-        task.parserVersion === 2
-          ? current.sources.map((source) => {
-              const saved = task.sources.find((item) => item.path === source.path)
-              const { moduleDates, ingestProvenance, ...common } = source
-              return {
-                ...common,
-                ...(saved?.moduleDates !== undefined ? { moduleDates } : {}),
-                ...(saved?.ingestProvenance !== undefined ? { ingestProvenance } : {}),
-              }
-            })
-          : evidence(current.sources),
-        task.parserVersion === 2 ? task.sources : evidence(task.sources),
-      )
+async function verifyCurrentAssignment(
+  vault: string,
+  task: TaskRecord,
+  course: CourseContext,
+): Promise<void> {
+  const assignment = task.assignment
+  if (!assignment) throw new Error("Assignment task metadata is missing")
+  const current = await deriveCurrentTaskInputs(vault, course, task)
+  if (!("guidance" in current)) throw new Error("Assignment input recipe omitted guidance")
+  const canonical = (_key: string, value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
+      : value
+  const sameRecords = (a: unknown[], b: unknown[]) =>
+    JSON.stringify(a, canonical) === JSON.stringify(b, canonical)
+  // Legacy parsers used different presentation metadata (titles, dates and
+  // relation annotations). Content, roles, original hashes and selected paths
+  // must still match exactly; newly created versioned tasks remain strict.
+  const evidence = (sources: TaskRecord["sources"]) =>
+    sources.map(({ path, hash, text, type, originalPath, originalHash, ingestProvenance }) => ({
+      path,
+      hash,
+      text,
+      type,
+      originalPath,
+      originalHash,
+      ...(task.sources.find((source) => source.path === path)?.ingestProvenance
+        ? { ingestProvenance }
+        : {}),
+    }))
+  if (
+    !sameRecords(
+      task.parserVersion === 2
+        ? current.sources.map((source) => {
+            const saved = task.sources.find((item) => item.path === source.path)
+            const { moduleDates, ingestProvenance, ...common } = source
+            return {
+              ...common,
+              ...(saved?.moduleDates !== undefined ? { moduleDates } : {}),
+              ...(saved?.ingestProvenance !== undefined ? { ingestProvenance } : {}),
+            }
+          })
+        : evidence(current.sources),
+      task.parserVersion === 2 ? task.sources : evidence(task.sources),
     )
-      throw new Error("Assignment inputs are stale: selected sources or their snapshots changed")
-    if (!sameRecords(current.guidance, task.guidance))
-      throw new Error("Course guidance changed or was modified since this task was created")
-    if (!sameRecords(savedExclusions(current.excluded), task.excluded))
-      throw new Error("Assignment source restrictions or exclusions changed since task creation")
-    for (const source of task.sources) await verifySourceSnapshot(vault, source)
-    return
-  }
+  )
+    throw new Error("Assignment inputs are stale: selected sources or their snapshots changed")
+  if (!sameRecords(current.guidance, task.guidance))
+    throw new Error("Course guidance changed or was modified since this task was created")
+  if (!sameRecords(savedExclusions(current.excluded), task.excluded))
+    throw new Error("Assignment source restrictions or exclusions changed since task creation")
+  for (const source of task.sources) await verifySourceSnapshot(vault, source)
+  return
+}
+
+async function verifyCurrentPrep(
+  vault: string,
+  task: TaskRecord,
+  course: CourseContext,
+  context: WorkspaceContext,
+): Promise<void> {
   const period =
     task.period ?? (task.week ? { kind: "week" as const, value: task.week } : undefined)
   if (!period) throw new Error("Preparation task is missing its period")
@@ -362,6 +365,18 @@ async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
     .sort()
   if (JSON.stringify(relevantCurrentCodes) !== JSON.stringify(relevantPriorCodes))
     throw new Error("Workspace restriction notices changed since task creation")
+}
+
+async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
+  await assertNoSymlinks(resolve(vault))
+  const context = await inspectWorkspace(resolve(vault))
+  const course = context.courses.find(
+    (c) => c.code === task.course.code && c.root === task.course.root,
+  )
+  if (!course) throw new Error("Task course is missing or no longer uniquely identifiable")
+  if (task.learningHistory) await verifyLearningHistory(vault, task.learningHistory, course)
+  if (task.kind === "assignment") await verifyCurrentAssignment(vault, task, course)
+  else await verifyCurrentPrep(vault, task, course, context)
 }
 
 function validateOutputReference(task: TaskRecord, output: string): void {
@@ -484,33 +499,12 @@ async function completedResult(
   return { task, output }
 }
 
-export async function completeTask(
-  vault: string,
-  id: string,
-  candidateFile: string,
-): Promise<{ task: TaskRecord; output: string }> {
-  await assertNoSymlinks(resolve(vault))
-  const task = await readTask(vault, id)
-  const candidateBytes = await externalFile(candidateFile)
-  const candidate = candidateBytes.toString("utf8")
-  checkCandidate(candidate, id, task)
-  const workbookBytes = task.workbookVersion ? await draftWorkbookBytes(candidate) : null
-  const candidateHash = digest(candidateBytes)
-  if (task.status === "completed") {
-    const result = await completedResult(vault, task, candidateBytes)
-    const completedTaskJson = await noLinks(vault, `_meta/tasks/${id}/task.json`)
-    await unlink(join(dirname(completedTaskJson), "completion.transaction.json")).catch(
-      () => undefined,
-    )
-    return result
-  }
-  await verifyCurrent(vault, task)
-  const destination = await noLinks(vault, task.destination, true)
-  await mkdir(destination, { recursive: true, mode: 0o700 })
-  // Re-check every created component after mkdir, including the course and vault ancestors.
-  await noLinks(vault, task.destination)
-  const taskJson = await noLinks(vault, `_meta/tasks/${id}/task.json`)
-  const markerPath = join(dirname(taskJson), "completion.transaction.json")
+async function reserveCompletionOutput(
+  task: TaskRecord,
+  destination: string,
+  markerPath: string,
+  candidateHash: string,
+): Promise<string> {
   await assertNoSymlinks(markerPath, true)
   let marker: { hash: string; output: string } | undefined
   try {
@@ -550,6 +544,37 @@ export async function completeTask(
       outputRel = competing.output
     }
   }
+  return outputRel
+}
+
+export async function completeTask(
+  vault: string,
+  id: string,
+  candidateFile: string,
+): Promise<{ task: TaskRecord; output: string }> {
+  await assertNoSymlinks(resolve(vault))
+  const task = await readTask(vault, id)
+  const candidateBytes = await externalFile(candidateFile)
+  const candidate = candidateBytes.toString("utf8")
+  checkCandidate(candidate, id, task)
+  const workbookBytes = task.workbookVersion ? await draftWorkbookBytes(candidate) : null
+  const candidateHash = digest(candidateBytes)
+  if (task.status === "completed") {
+    const result = await completedResult(vault, task, candidateBytes)
+    const completedTaskJson = await noLinks(vault, `_meta/tasks/${id}/task.json`)
+    await unlink(join(dirname(completedTaskJson), "completion.transaction.json")).catch(
+      () => undefined,
+    )
+    return result
+  }
+  await verifyCurrent(vault, task)
+  const destination = await noLinks(vault, task.destination, true)
+  await mkdir(destination, { recursive: true, mode: 0o700 })
+  // Re-check every created component after mkdir, including the course and vault ancestors.
+  await noLinks(vault, task.destination)
+  const taskJson = await noLinks(vault, `_meta/tasks/${id}/task.json`)
+  const markerPath = join(dirname(taskJson), "completion.transaction.json")
+  const outputRel = await reserveCompletionOutput(task, destination, markerPath, candidateHash)
   // A caller can arrive after a peer removed its transaction marker. Re-read the
   // authoritative record after marker ownership to avoid allocating another version.
   const latestTask = await readTask(vault, id)

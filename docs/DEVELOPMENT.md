@@ -24,6 +24,16 @@ separate. New source roles use explicit metadata before legacy filename conventi
 Preserve old saved recipe selection rules and bytes through compatibility decoders,
 rather than applying new classification rules to existing snapshots.
 
+## Function readability
+
+Keep workflow orchestration readable through named stages. Separate source
+selection, validation, rendering and publication when they have distinct inputs
+or failure modes. Keep related checks together and preserve their execution
+order, saved recipes and write/retry guarantees during refactoring. Use named
+recipe fields instead of long positional argument lists. Judge extraction by
+responsibility and nesting rather than a fixed line limit; avoid helpers that
+only forward arguments or obscure shared state.
+
 ## Verify
 
 Run npm run typecheck, npm run lint and npm test -- --maxWorkers=2

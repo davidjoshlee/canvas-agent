@@ -15,8 +15,6 @@ const MAX_LOG = 1024 * 1024
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex")
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
-const _within = (parent: string, child: string) =>
-  child === parent || child.startsWith(`${parent}${sep}`)
 
 async function taskVault(config: ToolkitConfig, taskId: string) {
   const vault = resolve(config.vault.path)
@@ -25,6 +23,49 @@ async function taskVault(config: ToolkitConfig, taskId: string) {
   if (!snapshots.current)
     throw new Error("Task evidence is stale; create a new task before evaluating")
   return { vault, task }
+}
+
+function validatePrivateToolRecord(entry: unknown): void {
+  if (!isRecord(entry) || entry.version !== 1) throw new Error("Private tool record is invalid")
+  const keys = Object.keys(entry).sort().join(",")
+  if (typeof entry.createdAt !== "string" || !Number.isFinite(Date.parse(entry.createdAt)))
+    throw new Error("Artifact log contains an invalid creation time")
+  const expectedCommon = ["createdAt", "hash", "kind", "path", "version"]
+  const expected =
+    entry.sheets === undefined && entry.sections === undefined
+      ? expectedCommon
+      : [
+          ...expectedCommon,
+          ...(entry.sheets === undefined ? [] : ["sheets"]),
+          ...(entry.sections === undefined ? [] : ["sections"]),
+        ]
+  if (
+    keys !== expected.sort().join(",") ||
+    !["workbook", "review-bundle"].includes(String(entry.kind)) ||
+    typeof entry.path !== "string" ||
+    isAbsolute(entry.path) ||
+    entry.path.split(/[\\/]/).includes("..") ||
+    typeof entry.hash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(entry.hash)
+  )
+    throw new Error("Artifact log contains a malformed record")
+  if (
+    entry.sheets !== undefined &&
+    (!Array.isArray(entry.sheets) || !entry.sheets.every((value) => typeof value === "string"))
+  )
+    throw new Error("Artifact log contains invalid sheet names")
+  if (
+    entry.sections !== undefined &&
+    (!Array.isArray(entry.sections) ||
+      !entry.sections.every(
+        (value) =>
+          isRecord(value) &&
+          Object.keys(value).sort().join(",") === "present,section" &&
+          typeof value.section === "string" &&
+          typeof value.present === "boolean",
+      ))
+  )
+    throw new Error("Artifact log contains invalid structural findings")
 }
 
 async function appendPrivateRecord(
@@ -47,46 +88,7 @@ async function appendPrivateRecord(
     const text = await readFile(path, "utf8")
     for (const line of text.split("\n").filter(Boolean)) {
       const entry: unknown = JSON.parse(line)
-      if (!isRecord(entry) || entry.version !== 1) throw new Error("Private tool record is invalid")
-      const keys = Object.keys(entry).sort().join(",")
-      if (typeof entry.createdAt !== "string" || !Number.isFinite(Date.parse(entry.createdAt)))
-        throw new Error("Artifact log contains an invalid creation time")
-      const expectedCommon = ["createdAt", "hash", "kind", "path", "version"]
-      const expected =
-        entry.sheets === undefined && entry.sections === undefined
-          ? expectedCommon
-          : [
-              ...expectedCommon,
-              ...(entry.sheets === undefined ? [] : ["sheets"]),
-              ...(entry.sections === undefined ? [] : ["sections"]),
-            ]
-      if (
-        keys !== expected.sort().join(",") ||
-        !["workbook", "review-bundle"].includes(String(entry.kind)) ||
-        typeof entry.path !== "string" ||
-        isAbsolute(entry.path) ||
-        entry.path.split(/[\\/]/).includes("..") ||
-        typeof entry.hash !== "string" ||
-        !/^[a-f0-9]{64}$/.test(entry.hash)
-      )
-        throw new Error("Artifact log contains a malformed record")
-      if (
-        entry.sheets !== undefined &&
-        (!Array.isArray(entry.sheets) || !entry.sheets.every((value) => typeof value === "string"))
-      )
-        throw new Error("Artifact log contains invalid sheet names")
-      if (
-        entry.sections !== undefined &&
-        (!Array.isArray(entry.sections) ||
-          !entry.sections.every(
-            (value) =>
-              isRecord(value) &&
-              Object.keys(value).sort().join(",") === "present,section" &&
-              typeof value.section === "string" &&
-              typeof value.present === "boolean",
-          ))
-      )
-        throw new Error("Artifact log contains invalid structural findings")
+      validatePrivateToolRecord(entry)
     }
   }
   const line = `${JSON.stringify({ version: 1, ...record })}\n`

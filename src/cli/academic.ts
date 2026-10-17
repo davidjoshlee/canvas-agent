@@ -15,6 +15,17 @@ import { configWithEnv, render, summary, taskMarkdownPath } from "./output.js"
 import { readTaskOutput } from "./task-output.js"
 
 export function registerAcademicCommands(program: Command): void {
+  registerContextCommand(program)
+  registerPrepCommand(program)
+  registerAssignmentCommands(program)
+  registerTaskLifecycleCommands(program)
+  const task = program.command("task").description("show or complete persisted academic tasks")
+  registerTaskOutputCommands(program, task)
+  registerTaskInspectionCommand(program, task)
+  registerTaskCompletionCommand(program, task)
+}
+
+function registerContextCommand(program: Command): void {
   program
     .command("context")
     .description("inspect local course context")
@@ -39,7 +50,9 @@ export function registerAcademicCommands(program: Command): void {
           : "No course-code folders found in the vault.",
       )
     })
+}
 
+function registerPrepCommand(program: Command): void {
   program
     .command("prep")
     .hook("preAction", vaultMutation())
@@ -65,7 +78,9 @@ export function registerAcademicCommands(program: Command): void {
         `Created prep task ${task.id} for ${task.course.code}, ${task.period?.kind ?? "week"} ${task.period?.value ?? task.week}.\nRead: ${taskFile}`,
       )
     })
+}
 
+function registerAssignmentCommands(program: Command): void {
   program
     .command("assignment")
     .hook("preAction", vaultMutation())
@@ -101,7 +116,6 @@ export function registerAcademicCommands(program: Command): void {
         `Created ${task.assignment?.mode} assignment task ${task.id} for ${task.course.code}.\nRead: ${taskFile}`,
       )
     })
-
   program
     .command("draft")
     .hook("preAction", vaultMutation())
@@ -142,7 +156,9 @@ export function registerAcademicCommands(program: Command): void {
         `Created ${taskRecord.assignment?.mode} task ${taskRecord.id} for ${course.code}: ${prompt.title}.\nRead: ${taskFile}`,
       )
     })
+}
 
+function registerTaskLifecycleCommands(program: Command): void {
   program
     .command("revise")
     .hook("preAction", vaultMutation())
@@ -175,7 +191,6 @@ export function registerAcademicCommands(program: Command): void {
         `Created revision task ${revised.id} from ${id}.\nRead: ${taskFile}`,
       )
     })
-
   program
     .command("approve")
     .hook("preAction", vaultMutation())
@@ -195,8 +210,9 @@ export function registerAcademicCommands(program: Command): void {
         `Approved local draft ${id}.\nCopied to: ${result.output}${result.workbook ? `\nWorkbook: ${result.workbook.path}` : ""}`,
       )
     })
+}
 
-  const task = program.command("task").description("show or complete persisted academic tasks")
+function registerTaskOutputCommands(program: Command, task: Command): void {
   task
     .command("output <id>")
     .description("read verified existing ordinary output; never regenerate or approve")
@@ -244,6 +260,9 @@ export function registerAcademicCommands(program: Command): void {
         ].join("\n"),
       )
     })
+}
+
+function registerTaskInspectionCommand(program: Command, task: Command): void {
   task
     .command("show")
     .description("show a task brief")
@@ -287,6 +306,9 @@ export function registerAcademicCommands(program: Command): void {
         )
       else process.stdout.write(await readFile(file, "utf8"))
     })
+}
+
+function registerTaskCompletionCommand(program: Command, task: Command): void {
   task
     .command("complete")
     .hook("preAction", vaultMutation())

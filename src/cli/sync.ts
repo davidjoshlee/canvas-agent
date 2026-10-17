@@ -7,6 +7,7 @@ import {
   syncCourses,
 } from "../canvas/sync.js"
 import { selectOnboardingCourses } from "../config/onboarding.js"
+import type { ToolkitConfig } from "../shared/types.js"
 import { vaultMutation } from "../vault/command-effects.js"
 import { inspectWorkspace } from "../vault/workspace.js"
 import { configWithEnv, render } from "./output.js"
@@ -15,6 +16,73 @@ export function registerSyncCommands(
   program: Command,
   canvasClient: CanvasClientFactory = createCanvasClient,
 ): void {
+  registerSyncCommand(program, canvasClient)
+  registerOnboardingCommand(program, canvasClient)
+}
+
+async function selectSyncCourses(
+  config: ToolkitConfig,
+  queries: string[],
+  canvasClient: CanvasClientFactory,
+): Promise<ToolkitConfig> {
+  let selectedConfig = config
+  if (queries.length) {
+    const allow = new Set(config.courses.allowlist)
+    let discovered: Awaited<ReturnType<typeof listCourses>> = []
+    if ((queries as string[]).some((query) => !allow.has(query) || !/^[1-9]\d*$/.test(query))) {
+      try {
+        discovered = await listCourses(config, true, canvasClient(config))
+      } catch (error) {
+        if (!isCanvasDiscoveryUnavailable(error)) throw error
+        const context = await inspectWorkspace(config.vault.path)
+        if (
+          context.diagnostics.some(
+            (diagnostic) => diagnostic.code === "workspace.course_mappings_unavailable",
+          )
+        )
+          throw new Error(
+            "Course discovery and local mappings are unavailable; use an exact allowlisted numeric ID after inspecting mappings",
+          )
+        discovered = context.courses.flatMap((course) =>
+          course.canvasId && allow.has(course.canvasId)
+            ? [{ id: course.canvasId, code: course.code, name: course.title }]
+            : [],
+        )
+      }
+    }
+    const selected: string[] = []
+    for (const query of queries as string[]) {
+      if (allow.has(query) && /^[1-9]\d*$/.test(query)) {
+        selected.push(query)
+        continue
+      }
+      const exact = discovered.filter(
+        (course) =>
+          course.id.toLocaleLowerCase() === query.toLocaleLowerCase() ||
+          course.code.toLocaleLowerCase() === query.toLocaleLowerCase(),
+      )
+      const matches = exact.length
+        ? exact
+        : discovered.filter(
+            (course) => course.name.toLocaleLowerCase() === query.toLocaleLowerCase(),
+          )
+      if (matches.length !== 1)
+        throw new Error(
+          matches.length > 1
+            ? `Course selector is ambiguous: ${query}`
+            : `No discovered course matches: ${query}`,
+        )
+      const id = matches[0]?.id
+      if (!id || !allow.has(id))
+        throw new Error(`Course ${query} is not in the configured sync allowlist`)
+      selected.push(id)
+    }
+    selectedConfig = { ...config, courses: { allowlist: [...new Set(selected)] } }
+  }
+  return selectedConfig
+}
+
+function registerSyncCommand(program: Command, canvasClient: CanvasClientFactory): void {
   program
     .command("sync")
     .hook("preAction", vaultMutation())
@@ -36,64 +104,7 @@ export function registerSyncCommands(
     .option("--json", "emit JSON")
     .action(async (options) => {
       const config = await configWithEnv(program.opts().config)
-      let selectedConfig = config
-      if (options.course.length) {
-        const allow = new Set(config.courses.allowlist)
-        let discovered: Awaited<ReturnType<typeof listCourses>> = []
-        if (
-          (options.course as string[]).some(
-            (query) => !allow.has(query) || !/^[1-9]\d*$/.test(query),
-          )
-        ) {
-          try {
-            discovered = await listCourses(config, true, canvasClient(config))
-          } catch (error) {
-            if (!isCanvasDiscoveryUnavailable(error)) throw error
-            const context = await inspectWorkspace(config.vault.path)
-            if (
-              context.diagnostics.some(
-                (diagnostic) => diagnostic.code === "workspace.course_mappings_unavailable",
-              )
-            )
-              throw new Error(
-                "Course discovery and local mappings are unavailable; use an exact allowlisted numeric ID after inspecting mappings",
-              )
-            discovered = context.courses.flatMap((course) =>
-              course.canvasId && allow.has(course.canvasId)
-                ? [{ id: course.canvasId, code: course.code, name: course.title }]
-                : [],
-            )
-          }
-        }
-        const selected: string[] = []
-        for (const query of options.course as string[]) {
-          if (allow.has(query) && /^[1-9]\d*$/.test(query)) {
-            selected.push(query)
-            continue
-          }
-          const exact = discovered.filter(
-            (course) =>
-              course.id.toLocaleLowerCase() === query.toLocaleLowerCase() ||
-              course.code.toLocaleLowerCase() === query.toLocaleLowerCase(),
-          )
-          const matches = exact.length
-            ? exact
-            : discovered.filter(
-                (course) => course.name.toLocaleLowerCase() === query.toLocaleLowerCase(),
-              )
-          if (matches.length !== 1)
-            throw new Error(
-              matches.length > 1
-                ? `Course selector is ambiguous: ${query}`
-                : `No discovered course matches: ${query}`,
-            )
-          const id = matches[0]?.id
-          if (!id || !allow.has(id))
-            throw new Error(`Course ${query} is not in the configured sync allowlist`)
-          selected.push(id)
-        }
-        selectedConfig = { ...config, courses: { allowlist: [...new Set(selected)] } }
-      }
+      const selectedConfig = await selectSyncCourses(config, options.course, canvasClient)
       let result: Awaited<ReturnType<typeof syncCourses>>
       try {
         result = await syncCourses(
@@ -124,7 +135,9 @@ export function registerSyncCommands(
         `Synced ${result.courses} course(s); wrote ${result.written.length} file(s).${result.notices.length ? `\n${result.notices.join("\n")}` : ""}`,
       )
     })
+}
 
+function registerOnboardingCommand(program: Command, canvasClient: CanvasClientFactory): void {
   program
     .command("onboard")
     .hook(
