@@ -24,6 +24,10 @@ providers, enforce academic policy or certify correctness.
   reference text. Required readings and student contributions cannot be invented.
 - Completion validates identity, structure, citations and unchanged bindings;
   it versions the output and never grades, approves or submits automatically.
+  Multi-file completion may register a manifest-backed private immutable bundle
+  with hashed file metadata and harness-reported executions/checks; those reports
+  are not execution or correctness certification. Approval copies only deliverable
+  files to a local Finals companion directory.
 - Revisions preserve earlier artifacts and explicit edits; approval requires
   student direction and saves a versioned local Final.
 - The coding harness owns reasoning, calculations, artifact creation and substantive

@@ -32,6 +32,8 @@ import {
   parseArtifactVersion,
   taskArtifactBaseName,
 } from "./artifact-layout.js"
+import { readVerifiedBundle } from "./bundle-store.js"
+import { claimCompletionIntent } from "./completion-intent.js"
 import { readTask, TaskRecordSchema } from "./records.js"
 
 const digest = (value: Buffer | string) => createHash("sha256").update(value).digest("hex")
@@ -438,6 +440,7 @@ async function verifiedCompletedOutput(
 ): Promise<{ task: TaskRecord; output: string; bytes: Buffer; workbookBytes?: Buffer }> {
   await assertNoSymlinks(resolve(vault))
   const task = await readTask(vault, id)
+  await readVerifiedBundle(vault, id, task)
   if (task.status !== "completed" || !task.completedAt || !task.output || !task.outputHash)
     throw new Error("Task is not completed with a saved output")
   if (intent === "assignment-write" && (task.kind !== "assignment" || !task.assignment))
@@ -551,15 +554,27 @@ export async function completeTask(
   vault: string,
   id: string,
   candidateFile: string,
+  bundleReservation?: string,
 ): Promise<{ task: TaskRecord; output: string }> {
   await assertNoSymlinks(resolve(vault))
   const task = await readTask(vault, id)
+  if (task.bundleHash && task.bundleHash !== bundleReservation)
+    throw new Error("Task has a bundle reservation; complete with the same bundle manifest")
   const candidateBytes = await externalFile(candidateFile)
   const candidate = candidateBytes.toString("utf8")
   checkCandidate(candidate, id, task)
   const workbookBytes = task.workbookVersion ? await draftWorkbookBytes(candidate) : null
   const candidateHash = digest(candidateBytes)
+  if (bundleReservation) {
+    const bundle = await readVerifiedBundle(vault, id, task)
+    if (
+      !bundle ||
+      bundle.files.find((file) => file.path === bundle.primary)?.hash !== candidateHash
+    )
+      throw new Error("Candidate does not match the reserved bundle primary response")
+  }
   if (task.status === "completed") {
+    await readVerifiedBundle(vault, id, task)
     const result = await completedResult(vault, task, candidateBytes)
     const completedTaskJson = await noLinks(vault, `_meta/tasks/${id}/task.json`)
     await unlink(join(dirname(completedTaskJson), "completion.transaction.json")).catch(
@@ -568,6 +583,11 @@ export async function completeTask(
     return result
   }
   await verifyCurrent(vault, task)
+  await claimCompletionIntent(vault, id, {
+    version: 1,
+    kind: bundleReservation ? "bundle" : "file",
+    hash: bundleReservation ?? candidateHash,
+  })
   const destination = await noLinks(vault, task.destination, true)
   await mkdir(destination, { recursive: true, mode: 0o700 })
   // Re-check every created component after mkdir, including the course and vault ancestors.

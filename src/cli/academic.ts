@@ -1,7 +1,9 @@
 import { lstat, readFile } from "node:fs/promises"
+import { resolve } from "node:path"
 import { type Command, Option } from "commander"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { WorkspaceContext } from "../shared/types.js"
+import { completeTaskBundle, inspectTaskBundle } from "../tasks/artifacts/bundles.js"
 import { completeTask } from "../tasks/artifacts/completion.js"
 import { listCourseTasks } from "../tasks/artifacts/inventory.js"
 import { approveTask, reviseTask } from "../tasks/artifacts/lifecycle.js"
@@ -73,7 +75,11 @@ function registerPrepCommand(program: Command): void {
       )
       const taskFile = taskMarkdownPath(config, task.id)
       render(
-        { ...summary(task), taskFile },
+        {
+          ...summary(task),
+          taskFile,
+          workingDirectory: resolve(config.vault.path, `_meta/tasks/${task.id}/work`),
+        },
         options.json,
         `Created prep task ${task.id} for ${task.course.code}, ${task.period?.kind ?? "week"} ${task.period?.value ?? task.week}.\nRead: ${taskFile}`,
       )
@@ -111,7 +117,11 @@ function registerAssignmentCommands(program: Command): void {
       )
       const taskFile = taskMarkdownPath(config, task.id)
       render(
-        { ...summary(task), taskFile },
+        {
+          ...summary(task),
+          taskFile,
+          workingDirectory: resolve(config.vault.path, `_meta/tasks/${task.id}/work`),
+        },
         options.json,
         `Created ${task.assignment?.mode} assignment task ${task.id} for ${task.course.code}.\nRead: ${taskFile}`,
       )
@@ -151,7 +161,11 @@ function registerAssignmentCommands(program: Command): void {
       )
       const taskFile = taskMarkdownPath(config, taskRecord.id)
       render(
-        { ...summary(taskRecord), taskFile },
+        {
+          ...summary(taskRecord),
+          taskFile,
+          workingDirectory: resolve(config.vault.path, `_meta/tasks/${taskRecord.id}/work`),
+        },
         options.json,
         `Created ${taskRecord.assignment?.mode} task ${taskRecord.id} for ${course.code}: ${prompt.title}.\nRead: ${taskFile}`,
       )
@@ -186,7 +200,11 @@ function registerTaskLifecycleCommands(program: Command): void {
       )
       const taskFile = taskMarkdownPath(config, revised.id)
       render(
-        { ...summary(revised), taskFile },
+        {
+          ...summary(revised),
+          taskFile,
+          workingDirectory: resolve(config.vault.path, `_meta/tasks/${revised.id}/work`),
+        },
         options.json,
         `Created revision task ${revised.id} from ${id}.\nRead: ${taskFile}`,
       )
@@ -205,9 +223,10 @@ function registerTaskLifecycleCommands(program: Command): void {
           task: summary(result.task),
           output: result.output,
           ...(result.workbook ? { workbook: result.workbook } : {}),
+          ...(result.bundle ? { bundle: result.bundle } : {}),
         },
         options.json,
-        `Approved local draft ${id}.\nCopied to: ${result.output}${result.workbook ? `\nWorkbook: ${result.workbook.path}` : ""}`,
+        `Approved local draft ${id}.\nCopied to: ${result.output}${result.workbook ? `\nWorkbook: ${result.workbook.path}` : ""}${result.bundle ? `\nBundle: ${result.bundle.directory}` : ""}`,
       )
     })
 }
@@ -294,7 +313,15 @@ function registerTaskInspectionCommand(program: Command, task: Command): void {
               record.output,
               record.workbook?.path,
             ),
+            workingDirectory: resolve(config.vault.path, `_meta/tasks/${record.id}/work`),
             briefStatus,
+            bundle: (await inspectTaskBundle(config.vault.path, record.id)) ?? null,
+            ...(record.parentTaskId
+              ? {
+                  parentBundle:
+                    (await inspectTaskBundle(config.vault.path, record.parentTaskId)) ?? null,
+                }
+              : {}),
             ...(briefStatus === "present" ? { taskFile: file } : {}),
           },
           true,
@@ -304,7 +331,29 @@ function registerTaskInspectionCommand(program: Command, task: Command): void {
         throw new Error(
           "Task brief is missing; use task show UUID --json to read the validated saved recipe. No history was rewritten.",
         )
-      else process.stdout.write(await readFile(file, "utf8"))
+      else {
+        const brief = await readFile(file, "utf8")
+        const bundle = await inspectTaskBundle(config.vault.path, id)
+        const parent = record.parentTaskId
+          ? await inspectTaskBundle(config.vault.path, record.parentTaskId)
+          : undefined
+        const describe = (title: string, value: Awaited<ReturnType<typeof inspectTaskBundle>>) =>
+          value
+            ? [
+                ``,
+                `## ${title}`,
+                ``,
+                `Integrity: ${value.integrity}; SHA-256 ${value.hash}`,
+                ...value.files.map(
+                  (f) => `- ${f.role}: \`${f.path}\` — ${f.purpose} (SHA-256 ${f.hash})`,
+                ),
+                `- Execution and check entries are harness-reported claims; Canvas Agent did not run them.`,
+              ].join("\n")
+            : ""
+        process.stdout.write(
+          `${brief}${describe("Completed execution bundle", bundle)}${describe("Verified parent bundle (informational, not an authorized source)", parent)}`,
+        )
+      }
     })
 }
 
@@ -314,15 +363,24 @@ function registerTaskCompletionCommand(program: Command, task: Command): void {
     .hook("preAction", vaultMutation())
     .description("validate and save a candidate prep or assignment artifact")
     .argument("<id>", "task UUID")
-    .requiredOption("--file <path>", "candidate Markdown file")
+    .option("--file <path>", "candidate Markdown file")
+    .option("--manifest <path>", "execution bundle manifest JSON")
     .option("--json", "emit JSON")
     .action(async (id, options) => {
+      if (Boolean(options.file) === Boolean(options.manifest))
+        throw new Error("Provide exactly one of --file or --manifest")
       const config = await configWithEnv(program.opts().config)
-      const result = await completeTask(config.vault.path, id, options.file)
+      const result = options.manifest
+        ? await completeTaskBundle(config.vault.path, id, options.manifest)
+        : { ...(await completeTask(config.vault.path, id, options.file)), bundle: undefined }
       render(
-        { task: summary(result.task), output: result.output },
+        {
+          task: summary(result.task),
+          output: result.output,
+          ...(result.bundle ? { bundle: result.bundle } : {}),
+        },
         options.json,
-        `Completed task ${id}.\nSaved: ${result.output}${result.task.workbook ? `\nWorkbook: ${result.task.workbook.path}` : ""}`,
+        `Completed task ${id}.\nSaved: ${result.output}${result.task.workbook ? `\nWorkbook: ${result.task.workbook.path}` : ""}${result.bundle ? `\nBundle: ${result.bundle.path}` : ""}`,
       )
     })
 }

@@ -8,11 +8,11 @@ Canvas GET → synced vault → local course inventory
                             ├─ homework / timeline
                             └─ prep / assignment → saved task + source snapshot
                                                    ↓ coding host
-                                               candidate
+                                               candidate or file bundle
                                                    ↓ validation
-                                           versioned local artifact
-                                            ├─ revise → new task
-                                            └─ approve → local Final
+                                           versioned local artifact/bundle
+                                            ├─ revise → new task linked to bundle
+                                            └─ approve → local Final companion
 ```
 
 ## Review map
@@ -27,7 +27,7 @@ Canvas GET → synced vault → local course inventory
 | src/vault | Safe inventory, destinations, reading copies, Obsidian and local history |
 | src/tasks/authoring | Task source selection, requirements and workflow definitions |
 | src/tasks/evidence | Deliverable, answer and revision evidence |
-| src/tasks/artifacts | Task records, validation, inspection and artifact lifecycle |
+| src/tasks/artifacts | Task records, bundle snapshots, validation, inspection and artifact lifecycle |
 | src/tasks/compatibility | Historical calculation records and workbook recipe validation |
 | src/guidance | Course/assignment guidance and inactive proposals |
 | src/feedback | Private own-feedback history and read-only older snapshot formats |
@@ -63,6 +63,10 @@ Runtime modules never import development tooling.
   retains explicit compatibility exports, while production callers use the owning
   modules.
 - The coding harness owns assignment execution and artifact creation.
+  Manifest completion snapshots listed files and supplied execution/check reports
+  in a private immutable bundle. The CLI records harness claims; it does not run
+  commands or certify correctness. Approval copies only deliverables to Finals;
+  supporting files, code and logs remain in private task storage.
   tasks/compatibility rechecks historical calculation records and workbook bytes;
   old pending workbook recipes retain their original completion behavior. New
   tasks carry hostExecutionVersion and do not generate workbook companions.

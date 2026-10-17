@@ -53,6 +53,7 @@ export function taskLocations(
       vaultRoot,
       record: absolute(`${directory}/${scope === "frozen" ? "record.json" : "task.json"}`),
       handoff: absolute(`${directory}/TASK.md`),
+      workingDirectory: scope === "ordinary" ? join(vaultRoot, "_meta", "tasks", id, "work") : null,
       output: absolute(output),
       workbook: absolute(workbook),
       pathsExistenceVerified: false,

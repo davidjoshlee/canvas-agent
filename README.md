@@ -67,7 +67,10 @@ config and vault paths. If the configured vault is missing, report its location
 and ask for the correct existing path instead of creating a replacement setup.
 
 The task records its sources and instructions. Your coding agent reads it, writes
-a candidate file, then the CLI checks and saves that file as a local version.
+a candidate file or a set of related files, then the CLI checks and saves a local
+version. Use a manifest for a multi-file artifact so deliverables, supporting
+files, code and logs remain associated with the task. Approval copies deliverable
+files to a Finals companion directory; it never submits to Canvas.
 For assignments, choose `outline`, `draft`, `review` or `discuss`; each has a
 different job. Prep produces a reading synthesis and answers to posted questions.
 Use `canvas-agent --help` for command options. Commands also work as

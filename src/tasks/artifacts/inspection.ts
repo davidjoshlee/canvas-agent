@@ -5,6 +5,7 @@ import { resolve, sep } from "node:path"
 import { verifyTaskLearningHistory } from "../../feedback/history.js"
 import { assertNoSymlinks } from "../../shared/fs-safety.js"
 import type { SourceRecord, TaskRecord } from "../../shared/types.js"
+import { inspectTaskBundle } from "./bundles.js"
 import { verifyCompletedWorkbook } from "./completion.js"
 import { readTask } from "./records.js"
 
@@ -88,6 +89,7 @@ function evidenceSummary(sources: SourceRecord[]) {
 export async function inspectTask(vault: string, id: string) {
   const task = await readTask(vault, id)
   const snapshots = await auditTaskSnapshots(vault, task)
+  const bundle = await inspectTaskBundle(vault, id)
   return {
     id: task.id,
     kind: task.kind,
@@ -116,6 +118,21 @@ export async function inspectTask(vault: string, id: string) {
     excluded: task.excluded,
     snapshots,
     output: task.output ? { path: task.output, hash: task.outputHash } : null,
+    bundle: bundle ?? null,
+    ...(task.parentTaskId
+      ? {
+          parentBundle: await inspectTaskBundle(vault, task.parentTaskId).then((value) =>
+            value
+              ? {
+                  taskId: task.parentTaskId,
+                  hash: value.hash,
+                  path: value.path,
+                  integrity: value.integrity,
+                }
+              : null,
+          ),
+        }
+      : {}),
     ...(task.workbookVersion
       ? { workbookVersion: task.workbookVersion, workbook: task.workbook ?? null }
       : {}),
