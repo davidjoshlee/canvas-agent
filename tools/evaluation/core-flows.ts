@@ -269,7 +269,13 @@ export function buildCoreDogfoodFlows(input: CoreDogfoodInput): DogfoodFlow[] {
           prompt = selectAssignmentPrompt(course, journal.target.assignment)
         const taskId =
           prior?.data.taskId ??
-          (await createAssignmentTask(vault, course.code, prompt.path, "draft")).id
+          (
+            await createAssignmentTask(vault, {
+              courseQuery: course.code,
+              sourcePath: prompt.path,
+              mode: "draft",
+            })
+          ).id
         return taskOutcome(input, journal, taskId, "draft", prior)
       },
     },

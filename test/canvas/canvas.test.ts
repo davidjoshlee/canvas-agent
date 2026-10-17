@@ -129,9 +129,12 @@ describe("Canvas read-only sync", () => {
       (source) => source.canvasId === "50" && /assignment/i.test(source.type),
     )
     if (!prompt || !extracted) throw new Error("Expected synthetic prompt and slide sidecar")
-    const task = await createAssignmentTask(vault, "CS101", prompt.path, "outline", undefined, [
-      sidecar,
-    ])
+    const task = await createAssignmentTask(vault, {
+      courseQuery: "CS101",
+      sourcePath: prompt.path,
+      mode: "outline",
+      contextPaths: [sidecar],
+    })
     expect(task.sources.find((source) => source.path === sidecar)).toMatchObject({
       originalPath: original,
       originalHash: extracted.originalHash,
@@ -176,7 +179,11 @@ describe("Canvas read-only sync", () => {
     if (!prompt) throw new Error("Missing synthetic synced prompt")
     expect(prompt.text).toContain("Group category: 7")
     expect(prompt.text).not.toContain("Group category: 99")
-    const task = await createAssignmentTask(vault, "CS101", prompt.path, "outline")
+    const task = await createAssignmentTask(vault, {
+      courseQuery: "CS101",
+      sourcePath: prompt.path,
+      mode: "outline",
+    })
     expect(task.assignment?.groupCategoryId).toBe("7")
     expect(calls.some((path) => /group_categories|groups|users/.test(path))).toBe(false)
   })
@@ -575,7 +582,11 @@ describe("Canvas read-only sync", () => {
     expect(modules.map((source) => source.modulePosition).sort()).toEqual([1, 2, 3])
     const prompt = course.sources.find((source) => source.canvasId === "50")
     if (!prompt) throw new Error("Synthetic prompt missing")
-    const task = await createAssignmentTask(vault, "CS101", prompt.path, "outline")
+    const task = await createAssignmentTask(vault, {
+      courseQuery: "CS101",
+      sourcePath: prompt.path,
+      mode: "outline",
+    })
     expect(task.sources.some((source) => source.text.includes("preceding theory reading"))).toBe(
       true,
     )

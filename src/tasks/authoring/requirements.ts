@@ -29,16 +29,28 @@ export function needsPrepStructureVersion(guidance: SourceRecord[]): boolean {
 }
 
 /** Resolve only explicitly declared brief headings and plainly enumerated questions. */
-export function resolveRequirements(
-  kind: "prep" | "assignment",
-  mode: "outline" | "draft" | "review" | "discuss" | undefined,
-  sources: SourceRecord[],
-  guidance: SourceRecord[],
-  parserVersion: 1 | 2 = 2,
-  deliverable?: DeliverableEvidence,
-  assignmentStructureVersion?: 1,
-  prepStructureVersion?: 1,
-): ResolvedRequirements {
+export interface ResolveRequirementsOptions {
+  kind: "prep" | "assignment"
+  mode?: "outline" | "draft" | "review" | "discuss"
+  sources: SourceRecord[]
+  guidance: SourceRecord[]
+  parserVersion?: 1 | 2
+  deliverable?: DeliverableEvidence
+  assignmentStructureVersion?: 1
+  prepStructureVersion?: 1
+}
+
+export function resolveRequirements(options: ResolveRequirementsOptions): ResolvedRequirements {
+  const {
+    kind,
+    mode,
+    sources,
+    guidance,
+    parserVersion = 2,
+    deliverable,
+    assignmentStructureVersion,
+    prepStructureVersion,
+  } = options
   const prep = kind === "prep"
   if (prepStructureVersion && !prep) throw new Error("Prep structure recipe requires prep mode")
   let headings = prep

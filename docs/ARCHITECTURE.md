@@ -27,7 +27,7 @@ Canvas GET → synced vault → local course inventory
 | src/vault | Safe inventory, destinations, reading copies, Obsidian and local history |
 | src/tasks/authoring | Task source selection, requirements and workflow definitions |
 | src/tasks/evidence | Deliverable, answer and revision evidence |
-| src/tasks/artifacts | Task records, bundle snapshots, validation, inspection and artifact lifecycle |
+| src/tasks/artifacts | Task records, shared completion claims, bundle snapshots, validation, inspection and artifact lifecycle |
 | src/tasks/compatibility | Historical calculation records and workbook recipe validation |
 | src/guidance | Course/assignment guidance and inactive proposals |
 | src/feedback | Private own-feedback history and read-only older snapshot formats |
@@ -53,24 +53,32 @@ Runtime modules never import development tooling.
 - canvas/client owns GET transport, origin restrictions, retries, pagination and
   safe downloads. Fetch, DNS and sleep dependencies belong to each client instance;
   the CLI accepts a client factory for synthetic tests without process-global setters.
-- Sync owns account/allowlist checks and hash-based write ownership. Sync and
-  onboarding call the same synchronization implementation. Authentication
-  failures include renewal steps in the command error.
+- Sync owns account/allowlist checks and hash-based write ownership. The
+  canvas/sync-ownership module resolves which local bytes are owned by Canvas;
+  sync and onboarding call the same synchronization implementation.
+  Authentication failures include renewal steps in the command error.
 - Vault inventory provides safe course text and explicit exclusions, without a DB.
 - tasks/authoring owns evidence selection, requirements, workflow definitions and
   new task handoffs. tasks/artifacts validates persisted identity and older formats,
   inspects snapshots, and owns validated versioned writes and approval. tasks/store
   retains explicit compatibility exports, while production callers use the owning
   modules.
+- Assignment selection inspects only the explicitly chosen course, including
+  the convenience draft selector. Task creation handoffs share one formatter.
 - The coding harness owns assignment execution and artifact creation.
   Manifest completion snapshots listed files and supplied execution/check reports
   in a private immutable bundle. The CLI records harness claims; it does not run
   commands or certify correctness. Approval copies only deliverables to Finals;
   supporting files, code and logs remain in private task storage.
-  tasks/compatibility rechecks historical calculation records and workbook bytes;
+  completion-intent arbitrates competing file and bundle writes. The shared
+  artifact verification path checks task identity, evidence bindings and saved
+  bytes before publication. tasks/compatibility rechecks historical calculation
+  records and workbook bytes;
   old pending workbook recipes retain their original completion behavior. New
   tasks carry hostExecutionVersion and do not generate workbook companions.
-  tasks/evidence captures deliverable, answer and revision evidence.
+  tasks/evidence captures deliverable, answer and revision evidence. New prep
+  tasks do not use a lexical answer gate; old flagged requirements remain part
+  of their saved workflows and are still read as written.
 - Shared instructions come from one CLI contract; task workflow instructions come
   from tasks/authoring/workflows.ts. Saved older recipes are not silently regenerated.
 - shared/fs-safety owns normalized vault paths, bounded regular-file reads,

@@ -55,6 +55,14 @@ export function taskMarkdownPath(config: ToolkitConfig, id: string): string {
   return join(config.vault.path, "_meta", "tasks", id, "TASK.md")
 }
 
+export function taskCreationHandoff(config: ToolkitConfig, task: TaskRecord) {
+  return {
+    ...summary(task),
+    taskFile: taskMarkdownPath(config, task.id),
+    workingDirectory: join(config.vault.path, "_meta", "tasks", task.id, "work"),
+  }
+}
+
 export function render(value: unknown, json: boolean, human: string): void {
   if (json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
   else process.stdout.write(`${human}\n`)

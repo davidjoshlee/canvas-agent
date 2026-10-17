@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { afterEach, expect, it } from "vitest"
-import { harnessCalculations } from "../helpers/harness-calculations.js"
+import { harnessCalculationsFromFile } from "../helpers/harness-calculations.js"
 
 const roots: string[] = []
 afterEach(async () => {
@@ -86,11 +86,7 @@ it.each([
       created.id,
     )
     await writeFile(candidate, text)
-    const calculations = harnessCalculations(
-      mode === "ordinary"
-        ? ["calculate", "--file", batch]
-        : ["simulate", "task", "calculate", created.id, "--file", batch],
-    )
+    const calculations = harnessCalculationsFromFile(batch)
     expect(calculations.length).toBeGreaterThan(0)
     expect(await readFile(recipePath)).toEqual(recipeBytes)
     const args =

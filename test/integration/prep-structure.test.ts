@@ -65,16 +65,13 @@ describe("versioned prep structure recipe", () => {
       "GSB-101/Week/reading.md",
       "## Preparation questions\n1. What drives pricing?",
     )
-    const resolved = resolveRequirements(
-      "prep",
-      undefined,
-      [reading],
-      [guide],
-      2,
-      undefined,
-      undefined,
-      1,
-    )
+    const resolved = resolveRequirements({
+      kind: "prep",
+      sources: [reading],
+      guidance: [guide],
+      parserVersion: 2,
+      prepStructureVersion: 1,
+    })
     expect(resolved.sections).toEqual([
       "Overview",
       "Framework analysis",
@@ -86,19 +83,16 @@ describe("versioned prep structure recipe", () => {
 
   it("keeps unflagged parsing unchanged and rejects unsafe or oversized declarations", () => {
     expect(
-      resolveRequirements(
-        "prep",
-        undefined,
-        [],
-        [source("g.md", "## Assignment structure\nGraded submission")],
-        2,
-        undefined,
-        undefined,
-        1,
-      ).sections,
+      resolveRequirements({
+        kind: "prep",
+        sources: [],
+        guidance: [source("g.md", "## Assignment structure\nGraded submission")],
+        parserVersion: 2,
+        prepStructureVersion: 1,
+      }).sections,
     ).toContain("Reading synthesis")
     const plain = source("g.md", "## Brief structure\nOverview, Framework analysis")
-    expect(resolveRequirements("prep", undefined, [], [plain]).sections).toEqual([
+    expect(resolveRequirements({ kind: "prep", sources: [], guidance: [plain] }).sections).toEqual([
       "Overview",
       "Reading synthesis",
       "Key concepts",
@@ -107,29 +101,23 @@ describe("versioned prep structure recipe", () => {
       "Sources",
     ])
     expect(() =>
-      resolveRequirements(
-        "prep",
-        undefined,
-        [],
-        [source("g.md", "## Brief structure\nOverview, <script>")],
-        2,
-        undefined,
-        undefined,
-        1,
-      ),
+      resolveRequirements({
+        kind: "prep",
+        sources: [],
+        guidance: [source("g.md", "## Brief structure\nOverview, <script>")],
+        parserVersion: 2,
+        prepStructureVersion: 1,
+      }),
     ).toThrow(/unsafe or exceeds bounds/)
     const tooMany = Array.from({ length: 41 }, (_, i) => `Section ${i + 1}`).join("\n")
     expect(() =>
-      resolveRequirements(
-        "prep",
-        undefined,
-        [],
-        [source("g.md", `## Brief structure\n${tooMany}`)],
-        2,
-        undefined,
-        undefined,
-        1,
-      ),
+      resolveRequirements({
+        kind: "prep",
+        sources: [],
+        guidance: [source("g.md", `## Brief structure\n${tooMany}`)],
+        parserVersion: 2,
+        prepStructureVersion: 1,
+      }),
     ).toThrow(/exceeds 40 headings/)
   })
 

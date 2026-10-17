@@ -5,8 +5,9 @@ import { resolve, sep } from "node:path"
 import { verifyTaskLearningHistory } from "../../feedback/history.js"
 import { assertNoSymlinks } from "../../shared/fs-safety.js"
 import type { SourceRecord, TaskRecord } from "../../shared/types.js"
+import { readVerifiedBundle } from "./bundle-store.js"
 import { inspectTaskBundle } from "./bundles.js"
-import { verifyCompletedWorkbook } from "./completion.js"
+import { readSavedCompletedOutput, verifyCompletedWorkbook } from "./completion.js"
 import { readTask } from "./records.js"
 
 const MAX_EVIDENCE = 5 * 1024 * 1024
@@ -89,7 +90,9 @@ function evidenceSummary(sources: SourceRecord[]) {
 export async function inspectTask(vault: string, id: string) {
   const task = await readTask(vault, id)
   const snapshots = await auditTaskSnapshots(vault, task)
-  const bundle = await inspectTaskBundle(vault, id)
+  const verified =
+    task.status === "completed" ? await readSavedCompletedOutput(vault, id) : undefined
+  const bundle = verified ? verified.bundle : await inspectTaskBundle(vault, id)
   return {
     id: task.id,
     kind: task.kind,
@@ -142,6 +145,7 @@ export async function inspectTask(vault: string, id: string) {
 
 export async function readOutput(vault: string, task: TaskRecord): Promise<string | undefined> {
   if (!task.output || !task.outputHash) return undefined
+  await readVerifiedBundle(vault, task.id, task)
   const target = resolve(vault, task.output)
   const destination = resolve(vault, task.destination)
   if (!within(destination, target)) throw new Error("Task output is outside its destination")

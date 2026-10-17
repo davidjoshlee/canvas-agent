@@ -25,5 +25,6 @@ Resume or inspect existing records rather than creating replacements.
 The installed CLI retains `simulate` capture/replay and task operations under
 `src/simulation`, including read-only retrieval of existing completed outputs.
 Private course feedback and older learning-history readers remain in `src/feedback`.
-The legacy `cost report` journal slot is skipped without reopening exports.
-Earlier checkpoints retain their recorded bytes; resume does not reverify billing.
+New dogfood journals omit the host-owned cost-report step. The version 1 reader
+preserves old run IDs and resumes their tenth slot as skipped without reopening
+historical exports.

@@ -14,7 +14,7 @@ export async function initializeAssignmentGuidance(
   sourcePath: string,
 ) {
   const root = resolve(vault)
-  const context = await inspectWorkspace(root)
+  const context = await inspectWorkspace(root, { course: query })
   if (context.diagnostics?.some((item) => item.code === "workspace.course_mappings_unavailable"))
     throw new Error("Course mappings are unsafe; inspect them before creating guidance")
   const course = selectCourse(context, query)

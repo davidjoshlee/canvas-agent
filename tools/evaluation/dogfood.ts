@@ -30,9 +30,9 @@ export const dogfoodFlowNames = [
   "approve",
   "token-renewal alert",
   "gaps re-check",
-  "cost report",
 ] as const
-const flowNameSchema = z.enum(dogfoodFlowNames)
+const legacyDogfoodFlowNames = [...dogfoodFlowNames, "cost report"] as const
+const flowNameSchema = z.enum(legacyDogfoodFlowNames)
 const targetSchema = z
   .object({
     course: z.string().min(1).max(200),
@@ -53,7 +53,7 @@ const resultSchema = z
   .strict()
 const journalSchema = z
   .object({
-    version: z.literal(1),
+    version: z.union([z.literal(1), z.literal(2)]),
     id: z.string().uuid(),
     startedAt: z.string().datetime(),
     target: targetSchema,
@@ -61,14 +61,15 @@ const journalSchema = z
   })
   .strict()
   .superRefine((record, ctx) => {
-    if (record.flows.some((flow, index) => flow.name !== dogfoodFlowNames[index]))
-      ctx.addIssue({ code: "custom", message: "Dogfood results must preserve the ten-flow order" })
+    const names = record.version === 1 ? legacyDogfoodFlowNames : dogfoodFlowNames
+    if (record.flows.some((flow, index) => flow.name !== names[index]))
+      ctx.addIssue({ code: "custom", message: "Dogfood results must preserve their flow order" })
   })
 export type DogfoodTarget = z.infer<typeof targetSchema>
 export type DogfoodResult = z.infer<typeof resultSchema>
 export type DogfoodJournal = z.infer<typeof journalSchema>
 export interface DogfoodFlow {
-  name: (typeof dogfoodFlowNames)[number]
+  name: (typeof legacyDogfoodFlowNames)[number]
   run(prior: DogfoodResult | undefined, journal: DogfoodJournal): Promise<DogfoodResult>
   // Reuse only after fresh inspection of the actual evidence. Returning false
   // forces the flow to run again; a thrown validation error fails closed.
@@ -201,7 +202,7 @@ export async function createDogfood(
   if ((await readdir(path)).length)
     throw new Error("Dogfood initialization refuses a nonempty run directory")
   const journal: DogfoodJournal = {
-    version: 1,
+    version: 2,
     id,
     startedAt: new Date().toISOString(),
     target,
@@ -217,8 +218,11 @@ export async function runDogfood(
   flows: DogfoodFlow[],
 ) {
   const target = targetSchema.parse(targetInput)
-  if (flows.length !== 10 || flows.some((flow, index) => flow.name !== dogfoodFlowNames[index]))
-    throw new Error("Dogfood requires the ten ordered concrete flows")
+  if (
+    flows.length !== dogfoodFlowNames.length ||
+    flows.some((flow, index) => flow.name !== dogfoodFlowNames[index])
+  )
+    throw new Error("Dogfood requires the nine ordered concrete flows")
   const path = directory(vault, id),
     lock = join(path, "lock")
   await assertNoSymlinks(path)
@@ -228,9 +232,32 @@ export async function runDogfood(
     const journal = await readDogfood(vault, id)
     if (JSON.stringify(journal.target) !== JSON.stringify(target))
       throw new Error("Dogfood target does not match the saved run")
+    // Version 1 runs retain their historical tenth checkpoint and ID. New runs
+    // use version 2 and omit the permanently skipped host-cost slot.
+    const runFlows: DogfoodFlow[] =
+      journal.version === 1
+        ? [
+            ...flows,
+            {
+              name: "cost report",
+              async validate(result) {
+                return result.status === "skipped" && result.data.owner === "host"
+              },
+              async run() {
+                return {
+                  name: "cost report",
+                  status: "skipped",
+                  evidence: "Usage and billing belong to the selected coding host",
+                  nextSteps: "",
+                  data: { owner: "host" },
+                }
+              },
+            },
+          ]
+        : flows
     let sequence = (await checkpoints(path)).length
-    for (let index = 0; index < flows.length; index++) {
-      const flow = flows[index],
+    for (let index = 0; index < runFlows.length; index++) {
+      const flow = runFlows[index],
         prior = journal.flows[index]
       if (!flow) throw new Error("Dogfood flow is missing")
       let result: DogfoodResult

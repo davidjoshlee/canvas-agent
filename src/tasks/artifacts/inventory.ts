@@ -14,7 +14,7 @@ export async function listCourseTasks(
 ) {
   if (status !== undefined && status !== "pending" && status !== "completed")
     throw new Error("Task status must be pending or completed")
-  const course = selectCourse(await inspectWorkspace(vault), query)
+  const course = selectCourse(await inspectWorkspace(vault, { course: query }), query)
   const directory = join(resolve(vault), "_meta/tasks")
   await assertNoSymlinks(directory, true)
   const entries = await readdir(directory, { withFileTypes: true }).catch((error: unknown) => {

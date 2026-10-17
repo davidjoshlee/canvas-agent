@@ -1,11 +1,11 @@
-import { readFile, realpath } from "node:fs/promises"
+import { realpath } from "node:fs/promises"
 import { resolve } from "node:path"
 import { z } from "zod"
 import { AssignmentDatesSchema } from "../../canvas/assignment-dates.js"
 import { groupCategoryFromPrompt } from "../../canvas/assignment-group.js"
 import { LearningHistorySchema, learningHistoryInstruction } from "../../feedback/history.js"
 import { selectTaskGuidance } from "../../guidance/selection.js"
-import { vaultPath } from "../../shared/fs-safety.js"
+import { readBoundedFile, vaultPath } from "../../shared/fs-safety.js"
 import type { CourseContext, TaskRecord } from "../../shared/types.js"
 import { productDestination } from "../../vault/destinations.js"
 import {
@@ -397,13 +397,13 @@ function resolveSavedRequirements(task: SavedTask, legacyWorkflow: boolean) {
   const parserVersion = legacyWorkflow
     ? (task.parserVersion ?? 1)
     : (recipes.find((version) => {
-        const candidate = resolveRequirements(
-          task.kind,
-          task.assignment?.mode,
-          task.sources,
-          task.guidance,
-          version,
-        )
+        const candidate = resolveRequirements({
+          kind: task.kind,
+          mode: task.assignment?.mode,
+          sources: task.sources,
+          guidance: task.guidance,
+          parserVersion: version,
+        })
         return JSON.stringify(candidate.questions) === JSON.stringify(task.questions ?? [])
       }) ??
       task.parserVersion ??
@@ -414,16 +414,16 @@ function resolveSavedRequirements(task: SavedTask, legacyWorkflow: boolean) {
         questions: [],
         guidanceInstructions: [],
       }
-    : resolveRequirements(
-        task.kind,
-        task.assignment?.mode,
-        task.sources,
-        task.guidance,
+    : resolveRequirements({
+        kind: task.kind,
+        mode: task.assignment?.mode,
+        sources: task.sources,
+        guidance: task.guidance,
         parserVersion,
-        task.deliverable,
-        task.assignmentStructureVersion,
-        task.prepStructureVersion,
-      )
+        deliverable: task.deliverable,
+        assignmentStructureVersion: task.assignmentStructureVersion,
+        prepStructureVersion: task.prepStructureVersion,
+      })
   return derived
 }
 
@@ -438,18 +438,18 @@ function validateSavedWorkflow(task: SavedTask): boolean {
       }
     : legacyWorkflow
       ? workflowFor(task.kind, task.assignment?.mode)
-      : workflowForRequirements(
-          task.kind,
-          task.assignment?.mode,
-          derived.sections,
-          derived.questions,
-          derived.guidanceInstructions,
-          task.workflow?.version === 3 ? 3 : 2,
-          task.deliverable,
-          task.assignmentStructureVersion,
-          task.answerEvidenceVersion,
-          task.hostExecutionVersion,
-        )
+      : workflowForRequirements({
+          kind: task.kind,
+          mode: task.assignment?.mode,
+          sections: derived.sections,
+          questions: derived.questions,
+          guidanceInstructions: derived.guidanceInstructions,
+          version: task.workflow?.version === 3 ? 3 : 2,
+          deliverable: task.deliverable,
+          assignmentStructureVersion: task.assignmentStructureVersion,
+          answerEvidenceVersion: task.answerEvidenceVersion,
+          hostExecutionVersion: task.hostExecutionVersion,
+        })
   if (!legacyWorkflow && task.parentTaskId && task.assignment?.mode === "draft")
     authoritative = {
       ...authoritative,
@@ -708,7 +708,7 @@ export async function readTask(vault: string, id: string): Promise<TaskRecord> {
   if (!isWithin(vaultReal, fileReal)) throw new Error("Task file escapes the vault")
   let parsed: unknown
   try {
-    parsed = JSON.parse(await readFile(path, "utf8"))
+    parsed = JSON.parse((await readBoundedFile(path, 50 * 1024 * 1024)).toString("utf8"))
   } catch {
     throw new Error("Task record is missing or invalid JSON")
   }

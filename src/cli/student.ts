@@ -144,7 +144,7 @@ function registerGuidanceProposals(program: Command, guidance: Command): void {
     .option("--json", "emit metadata-only JSON")
     .action(async (query: string, options: { json?: boolean; feedbackAssignment: string[] }) => {
       const config = await localConfig(program.opts<RootOptions>().config)
-      const context = await inspectWorkspace(config.vault.path)
+      const context = await inspectWorkspace(config.vault.path, { course: query })
       const course = selectCourse(context, query)
       const result = await proposeGuidance(
         config.vault.path,
@@ -229,7 +229,10 @@ function registerCalendarCommands(program: Command): void {
       if (!isAbsolute(options.file)) throw new Error("ICS destination path must be absolute")
       const days = boundedDays(options.days)
       const config = await localConfig(program.opts<RootOptions>().config)
-      const context = await inspectWorkspace(config.vault.path)
+      const context = await inspectWorkspace(
+        config.vault.path,
+        options.course ? { course: options.course } : {},
+      )
       const result = await readUpcoming(config.vault.path, context, {
         days,
         course: options.course,
@@ -257,7 +260,7 @@ function registerUpcomingCommand(program: Command): void {
       const config = await localConfig(program.opts<RootOptions>().config)
       const result = await readUpcoming(
         config.vault.path,
-        await inspectWorkspace(config.vault.path),
+        await inspectWorkspace(config.vault.path, options.course ? { course: options.course } : {}),
         { days: boundedDays(options.days), course: options.course },
       )
       const lines = [

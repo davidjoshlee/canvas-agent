@@ -17,7 +17,9 @@ import {
 } from "../tasks/authoring/recipes.js"
 import { resolveRequirements } from "../tasks/authoring/requirements.js"
 import {
+  currentWorkflowRecipe,
   groupAssignmentInstruction,
+  savedWorkflowRecipe,
   workflowForRequirements,
 } from "../tasks/authoring/workflows.js"
 import {
@@ -280,16 +282,16 @@ function resolveFrozenRequirements(
         deliverableParserVersion,
       )
     : undefined
-  const resolved = resolveRequirements(
-    options.kind,
-    options.mode,
-    sources,
-    guidance,
-    2,
-    deliverable,
-    assignmentStructureVersion,
-    prepStructureVersion,
-  )
+  const resolved = resolveRequirements({
+    kind: options.kind,
+    mode: options.mode,
+    sources: sources,
+    guidance: guidance,
+    parserVersion: 2,
+    deliverable: deliverable,
+    assignmentStructureVersion: assignmentStructureVersion,
+    prepStructureVersion: prepStructureVersion,
+  })
   return { deliverable, resolved }
 }
 
@@ -317,6 +319,38 @@ function buildFrozenTask(
     answerEvidenceVersion,
   } = recipe
   const { deliverable, resolved } = resolveFrozenRequirements(recipe, options, sources, guidance)
+  const workflowRecipe = {
+    kind: options.kind,
+    mode: options.mode,
+    sections: resolved.sections,
+    questions: resolved.questions,
+    guidanceInstructions: resolved.guidanceInstructions,
+    deliverable,
+    assignmentStructureVersion,
+    answerEvidenceVersion,
+    hostExecutionVersion,
+  } as const
+  const workflow =
+    workflowVersion === 3 && hostExecutionVersion === 1 && !answerEvidenceVersion
+      ? workflowForRequirements(currentWorkflowRecipe(workflowRecipe))
+      : workflowForRequirements(
+          savedWorkflowRecipe(
+            {
+              kind: workflowRecipe.kind,
+              mode: workflowRecipe.mode,
+              sections: workflowRecipe.sections,
+              questions: workflowRecipe.questions,
+              guidanceInstructions: workflowRecipe.guidanceInstructions,
+              deliverable: workflowRecipe.deliverable,
+            },
+            {
+              workflowVersion,
+              assignmentStructureVersion,
+              answerEvidenceVersion,
+              hostExecutionVersion,
+            },
+          ),
+        )
   const groupCategoryId = groupScopeVersion
     ? groupCategoryFromPrompt(sources.find((source) => source.path === options.source)?.text ?? "")
     : undefined
@@ -362,18 +396,7 @@ function buildFrozenTask(
     excluded: replay.excluded,
     questions: resolved.questions,
     requirements: resolved.sections,
-    workflow: workflowForRequirements(
-      options.kind,
-      options.mode,
-      resolved.sections,
-      resolved.questions,
-      resolved.guidanceInstructions,
-      workflowVersion ?? 2,
-      deliverable,
-      assignmentStructureVersion,
-      answerEvidenceVersion,
-      hostExecutionVersion,
-    ),
+    workflow,
     notices: frozenTaskNotices(recipe, options.kind, replay.limitation),
   }
   if (groupCategoryId)
@@ -502,7 +525,6 @@ export async function createSimulationTask(vault: string, simulationId: string, 
           ? 1
           : undefined,
       deliverableParserVersion: 3,
-      answerEvidenceVersion: options.kind === "prep" ? 1 : undefined,
     },
   )
   const serialized = JSON.stringify(record)

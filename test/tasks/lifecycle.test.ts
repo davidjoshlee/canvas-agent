@@ -55,7 +55,11 @@ async function setup() {
 async function completedDraft(extra = "") {
   const prompt = course.sources[0]
   if (!prompt) throw new Error("Fixture prompt is missing")
-  const task = await createLegacyAssignmentTask(vault, "GSB-101", prompt.path, "draft")
+  const task = await createLegacyAssignmentTask(vault, {
+    courseQuery: "GSB-101",
+    sourcePath: prompt.path,
+    mode: "draft",
+  })
   const body = task.requirements
     .map((heading) =>
       heading === "Sources"
@@ -103,7 +107,7 @@ describe("assignment lifecycle", () => {
     const report = await readFile(join(vault, gate.path), "utf8")
     expect(report).toContain(left.task.workbook?.hash)
     expect(report).toContain(left.task.workbook?.path)
-    expect(report).toContain("Explicit workbook-command artifacts are not inventoried")
+    expect(report).toContain("Scope: automatic-completion-companion-only; state: verified.")
     const original = await readFile(join(vault, left.task.workbook?.path ?? "missing"))
     const before = await readdir(join(vault, left.task.destination))
     await writeFile(join(vault, left.task.workbook?.path ?? "missing"), "changed companion")
@@ -145,12 +149,11 @@ describe("assignment lifecycle", () => {
     expect(
       (await compareTasks(vault, withBook.task.id, empty.task.id)).automaticWorkbooks.change,
     ).toBe("removed")
-    const pending = await createLegacyAssignmentTask(
-      vault,
-      "GSB-101",
-      course.sources[0]?.path ?? "missing",
-      "draft",
-    )
+    const pending = await createLegacyAssignmentTask(vault, {
+      courseQuery: "GSB-101",
+      sourcePath: course.sources[0]?.path ?? "missing",
+      mode: "draft",
+    })
     expect((await compareTasks(vault, pending.id, empty.task.id)).automaticWorkbooks).toMatchObject(
       { before: { state: "pending" }, change: "unknown" },
     )
@@ -170,7 +173,11 @@ describe("assignment lifecycle", () => {
   it("recovers a paired interrupted completion without replacing protected workbook versions", async () => {
     await setup()
     const prompt = course.sources[0]?.path ?? "missing"
-    const task = await createLegacyAssignmentTask(vault, "GSB-101", prompt, "draft")
+    const task = await createLegacyAssignmentTask(vault, {
+      courseQuery: "GSB-101",
+      sourcePath: prompt,
+      mode: "draft",
+    })
     const text = `Task: ${task.id}\n\n${task.requirements.map((heading) => `## ${heading}\n${heading === "Sources" ? `\`${prompt}\`` : "Synthetic grounded structural response."}`).join("\n\n")}\n\n### Schedule\n| Label | Value |\n| --- | --- |\n| Cash | 500 |\n`
     await writeFile(candidate, text)
     const destination = join(vault, task.destination)
@@ -189,7 +196,11 @@ describe("assignment lifecycle", () => {
     expect(recovered.task.workbook?.path).toBe(output.replace(/\.md$/, ".xlsx"))
     expect(await readFile(protectedPath, "utf8")).toBe("student-owned workbook")
     expect((await completeTask(vault, task.id, candidate)).output).toBe(output)
-    const next = await createLegacyAssignmentTask(vault, "GSB-101", prompt, "draft")
+    const next = await createLegacyAssignmentTask(vault, {
+      courseQuery: "GSB-101",
+      sourcePath: prompt,
+      mode: "draft",
+    })
     await writeFile(candidate, text.replace(task.id, next.id))
     const fresh = await completeTask(vault, next.id, candidate)
     expect(fresh.output).toBe(`${task.destination}/01 Assignment Draft.v3.md`)
@@ -200,7 +211,11 @@ describe("assignment lifecycle", () => {
   it("does not retrofit workbook behavior into coherent older draft records", async () => {
     await setup()
     const prompt = course.sources[0]?.path ?? "missing"
-    const task = await createLegacyAssignmentTask(vault, "GSB-101", prompt, "draft")
+    const task = await createLegacyAssignmentTask(vault, {
+      courseQuery: "GSB-101",
+      sourcePath: prompt,
+      mode: "draft",
+    })
     const recordPath = join(vault, "_meta/tasks", task.id, "task.json")
     const older = JSON.parse(await readFile(recordPath, "utf8"))
     delete older.workbookVersion

@@ -240,6 +240,24 @@ it("saves an immutable, inspectable bundle and approval delivers only declared d
   expect(await readdir(finals)).toEqual(finalNames)
 })
 
+it("refuses review gate evaluation when a registered companion has changed", async () => {
+  const f = await fixture()
+  const completed = f.ok<{ bundle: BundleSummary }>([
+    "task",
+    "complete",
+    f.created.id,
+    "--manifest",
+    f.manifestPath,
+  ])
+  const gate = f.ok<{ path: string; bundle: BundleSummary }>(["gate", "review", f.created.id])
+  expect(gate.bundle?.hash).toBe(completed.bundle.hash)
+  const companion = join(f.vault, "_meta/tasks", f.created.id, "bundle/files/model.xlsx")
+  await writeFile(companion, "changed companion bytes")
+  const rejected = f.cli(["gate", "review", f.created.id])
+  expect(rejected.status).toBe(1)
+  expect(rejected.stderr).toMatch(/bundle file integrity|modified/i)
+})
+
 it("makes identical retries byte-stable and rejects a changed bundle after completion", async () => {
   const f = await fixture()
   const args = ["task", "complete", f.created.id, "--manifest", f.manifestPath]

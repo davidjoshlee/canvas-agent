@@ -29,6 +29,7 @@ import {
 import { needsPrepStructureVersion, resolveRequirements } from "./requirements.js"
 import {
   type AssignmentMode,
+  currentWorkflowRecipe,
   groupAssignmentInstruction,
   revisionEditsInstruction,
   workflowFor,
@@ -175,27 +176,22 @@ function validateAssignmentRequest(
 function buildPrepWorkflow(selected: SourceRecord[], guidance: SourceRecord[]) {
   const deliverable = captureTaskDeliverable("prep", undefined, selected, guidance, undefined, 3)
   const prepStructureVersion = needsPrepStructureVersion(guidance) ? (1 as const) : undefined
-  const resolved = resolveRequirements(
-    "prep",
-    undefined,
-    selected,
+  const resolved = resolveRequirements({
+    kind: "prep",
+    sources: selected,
     guidance,
-    2,
+    parserVersion: 2,
     deliverable,
-    undefined,
     prepStructureVersion,
-  )
+  })
   const workflow = workflowForRequirements(
-    "prep",
-    undefined,
-    resolved.sections,
-    resolved.questions,
-    resolved.guidanceInstructions,
-    3,
-    deliverable,
-    undefined,
-    1,
-    1,
+    currentWorkflowRecipe({
+      kind: "prep",
+      sections: resolved.sections,
+      questions: resolved.questions,
+      guidanceInstructions: resolved.guidanceInstructions,
+      deliverable,
+    }),
   )
   return { deliverable, prepStructureVersion, resolved, workflow }
 }
@@ -217,26 +213,25 @@ function buildAssignmentWorkflow(
     1,
     3,
   )
-  const requirements = resolveRequirements(
-    "assignment",
+  const requirements = resolveRequirements({
+    kind: "assignment",
     mode,
-    selected.sources,
-    selected.guidance,
-    2,
+    sources: selected.sources,
+    guidance: selected.guidance,
+    parserVersion: 2,
     deliverable,
-    mode === "draft" ? 1 : undefined,
-  )
+    assignmentStructureVersion: mode === "draft" ? 1 : undefined,
+  })
   const workflow = workflowForRequirements(
-    "assignment",
-    mode,
-    requirements.sections,
-    requirements.questions,
-    requirements.guidanceInstructions,
-    3,
-    deliverable,
-    mode === "draft" ? 1 : undefined,
-    undefined,
-    1,
+    currentWorkflowRecipe({
+      kind: "assignment",
+      mode,
+      sections: requirements.sections,
+      questions: requirements.questions,
+      guidanceInstructions: requirements.guidanceInstructions,
+      deliverable,
+      assignmentStructureVersion: mode === "draft" ? 1 : undefined,
+    }),
   )
   if (revision)
     workflow.instructions.push(
@@ -292,7 +287,7 @@ export async function createPrepTask(
         }
   if (!selectedPeriod.value) throw new Error("Session selector cannot be empty")
   const week = selectedPeriod.kind === "week" ? mondayDate(selectedPeriod.value) : undefined
-  const context = await inspectWorkspace(resolve(vault))
+  const context = await inspectWorkspace(resolve(vault), { course: courseQuery })
   if (context.diagnostics?.some((item) => item.code === "workspace.course_mappings_unavailable"))
     throw new Error(
       "Course mappings are unsafe; inspect them before creating a new task or changing product destinations",
@@ -344,7 +339,6 @@ export async function createPrepTask(
     guidanceSelectionVersion: 1,
     prepSelectionVersion: 2,
     ...(prepStructureVersion ? { prepStructureVersion } : {}),
-    answerEvidenceVersion: 1,
     status: "pending",
     createdAt: now.toISOString(),
     course: { code: course.code, title: course.title, root: course.root },
@@ -363,19 +357,32 @@ export async function createPrepTask(
   return finalizeNewTask(context.vault, course, record, workflow)
 }
 
+export interface CreateAssignmentTaskOptions {
+  courseQuery: string
+  sourcePath: string
+  mode: string
+  workPath?: string
+  contextPaths?: string[]
+  revision?: AssignmentRevision
+  discussionMessage?: string
+}
+
 export async function createAssignmentTask(
   vault: string,
-  courseQuery: string,
-  sourcePath: string,
-  modeValue: string,
-  workPath?: string,
-  contextPaths: string[] = [],
-  revision?: AssignmentRevision,
-  discussionMessage?: string,
+  options: CreateAssignmentTaskOptions,
 ): Promise<TaskRecord> {
+  const {
+    courseQuery,
+    sourcePath,
+    mode: modeValue,
+    workPath,
+    contextPaths = [],
+    revision,
+    discussionMessage,
+  } = options
   const mode = validateAssignmentRequest(modeValue, workPath, revision, discussionMessage)
   const normalizedWork = workPath ? relPath(workPath) : undefined
-  const workspace = await inspectWorkspace(resolve(vault))
+  const workspace = await inspectWorkspace(resolve(vault), { course: courseQuery })
   if (workspace.diagnostics?.some((item) => item.code === "workspace.course_mappings_unavailable"))
     throw new Error(
       "Course mappings are unsafe; inspect them before creating a new task or changing product destinations",
@@ -383,15 +390,14 @@ export async function createAssignmentTask(
   const course = selectCourse(workspace, courseQuery)
   if (mode === "review" && !workPath)
     throw new Error("Review mode requires --work pointing to existing student work")
-  const selected = await selectAssignmentInputs(
-    workspace.vault,
+  const selected = await selectAssignmentInputs(workspace.vault, {
     course,
     sourcePath,
-    normalizedWork,
+    ...(normalizedWork ? { workPath: normalizedWork } : {}),
     contextPaths,
-    revision?.revisionSource,
-    1,
-  )
+    ...(revision?.revisionSource ? { revisionSource: revision.revisionSource } : {}),
+    guidanceSelectionVersion: 1,
+  })
   const { prompt, groupCategoryId, deliverable, requirements, workflow, revisionEdits } =
     buildAssignmentWorkflow(mode, selected, revision, normalizedWork)
   const record: TaskRecord = {

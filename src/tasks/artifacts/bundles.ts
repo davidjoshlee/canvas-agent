@@ -11,12 +11,12 @@ import {
 import type { TaskRecord } from "../../shared/types.js"
 import {
   type BundleRecord,
-  bundleFileLocations,
   bundleRecordPath,
   bundleSnapshotPath,
   readVerifiedBundle,
   type TaskBundleManifest,
   TaskBundleManifestSchema,
+  verifiedBundleSummary,
 } from "./bundle-store.js"
 import { checkArtifactPrivacy, checkCandidate, completeTask } from "./completion.js"
 import { claimCompletionIntent } from "./completion-intent.js"
@@ -37,22 +37,7 @@ export async function inspectTaskBundle(vault: string, id: string) {
   const task = await readTask(vault, id)
   const r = await readVerified(vault, id, task)
   if (!r) return undefined
-  return {
-    taskId: id,
-    path: bundleRecordPath(id),
-    hash: r.hash,
-    manifestHash: r.manifestHash,
-    primary: r.primary,
-    files: await bundleFileLocations(vault, id, r),
-    executions: r.executions ?? [],
-    checks: r.checks ?? [],
-    integrity: "verified" as const,
-    reportedBy: "coding-harness" as const,
-  }
-}
-
-export async function verifyTaskBundle(vault: string, id: string) {
-  return readVerified(vault, id)
+  return verifiedBundleSummary(vault, id, r)
 }
 
 async function captureManifest(vault: string, id: string, manifestPath: string) {
@@ -112,7 +97,13 @@ async function captureManifest(vault: string, id: string, manifestPath: string) 
   }
   const primary = contents.find((f) => f.meta.path === manifest.primary)
   if (!primary) throw new Error("Primary Markdown response is missing")
-  checkCandidate(primary.bytes.toString("utf8"), id, task)
+  checkCandidate(
+    primary.bytes.toString("utf8"),
+    id,
+    task,
+    [],
+    contents.map(({ meta }) => meta.path),
+  )
   const snapshot = { manifest, manifestBytes, contents, manifestHash: sha(manifestBytes), hash: "" }
   snapshot.hash = sha(
     JSON.stringify({

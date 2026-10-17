@@ -183,6 +183,91 @@ async function privateText(path: string) {
   return bytes.toString()
 }
 
+type ComparisonCalculations = Awaited<ReturnType<typeof readSimulationCalculations>>
+type ComparisonWorkbooks = Awaited<ReturnType<typeof readSimulationWorkbooks>>
+type ComparisonSourceRow = { path: string; hash: string; exactCitationPresent: boolean }
+type ComparisonRubricRow = {
+  reference: string
+  criterion: string
+  literalMention: boolean
+  humanCoverage: "unscored"
+}
+
+function renderArtifactReviewSection(input: {
+  id: string
+  kind: string
+  mode: string | null
+  output: string
+  outputHash: string
+  simulationId: string
+  snapshotHash: string
+  sources: ComparisonSourceRow[]
+  rubric: ComparisonRubricRow[]
+  correctness?: string
+  calculations: ComparisonCalculations
+  workbooks: ComparisonWorkbooks
+}): string[] {
+  const {
+    id,
+    kind,
+    mode,
+    output,
+    outputHash,
+    simulationId,
+    snapshotHash,
+    sources,
+    rubric,
+    correctness,
+    calculations,
+    workbooks,
+  } = input
+  return [
+    `## ${literal(id)}: ${kind}${mode ? ` ${mode}` : ""}`,
+    `Output: ${output} (${outputHash})`,
+    `Fixed snapshot: ${simulationId} (${snapshotHash})`,
+    "",
+    "### Source citation inventory — not substantive coverage",
+    ...sources.map(
+      (source) =>
+        `- ${literal(source.path)} — exact citation present: ${source.exactCitationPresent}; source SHA-256 ${source.hash}; claim support: HUMAN REVIEW REQUIRED`,
+    ),
+    "",
+    "### Rubric criteria from explicit review-only references",
+    ...(rubric.length
+      ? rubric.map(
+          (entry) =>
+            `- ${literal(entry.criterion)} (${literal(entry.reference)}) — literal mention: ${entry.literalMention}; coverage/grade: UNSCORED`,
+        )
+      : ["No rubric criteria supplied; do not invent ground truth or assume full credit."]),
+    "",
+    "### Correctness self-review (untrusted output text)",
+    correctness
+      ? quote(correctness)
+      : "No correctness self-review found; grounding needs human inspection.",
+    "",
+    "### Arithmetic records — recomputed, not independently source-grounded",
+    `Records: ${calculations.records.length}; inventory SHA-256: ${calculations.recordsHash}; recipe SHA-256: ${calculations.recipeHash}`,
+    "These supplied inputs and results are review evidence, not proof of input grounding, historical execution time, answer coverage or academic correctness. Check inputs against the frozen materials and results against the actual output. Source links are context only.",
+    ...(calculations.records.length
+      ? calculations.records.flatMap((entry) => [
+          `Record ${entry.id}; recorded at ${entry.at} (not independently authenticated):`,
+          quote(JSON.stringify(entry.results, null, 2)),
+        ])
+      : [
+          "No arithmetic records were captured. This is not evidence that the output has no derived values or that its numbers are verified.",
+        ]),
+    "",
+    "### Workbook companions — validated values-only bytes, not academic correctness",
+    `Companions: ${workbooks.records.length}; inventory SHA-256: ${workbooks.recordsHash}`,
+    ...workbooks.records.map(
+      (entry) =>
+        `- ${literal(entry.output)} (${entry.hash}); normalized input SHA-256 ${entry.inputHash}; sheets ${entry.sheets.map(literal).join(", ")}. ${entry.automatic ? `Automatically extracted from saved candidate ${entry.automatic.candidateHash}, not a calculation.` : "Explicit values-only input, not a grounding check."} Open the private workbook and independently verify each value against frozen materials and calculations.`,
+    ),
+    "An empty captured inventory is not proof that no spreadsheet deliverable was required. Cell contents remain in private workbook and candidate/input evidence; this index does not establish grounding, completeness or historical execution. Automatic companion recipe timestamps are not execution-time evidence.",
+    "",
+  ]
+}
+
 /** Review-only comparison: never use later feedback as generation context or auto-grade quality. */
 export async function compareSimulationEvaluations(
   vaultPath: string,
@@ -311,49 +396,20 @@ export async function compareSimulationEvaluations(
       ).length,
     })
     sections.push(
-      `## ${literal(id)}: ${record.task.kind}${record.task.assignment ? ` ${record.task.assignment.mode}` : ""}`,
-      `Output: ${record.completion.output} (${record.completion.outputHash})`,
-      `Fixed snapshot: ${record.simulationId} (${record.snapshotHash})`,
-      "",
-      "### Source citation inventory — not substantive coverage",
-      ...sourceRows.map(
-        (source) =>
-          `- ${literal(source.path)} — exact citation present: ${source.exactCitationPresent}; source SHA-256 ${source.hash}; claim support: HUMAN REVIEW REQUIRED`,
-      ),
-      "",
-      "### Rubric criteria from explicit review-only references",
-      ...(rubric.length
-        ? rubric.map(
-            (entry) =>
-              `- ${literal(entry.criterion)} (${literal(entry.reference)}) — literal mention: ${entry.literalMention}; coverage/grade: UNSCORED`,
-          )
-        : ["No rubric criteria supplied; do not invent ground truth or assume full credit."]),
-      "",
-      "### Correctness self-review (untrusted output text)",
-      correctness
-        ? quote(correctness)
-        : "No correctness self-review found; grounding needs human inspection.",
-      "",
-      "### Arithmetic records — recomputed, not independently source-grounded",
-      `Records: ${calculations.records.length}; inventory SHA-256: ${calculations.recordsHash}; recipe SHA-256: ${calculations.recipeHash}`,
-      "These supplied inputs and results are review evidence, not proof of input grounding, historical execution time, answer coverage or academic correctness. Check inputs against the frozen materials and results against the actual output. Source links are context only.",
-      ...(calculations.records.length
-        ? calculations.records.flatMap((entry) => [
-            `Record ${entry.id}; recorded at ${entry.at} (not independently authenticated):`,
-            quote(JSON.stringify(entry.results, null, 2)),
-          ])
-        : [
-            "No arithmetic records were captured. This is not evidence that the output has no derived values or that its numbers are verified.",
-          ]),
-      "",
-      "### Workbook companions — validated values-only bytes, not academic correctness",
-      `Companions: ${workbooks.records.length}; inventory SHA-256: ${workbooks.recordsHash}`,
-      ...workbooks.records.map(
-        (entry) =>
-          `- ${literal(entry.output)} (${entry.hash}); normalized input SHA-256 ${entry.inputHash}; sheets ${entry.sheets.map(literal).join(", ")}. ${entry.automatic ? `Automatically extracted from saved candidate ${entry.automatic.candidateHash}, not a calculation.` : "Explicit values-only input, not a grounding check."} Open the private workbook and independently verify each value against frozen materials and calculations.`,
-      ),
-      "An empty captured inventory is not proof that no spreadsheet deliverable was required. Cell contents remain in private workbook and candidate/input evidence; this index does not establish grounding, completeness or historical execution. Automatic companion recipe timestamps are not execution-time evidence.",
-      "",
+      ...renderArtifactReviewSection({
+        id,
+        kind: record.task.kind,
+        mode: record.task.assignment?.mode ?? null,
+        output: record.completion.output,
+        outputHash: record.completion.outputHash,
+        simulationId: record.simulationId,
+        snapshotHash: record.snapshotHash,
+        sources: sourceRows,
+        rubric,
+        ...(correctness ? { correctness } : {}),
+        calculations,
+        workbooks,
+      }),
     )
   }
   if (matchedFeedback.size !== feedbackReferences.length)

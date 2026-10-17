@@ -32,11 +32,19 @@ import {
   parseArtifactVersion,
   taskArtifactBaseName,
 } from "./artifact-layout.js"
-import { readVerifiedBundle } from "./bundle-store.js"
+import { type BundleRecord, readVerifiedBundle, verifiedBundleSummary } from "./bundle-store.js"
 import { claimCompletionIntent } from "./completion-intent.js"
 import { readTask, TaskRecordSchema } from "./records.js"
 
 const digest = (value: Buffer | string) => createHash("sha256").update(value).digest("hex")
+type VerifiedCompletedArtifact = {
+  task: TaskRecord
+  output: string
+  bytes: Buffer
+  workbookBytes?: Buffer
+  bundle?: Awaited<ReturnType<typeof verifiedBundleSummary>>
+  bundleRecord?: BundleRecord
+}
 async function externalFile(path: string): Promise<Buffer> {
   const abs = resolve(path)
   await assertNoSymlinks(abs)
@@ -77,6 +85,7 @@ export function checkCandidate(
   id: string,
   task: TaskRecord,
   privateCitations: readonly string[] = [],
+  registeredArtifactPaths: readonly string[] = [],
 ): void {
   if (!text.trim()) throw new Error("Candidate is empty")
   if (!new RegExp(`^Task: ${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m").test(text))
@@ -114,6 +123,7 @@ export function checkCandidate(
   }
   checkArtifactPrivacy(text, task, privateCitations)
   const allowed = new Set([...task.sources, ...task.guidance].map((s) => s.path))
+  const allowedArtifacts = new Set(registeredArtifactPaths)
   const approvedGuidance = new Set([...task.guidance.map((s) => s.path), ...privateCitations])
   // The exact quoted inquiry is reference data, not an evidence citation. Scope
   // citation checks to the response; credential/private-path checks still cover all text.
@@ -123,9 +133,22 @@ export function checkCandidate(
         .map(([heading, body]) => `${heading}\n${body}`)
         .join("\n")
     : text
-  const inline = [...evidenceText.matchAll(/`([^`]+)`/g)].map((m) => m[1] ?? "")
-  const citations = inline.filter((v) => v.includes("/") || /\.(?:md|txt|pdf|docx?)$/i.test(v))
-  for (const citation of citations) {
+  // Backticks also mark ordinary code (`revenue / units`) and declared artifact
+  // paths. Only path-shaped tokens are candidates for evidence citations.
+  const withoutFences = (value: string) => value.replace(/(```|~~~)[\s\S]*?\1/g, "")
+  const inline = [...withoutFences(evidenceText).matchAll(/`([^`]+)`/g)].map((m) =>
+    (m[1] ?? "").trim(),
+  )
+  for (const citation of inline) {
+    if (allowed.has(citation) || allowedArtifacts.has(citation)) continue
+    // A slash can be ordinary inline code (`revenue/units`). Unknown path-like
+    // tokens with file extensions remain rejected even when names contain spaces.
+    const hasFileExtension = /\.(?:md|txt|pdf|docx?)$/i.test(citation)
+    const isInlineDivision =
+      /^[A-Za-z_$][\w$]*(?:\s*\/\s*(?:[A-Za-z_$][\w$]*|\d+(?:\.\d+)?))+$/u.test(citation)
+    const isPathLikeFile = citation.includes("/") && /\.[A-Za-z0-9]{1,10}$/.test(citation)
+    if (isInlineDivision && !hasFileExtension) continue
+    if (!hasFileExtension && !isPathLikeFile) continue
     if (
       citation.includes("..") ||
       citation.startsWith("/") ||
@@ -137,9 +160,9 @@ export function checkCandidate(
       throw new Error(`Candidate cites a private path: ${citation}`)
   }
   const sourceHeading = [...sections.keys()].find((heading) => /sources/i.test(heading))
-  const sourceSection = sourceHeading ? (sections.get(sourceHeading) ?? "") : text
+  const sourceSection = withoutFences(sourceHeading ? (sections.get(sourceHeading) ?? "") : text)
   if (
-    ![...sourceSection.matchAll(/`([^`]+)`/g)].some((m) => allowed.has(m[1] ?? "")) &&
+    ![...sourceSection.matchAll(/`([^`]+)`/g)].some((m) => allowed.has((m[1] ?? "").trim())) &&
     allowed.size > 0
   )
     throw new Error("Sources section must cite exact task source paths in backticks")
@@ -371,7 +394,7 @@ async function verifyCurrentPrep(
 
 async function verifyCurrent(vault: string, task: TaskRecord): Promise<void> {
   await assertNoSymlinks(resolve(vault))
-  const context = await inspectWorkspace(resolve(vault))
+  const context = await inspectWorkspace(resolve(vault), { course: task.course.code })
   const course = context.courses.find(
     (c) => c.code === task.course.code && c.root === task.course.root,
   )
@@ -393,7 +416,7 @@ function validateOutputReference(task: TaskRecord, output: string): void {
 async function verifyTaskDestination(vault: string, task: TaskRecord): Promise<void> {
   const period =
     task.period ?? (task.week ? { kind: "week" as const, value: task.week } : undefined)
-  const context = await inspectWorkspace(resolve(vault))
+  const context = await inspectWorkspace(resolve(vault), { course: task.course.code })
   const course = context.courses.find(
     (c) => c.code === task.course.code && c.root === task.course.root,
   )
@@ -423,7 +446,7 @@ export async function readVerifiedCompletedOutput(
   vault: string,
   id: string,
   maxBytes?: number,
-): Promise<{ task: TaskRecord; output: string; bytes: Buffer; workbookBytes?: Buffer }> {
+): Promise<VerifiedCompletedArtifact> {
   return verifiedCompletedOutput(vault, id, maxBytes, "assignment-write")
 }
 
@@ -437,10 +460,10 @@ async function verifiedCompletedOutput(
   id: string,
   maxBytes: number | undefined,
   intent: "assignment-write" | "read-only",
-): Promise<{ task: TaskRecord; output: string; bytes: Buffer; workbookBytes?: Buffer }> {
+): Promise<VerifiedCompletedArtifact> {
   await assertNoSymlinks(resolve(vault))
   const task = await readTask(vault, id)
-  await readVerifiedBundle(vault, id, task)
+  const bundleRecord = await readVerifiedBundle(vault, id, task)
   if (task.status !== "completed" || !task.completedAt || !task.output || !task.outputHash)
     throw new Error("Task is not completed with a saved output")
   if (intent === "assignment-write" && (task.kind !== "assignment" || !task.assignment))
@@ -461,7 +484,14 @@ async function verifiedCompletedOutput(
   if (digest(bytes) !== task.outputHash)
     throw new Error("Completed output is missing or has been modified")
   const workbookBytes = await verifyCompletedWorkbook(vault, task, bytes)
-  return { task, output: task.output, bytes, ...(workbookBytes ? { workbookBytes } : {}) }
+  return {
+    task,
+    output: task.output,
+    bytes,
+    ...(workbookBytes ? { workbookBytes } : {}),
+    ...(bundleRecord ? { bundleRecord } : {}),
+    ...(bundleRecord ? { bundle: await verifiedBundleSummary(vault, id, bundleRecord) } : {}),
+  }
 }
 
 export async function verifyCompletedWorkbook(

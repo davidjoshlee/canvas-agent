@@ -8,7 +8,7 @@ const roots: string[] = []
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
-it("runs all ten dogfood flows through the checkout evaluation CLI with explicit generation, review and approval", async () => {
+it("runs current dogfood flows through the checkout evaluation CLI with explicit generation, review and approval", async () => {
   const base = await mkdtemp(join(tmpdir(), "canvas-dogfood-cli-"))
   roots.push(base)
   const vault = join(base, "vault"),
@@ -108,7 +108,7 @@ it("runs all ten dogfood flows through the checkout evaluation CLI with explicit
   }
   expect(journal.complete).toBe(true)
   expect(journal.passed).toBe(8)
-  expect(journal.skipped).toBe(2)
+  expect(journal.skipped).toBe(1)
   expect(command(["dogfood", "show", id, "--course", "CS101"])).toEqual(journal)
   expect(command(resume)).toEqual(journal)
   const mirroredFinal = join(mirror, "Current", `${journal.flows[6].data.output}.txt`)

@@ -30,6 +30,7 @@ it("keeps runtime code grouped and scripts limited to maintained verification", 
       .map((entry) => entry.name)
       .sort(),
   ).toEqual(["build.mjs", "package-smoke.mjs", "sync-context.mjs"])
+  expect(await files("scripts/lib")).toEqual(["scripts/lib/package-smoke-academic.mjs"])
   expect(
     (await files("dist")).filter((path) =>
       /(?:migration|index-reconciliation|school-index|\/legacy\.js|\/evaluation\/)/.test(path),

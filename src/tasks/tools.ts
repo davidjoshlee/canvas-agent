@@ -4,11 +4,8 @@ import { lstat, mkdir, open, readFile } from "node:fs/promises"
 import { isAbsolute, join, resolve, sep } from "node:path"
 import { assertNoSymlinks } from "../shared/fs-safety.js"
 import type { ToolkitConfig } from "../shared/types.js"
-import {
-  auditTaskSnapshots,
-  automaticWorkbookEvidence,
-  readOutput,
-} from "./artifacts/inspection.js"
+import { readSavedCompletedOutput } from "./artifacts/completion.js"
+import { auditTaskSnapshots, automaticWorkbookEvidence } from "./artifacts/inspection.js"
 import { readTask } from "./artifacts/records.js"
 
 const MAX_LOG = 1024 * 1024
@@ -146,8 +143,8 @@ async function saveVersioned(
 export async function reviewGate(config: ToolkitConfig, taskId: string) {
   const { vault, task } = await taskVault(config, taskId)
   if (task.status !== "completed") throw new Error("Review gate requires a completed task")
-  const output = await readOutput(vault, task)
-  if (output === undefined) throw new Error("Completed task output is unavailable")
+  const saved = await readSavedCompletedOutput(vault, taskId)
+  const output = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(saved.bytes)
   const automaticWorkbook = automaticWorkbookEvidence(task)
   const headings = new Set(
     [...output.matchAll(/^#{1,6}\s+(.+?)\s*#*$/gm)].map((match) => match[1]?.trim() ?? ""),
@@ -173,6 +170,17 @@ export async function reviewGate(config: ToolkitConfig, taskId: string) {
     "## Evidence inventory",
     ...task.sources.map((source) => `- Source: ${source.path} (SHA-256 ${source.hash})`),
     ...task.guidance.map((source) => `- Guidance: ${source.path} (SHA-256 ${source.hash})`),
+    ...(saved.bundle
+      ? [
+          "",
+          "## Registered companion artifacts",
+          ...saved.bundle.files.map(
+            (file) =>
+              `- ${file.role}: ${file.path} (SHA-256 ${file.hash}; ${file.size} bytes) — ${file.purpose}`,
+          ),
+          "Harness commands and checks are recorded as declarations only; the CLI does not execute them.",
+        ]
+      : []),
     "",
     "## Automatic workbook evidence",
     `Scope: ${automaticWorkbook.scope}; state: ${automaticWorkbook.state}.`,
@@ -182,17 +190,17 @@ export async function reviewGate(config: ToolkitConfig, taskId: string) {
         ]
       : [
           automaticWorkbook.state === "harness-owned"
-            ? "The coding harness owns spreadsheet creation and verification. External companions are not inventoried by the CLI."
+            ? "The coding harness owns spreadsheet creation and verification. Registered companion files appear in the artifact inventory above."
             : automaticWorkbook.state === "verified-empty"
               ? "No tables/Computations were extracted from this new draft. This does not prove that no spreadsheet deliverable was required."
               : automaticWorkbook.state === "uncaptured-legacy"
                 ? "This older draft has no automatic workbook recipe; companion evidence is unknown, not verified absent."
                 : "Automatic workbook completion does not apply to this task kind/mode.",
         ]),
-    "Explicit workbook-command artifacts are not inventoried by this bundle. Byte fidelity is not arithmetic verification, source grounding or academic correctness.",
+    "Byte fidelity is not arithmetic verification, source grounding or academic correctness.",
     "",
     "## Review limits",
-    "This bundle checks task identity, unchanged source hashes, output identity, and required heading presence only. It does not assess factual accuracy, academic quality, policy compliance, claim support, or citation correctness.",
+    "This review checks task identity, unchanged source hashes, output identity, registered companion integrity, and required heading presence. It does not assess factual accuracy, academic quality, policy compliance, claim support, or citation correctness.",
     "",
   ].join("\n")
   const path = await saveVersioned(
@@ -218,6 +226,7 @@ export async function reviewGate(config: ToolkitConfig, taskId: string) {
     sections,
     snapshots: "current",
     automaticWorkbook,
+    bundle: saved.bundle ?? null,
     note: "Human review checks are structural and provenance-only.",
   }
 }

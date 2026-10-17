@@ -16,7 +16,7 @@ import {
   nextArtifactName,
   parseArtifactVersion,
 } from "./artifact-layout.js"
-import { bundleSnapshotPath, readVerifiedBundle } from "./bundle-store.js"
+import { bundleSnapshotPath, type readVerifiedBundle } from "./bundle-store.js"
 import { readVerifiedCompletedOutput } from "./completion.js"
 import { readTask } from "./records.js"
 
@@ -52,17 +52,16 @@ export async function reviseTask(
     type: "student-work",
     dates: [],
   }
-  const workspace = await inspectWorkspace(resolve(vault))
+  const workspace = await inspectWorkspace(resolve(vault), { course: parent.course.code })
   const course = selectCourse(workspace, parent.course.code)
-  const selected = await selectAssignmentInputs(
-    vault,
+  const selected = await selectAssignmentInputs(vault, {
     course,
-    parent.assignment.source,
-    priorOutput,
-    context,
+    sourcePath: parent.assignment.source,
+    workPath: priorOutput,
+    contextPaths: context,
     revisionSource,
-    1,
-  )
+    guidanceSelectionVersion: 1,
+  })
   const tasksRoot = await vaultPath(vault, "_meta/tasks", true)
   const revisionEdits = workPath
     ? captureRevisionEdits(selected.sources, priorOutput, workPath)
@@ -104,20 +103,19 @@ export async function reviseTask(
     }
   }
 
-  return createAssignmentTask(
-    vault,
-    parent.course.code,
-    parent.assignment.source,
-    "draft",
-    priorOutput,
-    context,
-    {
+  return createAssignmentTask(vault, {
+    courseQuery: parent.course.code,
+    sourcePath: parent.assignment.source,
+    mode: "draft",
+    workPath: priorOutput,
+    contextPaths: context,
+    revision: {
       parentTaskId: parent.id,
       feedback,
       revisionSource,
       ...(workPath ? { editedWork: workPath } : {}),
     },
-  )
+  })
 }
 
 /** Copy a completed assignment draft to a non-overwriting Finals sibling. */
@@ -130,11 +128,13 @@ export async function approveTask(
   workbook?: { path: string; hash: string }
   bundle?: { directory: string; files: Array<{ source: string; path: string; hash: string }> }
 }> {
-  const { task, output, bytes, workbookBytes } = await readVerifiedCompletedOutput(vault, id)
+  const { task, output, bytes, workbookBytes, bundleRecord } = await readVerifiedCompletedOutput(
+    vault,
+    id,
+  )
   if (task.assignment?.mode !== "draft")
     throw new Error("Only a completed assignment draft can be approved")
   const hash = sha(bytes)
-  const bundleRecord = await readVerifiedBundle(vault, id, task)
   const finalDirRel = assignmentFinalsDirectory(task.destination)
   const finalDir = await vaultPath(vault, finalDirRel, true)
   await mkdir(finalDir, { recursive: true, mode: 0o700 })

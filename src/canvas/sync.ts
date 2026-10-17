@@ -1,6 +1,5 @@
-import { createHash, randomUUID } from "node:crypto"
-import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises"
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { lstat, mkdir, readFile } from "node:fs/promises"
+import { join, resolve, sep } from "node:path"
 import { canvasSubjectHash, guardSyncSubject } from "../auth/sync-subject.js"
 import { extractText } from "../documents/content.js"
 import {
@@ -21,8 +20,29 @@ import { assignmentGroupCategory } from "./assignment-group.js"
 import { assignmentRubricHtml, renderAssignmentRubric } from "./assignment-rubric.js"
 import { type CanvasClient, CanvasHttpError, createCanvasClient } from "./client.js"
 import { parseSessionTitle, resolveSessionYear } from "./session-dates.js"
+import {
+  guardCanvasOrigin,
+  loadSyncState,
+  type Managed,
+  managedWrite,
+  relativeVault,
+  safeMkdir,
+  saveSyncState,
+  sha,
+} from "./sync-ownership.js"
 
 type Obj = Record<string, unknown>
+
+export type { Managed, SyncState } from "./sync-ownership.js"
+export {
+  guardCanvasOrigin,
+  loadSyncState,
+  managedWrite,
+  relativeVault,
+  safeMkdir,
+  saveSyncState,
+  sha,
+} from "./sync-ownership.js"
 
 function base(config: ToolkitConfig): URL {
   const url = new URL(config.canvas.baseUrl)
@@ -88,15 +108,13 @@ async function jsonObject(response: Response): Promise<Obj> {
     throw new Error("Canvas returned an unexpected resource object; no body was echoed")
   return value as Obj
 }
-const get = (client: CanvasClient, url: URL) => client.get(url)
-const list = (client: CanvasClient, url: URL) => client.list(url)
 export async function listCourses(
   config: ToolkitConfig,
   includeConcluded = false,
   client: CanvasClient = createCanvasClient(config),
 ): Promise<Array<{ id: string; code: string; name: string }>> {
   const root = base(config)
-  const rows = await list(client, apiUrl(root, "courses?per_page=100&include[]=term"))
+  const rows = await client.list(apiUrl(root, "courses?per_page=100&include[]=term"))
   if (includeConcluded) rows.push(...(await listConcludedCourses(config, client)))
   return [
     ...new Map(
@@ -117,8 +135,7 @@ export async function listConcludedCourses(
   config: ToolkitConfig,
   client: CanvasClient = createCanvasClient(config),
 ): Promise<Obj[]> {
-  return list(
-    client,
+  return client.list(
     apiUrl(
       base(config),
       "courses?enrollment_state=completed&state[]=completed&per_page=100&include[]=term",
@@ -135,7 +152,7 @@ export async function probeUnresolvedPilotCourse(
   if (!/^[1-9]\d*$/.test(id)) throw new Error("Pilot course needs an exact numeric Canvas ID")
   let metadata: Obj = { id }
   try {
-    const response = await get(client, apiUrl(base(config), `courses/${id}`))
+    const response = await client.get(apiUrl(base(config), `courses/${id}`))
     const bytes = await readBounded(response, 1_000_000, 10_000)
     if (!bytes) throw new Error("Pilot course metadata exceeds bounds")
     let value: unknown
@@ -157,7 +174,7 @@ export async function probeUnresolvedPilotCourse(
   }
   let assignments: Obj[]
   try {
-    assignments = await list(client, apiUrl(base(config), `courses/${id}/assignments?per_page=100`))
+    assignments = await client.list(apiUrl(base(config), `courses/${id}/assignments?per_page=100`))
   } catch (error) {
     if (!unavailable(error)) throw error
     throw new Error("Explicit pilot assignment history is unavailable")
@@ -177,8 +194,7 @@ export async function probeUnresolvedPilotCourse(
       .filter((value) => /^[1-9]\d*$/.test(value)),
   )) {
     try {
-      const response = await get(
-        client,
+      const response = await client.get(
         apiUrl(
           base(config),
           `courses/${id}/assignments/${assignmentId}/submissions/self?include[]=rubric_assessment`,
@@ -213,7 +229,7 @@ async function verifiedSubjectHash(
   config: ToolkitConfig,
   client: CanvasClient = createCanvasClient(config),
 ): Promise<string> {
-  const response = await get(client, apiUrl(base(config), "users/self"))
+  const response = await client.get(apiUrl(base(config), "users/self"))
   const reader = response.body?.getReader()
   if (!reader) throw new Error("Canvas returned no user profile; authorization was not verified")
   const chunks: Uint8Array[] = []
@@ -276,8 +292,7 @@ export async function listActiveCourses(
   config: ToolkitConfig,
   client: CanvasClient = createCanvasClient(config),
 ): Promise<Array<{ id: string; code: string; name: string }>> {
-  const rows = await list(
-    client,
+  const rows = await client.list(
     apiUrl(base(config), "users/self/courses?enrollment_state=active&per_page=100&include[]=term"),
   )
   return [
@@ -308,247 +323,6 @@ function canonicalRoot(code: string): string {
   const conventional = code.match(/^([A-Z]{2,12})[-_ ]?(\d{2,4}[A-Z]?)$/i)
   if (conventional) return `${conventional[1]}${conventional[2]}`.toUpperCase()
   return safeSegment(code).replace(/[-_ ]/g, "").toUpperCase()
-}
-function sha(bytes: Buffer | string): string {
-  return createHash("sha256").update(bytes).digest("hex")
-}
-type SyncState = { version: 1; origin?: string; files: Record<string, string> }
-class CanvasOriginMismatch extends Error {}
-async function guardCanvasOrigin(vault: string, origin: string, reserve = false): Promise<void> {
-  const path = join(vault, "_meta", "canvas-origin.json")
-  await assertNoSymlinks(path, true)
-  let bytes: string
-  try {
-    const info = await lstat(path)
-    if (!info.isFile() || info.size > 4096)
-      throw new CanvasOriginMismatch(
-        "Canvas origin reservation is unsafe; inspect it or choose a separate vault.",
-      )
-    bytes = await readFile(path, "utf8")
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    if (!reserve) return
-    await safeMkdir(vault, dirname(path))
-    await assertNoSymlinks(path, true)
-    try {
-      await writeFile(path, JSON.stringify({ version: 1, origin }), { flag: "wx", mode: 0o600 })
-      return
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
-      return guardCanvasOrigin(vault, origin)
-    }
-  }
-  let value: unknown
-  try {
-    value = JSON.parse(bytes)
-  } catch {
-    /* Generic error below never echoes private state. */
-  }
-  if (
-    !value ||
-    typeof value !== "object" ||
-    Array.isArray(value) ||
-    Object.keys(value).sort().join(",") !== "origin,version" ||
-    (value as Obj).version !== 1 ||
-    (value as Obj).origin !== origin
-  )
-    throw new CanvasOriginMismatch(
-      "Canvas server differs from the vault's origin reservation or its binding is invalid; choose a separate vault. No existing coursework or feedback was changed.",
-    )
-}
-type Managed = {
-  vault: string
-  subjectHash: string
-  state: SyncState
-  trusted: boolean
-  stateHash?: string
-  written: string[]
-  notices: string[]
-}
-function relativeVault(vault: string, path: string): string {
-  const value = relative(vault, path).split(sep).join("/")
-  if (!value || value === ".." || value.startsWith("../") || isAbsolute(value))
-    throw new Error("Canvas output path escapes the vault")
-  return value
-}
-async function safeMkdir(_vault: string, path: string): Promise<void> {
-  await assertNoSymlinks(path, true)
-  await mkdir(path, { recursive: true })
-  await assertNoSymlinks(path)
-}
-async function managedWrite(
-  manager: Managed,
-  path: string,
-  bytes: Buffer | string,
-  privateMode = false,
-): Promise<boolean> {
-  await assertNoPreservationMigration(manager.vault)
-  const key = relativeVault(manager.vault, path)
-  await assertNoSymlinks(path, true)
-  await safeMkdir(manager.vault, dirname(path))
-  let current: Buffer | undefined
-  try {
-    const info = await lstat(path)
-    if (!info.isFile() || info.isSymbolicLink())
-      throw new Error(`Canvas output is not a regular file: ${key}`)
-    if (privateMode && info.mode & 0o077)
-      throw new Error("Own feedback output is not private; it was preserved")
-    current = await readFile(path)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-  }
-  if (current && sha(current) === sha(bytes)) return false
-  if (current && (!manager.trusted || manager.state.files[key] !== sha(current))) {
-    manager.notices.push(
-      `Preserved changed or untracked file ${key}; Canvas updates were not applied.`,
-    )
-    return false
-  }
-  await assertNoSymlinks(path, true)
-  if (!current) {
-    try {
-      await writeFile(path, bytes, { flag: "wx", ...(privateMode ? { mode: 0o600 } : {}) })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        manager.notices.push(`Preserved concurrently created file ${key}.`)
-        return false
-      }
-      throw error
-    }
-  } else {
-    const tempPath = `${path}.${randomUUID()}.tmp`
-    try {
-      await writeFile(tempPath, bytes, { flag: "wx", ...(privateMode ? { mode: 0o600 } : {}) })
-      await assertNoSymlinks(path)
-      if (sha(await readFile(path)) !== manager.state.files[key]) {
-        manager.notices.push(`Preserved concurrently edited file ${key}.`)
-        return false
-      }
-      await rename(tempPath, path)
-    } finally {
-      try {
-        await unlink(tempPath)
-      } catch {
-        /* renamed or absent */
-      }
-    }
-  }
-  manager.state.files[key] = sha(bytes)
-  manager.written.push(path)
-  return true
-}
-async function loadSyncState(
-  vault: string,
-  notices: string[],
-  origin: string,
-): Promise<{ state: SyncState; trusted: boolean; stateHash?: string }> {
-  const path = join(vault, "_meta", "canvas-sync-state.json")
-  await assertNoSymlinks(path, true)
-  try {
-    const info = await lstat(path)
-    if (!info.isFile() || info.isSymbolicLink()) throw new Error("Sync state is not a regular file")
-    const raw = await readFile(path, "utf8"),
-      parsed = JSON.parse(raw)
-    if (
-      parsed.version !== 1 ||
-      !parsed.files ||
-      typeof parsed.files !== "object" ||
-      Array.isArray(parsed.files)
-    )
-      throw new Error("Sync state has an unsupported format")
-    if (parsed.origin !== undefined) {
-      let canonicalOrigin: string | undefined
-      try {
-        canonicalOrigin = new URL(parsed.origin).origin
-      } catch {
-        // An invalid saved binding must not fall through to an untrusted fresh state.
-      }
-      if (typeof parsed.origin !== "string" || canonicalOrigin !== parsed.origin)
-        throw new CanvasOriginMismatch(
-          "Canvas sync origin binding is invalid; existing vault was preserved. Inspect it or choose a separate vault.",
-        )
-      if (parsed.origin !== origin)
-        throw new CanvasOriginMismatch(
-          "Canvas server differs from this vault's sync binding; choose a separate vault. No existing coursework or feedback was changed.",
-        )
-    } else if (Object.keys(parsed.files).length)
-      notices.push(
-        "Legacy sync state has no verified server binding. This first configured-origin binding protects future syncs only; historical feedback/account ownership remains unverified.",
-      )
-    return {
-      state: { version: 1, origin, files: parsed.files },
-      trusted: true,
-      stateHash: sha(raw),
-    }
-  } catch (error) {
-    if (error instanceof CanvasOriginMismatch) throw error
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-      notices.push("Canvas sync state could not be trusted; existing files will be preserved.")
-    return {
-      state: { version: 1, origin, files: {} },
-      trusted: (error as NodeJS.ErrnoException).code === "ENOENT",
-    }
-  }
-}
-async function saveSyncState(manager: Managed): Promise<void> {
-  if (!manager.trusted) return
-  try {
-    await assertNoPreservationMigration(manager.vault)
-  } catch {
-    manager.notices.push(
-      "Preservation migration lock prevented ownership-state refresh; partial files were retained for review",
-    )
-    return
-  }
-  const path = join(manager.vault, "_meta", "canvas-sync-state.json")
-  await safeMkdir(manager.vault, dirname(path))
-  await assertNoSymlinks(path, true)
-  const bytes = `${JSON.stringify(manager.state, null, 2)}\n`
-  try {
-    const current = await readFile(path)
-    if (!manager.stateHash || sha(current) !== manager.stateHash) {
-      manager.notices.push(
-        "Preserved changed Canvas sync state; concurrent or manual changes were not overwritten.",
-      )
-      return
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT" || manager.stateHash) {
-      manager.notices.push(
-        "Preserved changed Canvas sync state; concurrent or manual changes were not overwritten.",
-      )
-      return
-    }
-  }
-  const tempPath = `${path}.${randomUUID()}.tmp`
-  await writeFile(tempPath, bytes, { flag: "wx" })
-  try {
-    await assertNoSymlinks(path, true)
-    try {
-      const current = await readFile(path)
-      if (!manager.stateHash || sha(current) !== manager.stateHash) {
-        manager.notices.push(
-          "Preserved changed Canvas sync state; concurrent or manual changes were not overwritten.",
-        )
-        return
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || manager.stateHash) {
-        manager.notices.push(
-          "Preserved changed Canvas sync state; concurrent or manual changes were not overwritten.",
-        )
-        return
-      }
-    }
-    await rename(tempPath, path)
-    manager.stateHash = sha(bytes)
-  } finally {
-    try {
-      await unlink(tempPath)
-    } catch {
-      /* renamed or absent */
-    }
-  }
 }
 function cleanHtml(html: string): string {
   return html
@@ -652,8 +426,7 @@ async function syncCourseOverview(context: CourseSync, explicitPilot: boolean) {
   let courseInfo: Obj
   try {
     courseInfo = await jsonObject(
-      await get(
-        client,
+      await client.get(
         apiUrl(
           root,
           `courses/${encodeURIComponent(course.id)}?include[]=syllabus_body&include[]=term`,
@@ -707,7 +480,7 @@ async function optionalCourseList(
 ): Promise<Obj[]> {
   const { client, root, prefix, manager, course } = context
   try {
-    return await list(client, apiUrl(root, `${prefix}/${endpoint}`))
+    return await client.list(apiUrl(root, `${prefix}/${endpoint}`))
   } catch (error) {
     if (!unavailable(error)) throw error
     manager.notices.push(
@@ -743,8 +516,7 @@ async function syncCourseContent(
     supplied ??
     (endpoint === "pages"
       ? await optionalCourseList(context, "pages?per_page=100", "Pages list")
-      : await list(
-          client,
+      : await client.list(
           apiUrl(
             root,
             `${prefix}/${endpoint}?per_page=100${endpoint === "assignments" ? "&include[]=all_dates&override_assignment_dates=true" : ""}`,
@@ -758,7 +530,7 @@ async function syncCourseContent(
     if (endpoint === "pages" && typeof value.body !== "string" && typeof value.url === "string") {
       try {
         source = await jsonObject(
-          await get(client, apiUrl(root, `${prefix}/pages/${encodeURIComponent(value.url)}`)),
+          await client.get(apiUrl(root, `${prefix}/pages/${encodeURIComponent(value.url)}`)),
         )
       } catch (error) {
         if (!unavailable(error)) throw error
@@ -863,7 +635,7 @@ async function syncCourseFiles(context: CourseSync) {
   for (const fileId of referencedFileIds) {
     if (knownFileIds.has(fileId)) continue
     try {
-      const response = await get(client, apiUrl(root, `files/${encodeURIComponent(fileId)}`))
+      const response = await client.get(apiUrl(root, `files/${encodeURIComponent(fileId)}`))
       const metadata = await jsonObject(response)
       if (String(metadata.id) === fileId) files.push(metadata)
     } catch (error) {
@@ -956,8 +728,7 @@ async function syncOwnFeedback(context: CourseSync) {
     throw new Error("Own-feedback assignment inventory exceeds 1000 entries")
   for (const assignmentId of [...new Set(feedbackAssignmentIds)]) {
     try {
-      const response = await get(
-        client,
+      const response = await client.get(
         apiUrl(
           root,
           `${prefix}/assignments/${assignmentId}/submissions/self?include[]=rubric_assessment&include[]=submission_comments`,
@@ -1083,7 +854,7 @@ async function writeCourseModules(context: CourseSync, courseInfo: Obj, modules:
 async function syncCourseDiscussions(context: CourseSync) {
   const { client, root, prefix, manager, course, courseRoot } = context
   try {
-    const topics = await list(client, apiUrl(root, `${prefix}/discussion_topics?per_page=100`))
+    const topics = await client.list(apiUrl(root, `${prefix}/discussion_topics?per_page=100`))
     for (const topic of topics) {
       const title = String(topic.title ?? `Discussion ${topic.id}`)
       const path = join(
@@ -1111,8 +882,7 @@ async function syncCourseDiscussions(context: CourseSync) {
     )
   }
   try {
-    const announcements = await list(
-      client,
+    const announcements = await client.list(
       apiUrl(root, `${prefix}/discussion_topics?only_announcements=true&per_page=100`),
     )
     for (const announcement of announcements) {
@@ -1278,7 +1048,7 @@ async function discoverSelectedCourses(
 ) {
   let all: Obj[]
   try {
-    all = await list(client, apiUrl(base(config), "courses?per_page=100&include[]=term"))
+    all = await client.list(apiUrl(base(config), "courses?per_page=100&include[]=term"))
   } catch (error) {
     if (!unavailable(error)) throw error
     all = []
@@ -1298,7 +1068,7 @@ async function discoverSelectedCourses(
     if (!/^[1-9]\d*$/.test(id)) throw new Error("Sync allowlist needs numeric Canvas course IDs")
     try {
       const value: unknown = await jsonObject(
-        await get(client, apiUrl(base(config), `courses/${id}?include[]=term`)),
+        await client.get(apiUrl(base(config), `courses/${id}?include[]=term`)),
       )
       if (
         !value ||

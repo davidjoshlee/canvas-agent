@@ -11,7 +11,7 @@ import { vaultMutation } from "../vault/command-effects.js"
 import { isAssignmentSource } from "../vault/source-kind.js"
 import { inspectWorkspace, selectCourse } from "../vault/workspace.js"
 import { inspectVaultHealth } from "./health.js"
-import { configWithEnv, render, summary, taskMarkdownPath } from "./output.js"
+import { configWithEnv, render, taskCreationHandoff } from "./output.js"
 
 export function registerWorkspaceCommands(program: Command): void {
   registerScheduleCommand(program, "homework", "days", 14)
@@ -103,18 +103,20 @@ function registerScheduleCommand(
     .option("--json", "emit metadata-only JSON")
     .action(async (options) => {
       const config = await configWithEnv(program.opts().config)
-      const context = await inspectWorkspace(config.vault.path)
+      const context = await inspectWorkspace(
+        config.vault.path,
+        options.course ? { course: options.course } : {},
+      )
       if (options.draft) {
         if (name !== "homework") throw new Error("--draft is supported only by homework")
         const selected = selectHomeworkAssignment(context, options.draft, options.course)
-        const task = await createAssignmentTask(
-          config.vault.path,
-          selected.course.code,
-          selected.prompt.path,
-          "draft",
-        )
+        const task = await createAssignmentTask(config.vault.path, {
+          courseQuery: selected.course.code,
+          sourcePath: selected.prompt.path,
+          mode: "draft",
+        })
         render(
-          { ...summary(task), taskFile: taskMarkdownPath(config, task.id) },
+          taskCreationHandoff(config, task),
           options.json,
           `Created pending draft task ${task.id} for ${task.course.code}. Read task show and generate with your chosen agent; nothing was submitted.`,
         )

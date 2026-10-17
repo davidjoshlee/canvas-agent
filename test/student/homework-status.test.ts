@@ -34,7 +34,11 @@ it("associates completed draft versions by exact prompt even when prompts share 
   const f = await fixture(["First case", "Second case"])
   const originals = await Promise.all(f.paths.map((path) => readFile(join(f.root, path))))
   for (const path of f.paths) {
-    const task = await createAssignmentTask(f.root, "CS101", path, "draft")
+    const task = await createAssignmentTask(f.root, {
+      courseQuery: "CS101",
+      sourcePath: path,
+      mode: "draft",
+    })
     const candidate = join(f.root, "candidate.md")
     await writeFile(
       candidate,
@@ -90,7 +94,11 @@ it("reports preserved-namespace drafts from their saved destinations without los
   const f = await fixture(["First case", "Second case"])
   const originals = await Promise.all(f.paths.map((path) => readFile(join(f.root, path))))
   const complete = async (source: string) => {
-    const task = await createAssignmentTask(f.root, "CS101", source, "draft")
+    const task = await createAssignmentTask(f.root, {
+      courseQuery: "CS101",
+      sourcePath: source,
+      mode: "draft",
+    })
     const file = join(f.root, "candidate.md")
     await writeFile(
       file,
@@ -188,7 +196,11 @@ it("exposes preserved same-Canvas-identity drafts separately from the refreshed 
   const f = await fixture(["First case", "Other assignment"])
   const source = f.paths[0]
   if (!source) throw new Error("Synthetic prompt missing")
-  const task = await createAssignmentTask(f.root, "CS101", source, "draft")
+  const task = await createAssignmentTask(f.root, {
+    courseQuery: "CS101",
+    sourcePath: source,
+    mode: "draft",
+  })
   const file = join(f.root, "candidate.md")
   await writeFile(
     file,

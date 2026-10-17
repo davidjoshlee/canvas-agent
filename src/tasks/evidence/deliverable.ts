@@ -180,22 +180,6 @@ export function detectDeliverable(
   return { kind: best.cue.kind, items, sourcePath: best.path, cue: best.cue.label }
 }
 
-/** The two-way `kind` synonym wording an engine wants in its own prompt. */
-export type DeliverableFraming = { readonly questions: string; readonly requirements: string }
-
-// The one place the `kind === "questions"` vs `"requirements"` framing decision
-// is made; prep and draft prompt builders call this with their own wording.
-export function deliverableFraming(deliverable: Deliverable, framing: DeliverableFraming): string {
-  if (deliverable.kind === "none") return ""
-  return deliverable.kind === "questions" ? framing.questions : framing.requirements
-}
-
-// Renders `deliverable.items` as one `### <id>. <text>` heading per item.
-export function formatDeliverableItems(deliverable: Deliverable): string {
-  if (deliverable.kind === "none") return ""
-  return deliverable.items.map((item) => `### ${item.id}. ${item.text}`).join("\n")
-}
-
 function extractItems(
   text: string,
   from: number,
